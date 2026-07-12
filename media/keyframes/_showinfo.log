@@ -1,0 +1,43 @@
+-vsync is deprecated. Use -fps_mode
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'media/operation_video.mp4':
+  Metadata:
+    major_brand     : mp42
+    minor_version   : 0
+    compatible_brands: mp41isom
+    creation_time   : 2026-07-12T04:52:50.000000Z
+  Duration: 00:04:29.25, start: 0.000000, bitrate: 16479 kb/s
+  Stream #0:0[0x1](und): Video: h264 (Main) (avc1 / 0x31637661), yuv420p(progressive), 2558x1522 [SAR 1:1 DAR 1279:761], 16289 kb/s, 30 fps, 30 tbr, 30k tbn (default)
+    Metadata:
+      creation_time   : 2026-07-12T04:52:50.000000Z
+      handler_name    : VideoHandler
+      encoder         : AVC Coding
+  Stream #0:1[0x2](und): Audio: aac (LC) (mp4a / 0x6134706D), 48000 Hz, stereo, fltp, 192 kb/s (default)
+    Metadata:
+      creation_time   : 2026-07-12T04:52:50.000000Z
+      handler_name    : SoundHandler
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> png (native))
+Press [q] to stop, [?] for help
+[Parsed_showinfo_1 @ 000001e47c4546c0] config in time_base: 1/30000, frame_rate: 30/1
+[Parsed_showinfo_1 @ 000001e47c4546c0] config out time_base: 0/0, frame_rate: 0/0
+[Parsed_showinfo_1 @ 000001e47c4546c0] n:   0 pts:  20000 pts_time:0.666667 duration:   1000 duration_time:0.0333333 fmt:yuv420p cl:left sar:1/1 s:2558x1522 i:P iskey:0 type:P checksum:EA2F95E5 plane_checksum:[4D2F111F 7E24FBA6 4DBD8911] mean:[219 129 128] stdev:[47.1 5.4 5.9]
+[Parsed_showinfo_1 @ 000001e47c4546c0] color_range:unknown color_space:unknown color_primaries:unknown color_trc:unknown
+Output #0, image2, to 'media/keyframes/kf_%03d.png':
+  Metadata:
+    major_brand     : mp42
+    minor_version   : 0
+    compatible_brands: mp41isom
+    encoder         : Lavf62.12.101
+  Stream #0:0(und): Video: png, rgb24(pc, gbr/unknown/unknown, progressive), 2558x1522 [SAR 1:1 DAR 1279:761], q=2-31, 200 kb/s, 30 fps, 30 tbn (default)
+    Metadata:
+      encoder         : Lavc62.28.101 png
+      creation_time   : 2026-07-12T04:52:50.000000Z
+      handler_name    : VideoHandler
+[Parsed_showinfo_1 @ 000001e47c4546c0] n:   1 pts: 126000 pts_time:4.2     duration:   1000 duration_time:0.0333333 fmt:yuv420p cl:left sar:1/1 s:2558x1522 i:P iskey:0 type:P checksum:F6A97C2E plane_checksum:[8137EB95 6385ECF7 3D74A384] mean:[216 129 128] stdev:[50.7 5.4 5.9]
+[Parsed_showinfo_1 @ 000001e47c4546c0] color_range:unknown color_space:unknown color_primaries:unknown color_trc:unknown
+[Parsed_showinfo_1 @ 000001e47c4546c0] n:   2 pts: 135000 pts_time:4.5     duration:   1000 duration_time:0.0333333 fmt:yuv420p cl:left sar:1/1 s:2558x1522 i:P iskey:0 type:P checksum:D8936458 plane_checksum:[95485C9E DE2331F2 16B3D5B9] mean:[202 128 128] stdev:[47.8 2.3 1.9]
+[Parsed_showinfo_1 @ 000001e47c4546c0] color_range:unknown color_space:unknown color_primaries:unknown color_trc:unknown
+frame=    1 fps=0.0 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=1.37x elapsed=0:00:00.51    frame=    1 fps=1.0 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.682x elapsed=0:00:01.02    frame=    1 fps=0.6 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.451x elapsed=0:00:01.55    frame=    1 fps=0.5 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.339x elapsed=0:00:02.06    frame=    1 fps=0.4 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.271x elapsed=0:00:02.58    frame=    1 fps=0.3 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.226x elapsed=0:00:03.09    frame=    1 fps=0.3 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.194x elapsed=0:00:03.60    frame=    1 fps=0.2 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.17x elapsed=0:00:04.12    frame=    1 fps=0.2 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.151x elapsed=0:00:04.63    frame=    1 fps=0.2 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.136x elapsed=0:00:05.16    frame=    1 fps=0.2 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.123x elapsed=0:00:05.67    frame=    1 fps=0.2 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.113x elapsed=0:00:06.19    frame=    1 fps=0.1 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.104x elapsed=0:00:06.70    frame=    1 fps=0.1 q=-0.0 size=N/A time=00:00:00.70 bitrate=N/A speed=0.097x elapsed=0:00:07.21    [Parsed_showinfo_1 @ 000001e47c4546c0] n:   3 pts:5335000 pts_time:177.833333 duration:   1000 duration_time:0.0333333 fmt:yuv420p cl:left sar:1/1 s:2558x1522 i:P iskey:0 type:P checksum:E87A864B plane_checksum:[7D10995D B51380C6 BD0A6C19] mean:[200 128 128] stdev:[55.5 5.0 5.1]
+[Parsed_showinfo_1 @ 000001e47c4546c0] color_range:unknown color_space:unknown color_primaries:unknown color_trc:unknown
+frame=    2 fps=0.3 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.548x elapsed=0:00:07.73    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.513x elapsed=0:00:08.24    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.483x elapsed=0:00:08.77    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.456x elapsed=0:00:09.28    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.432x elapsed=0:00:09.79    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.411x elapsed=0:00:10.31    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.391x elapsed=0:00:10.82    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.373x elapsed=0:00:11.33    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.357x elapsed=0:00:11.85    frame=    2 fps=0.2 q=-0.0 size=N/A time=00:00:04.23 bitrate=N/A speed=0.342x elapsed=0:00:12.36    [out#0/image2 @ 000001e47be125c0] video:2260KiB audio:0KiB subtitle:0KiB other streams:0KiB global headers:0KiB muxing overhead: unknown
+frame=    4 fps=0.3 q=-0.0 Lsize=N/A time=00:02:57.86 bitrate=N/A speed=14.3x elapsed=0:00:12.47    

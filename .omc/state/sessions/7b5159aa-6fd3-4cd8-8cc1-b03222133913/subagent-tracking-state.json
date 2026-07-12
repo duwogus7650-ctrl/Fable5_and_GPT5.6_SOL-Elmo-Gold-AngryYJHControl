@@ -1,0 +1,62 @@
+{
+  "agents": [
+    {
+      "agent_id": "aed265d6d2a273290",
+      "agent_type": "parallel-agent-fable-5:fable-reader",
+      "started_at": "2026-07-12T08:41:05.751Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-12T08:45:44.463Z",
+      "duration_ms": 278712
+    },
+    {
+      "agent_id": "ae02058ca28ff5ce9",
+      "agent_type": "parallel-agent-fable-5:fable-driver",
+      "started_at": "2026-07-12T12:27:34.726Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-12T12:32:03.632Z",
+      "duration_ms": 268906
+    },
+    {
+      "agent_id": "a0307dc6db695f2a3",
+      "agent_type": "parallel-agent-fable-5:fable-physics",
+      "started_at": "2026-07-12T12:28:40.403Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-12T12:35:46.041Z",
+      "duration_ms": 425638
+    },
+    {
+      "agent_id": "af4f67ace67dde9a9",
+      "agent_type": "parallel-agent-fable-5:fable-driver",
+      "started_at": "2026-07-12T17:14:23.245Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-12T17:20:33.864Z",
+      "duration_ms": 370619
+    },
+    {
+      "agent_id": "af624aae8170dc37a",
+      "agent_type": "parallel-agent-fable-5:fable-reader",
+      "started_at": "2026-07-12T14:37:47.985Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-12T14:46:28.029Z",
+      "duration_ms": 520044
+    },
+    {
+      "agent_id": "aa17f369bfa785774",
+      "agent_type": "parallel-agent-fable-5:fable-physics",
+      "started_at": "2026-07-12T17:27:14.792Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-12T17:36:08.928Z",
+      "duration_ms": 534136
+    }
+  ],
+  "total_spawned": 14,
+  "total_completed": 14,
+  "total_failed": 0,
+  "last_updated": "2026-07-12T17:36:09.041Z"
+}

@@ -1,0 +1,2236 @@
+<?xml version="1.0" encoding="ks_c_5601-1987"?>
+<ROOT>
+  <version>Twitter 01.01.16.00 08Mar2020B01G Pal: 90</version>
+  <version.h Name="version.h">typedef struct CUserParameters
+{
+int16 eo_arr[2];//Code="EO",Help="Allow chars Echo for serial communication",Group="Communication",View="Yes",Edit="Yes",Grade="All",Default=1
+int16 um_arr[2];//Code="UM",Help="Unit mode",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=3
+long res2_arr[8];//Code="None",Help="Reserved Array",Group="Internal"
+int16 ts_arr[2];//Code="TS",Help="Sampling time",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=50
+int16 rm_arr[2];//Code="RM",Help="Reference mode",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+float32 kp_arr[7];//Code="KP",Enum="KP_Enum",Help="proportional gain"
+float32 ki_arr[5];//Code="KI",Enum="KI_Enum",Help="Integral gain"
+int16 xa_arr[6];//Code="XA",Enum="XA_Enum",Help="Advanced extra parameters"
+Uint16 pp_arr[16];//Code="PP",Enum="PP_Enum",Help="Communication parameters"
+int16 xp_arr[14];//Code="XP",Enum="XP_Enum",Help="Extra Parameters"
+float32 cl_arr[8];//Code="CL",Enum="CL_Enum",Help="Continuous current limit"
+float32 pl_arr[8];//Code="PL",Enum="PL_Enum",Help="Peak current limit"
+float32 kg_arr[946];//Code="KG",Enum="ENUM_NONE",Help="Scheduled parameters",Group="Motion"
+int32 gs_arr[22];//Code="GS",Enum="GS_Enum",Help="Gain scheduling parameters"
+int32 vh_arr[4];//Code="VH",Enum="VH_Enum",Help="High limit for reference"
+int32 vl_arr[4];//Code="VL",Enum="VL_Enum",Help="Low limit for reference"
+int32 er_arr[6];//Code="ER",Enum="ER_Enum",Help="Allowed tracking error"
+float32 kv_arr[101];//Code="KV",Enum="ENUM_NONE",Help="Advanced filter for speed loop",Group="Motion"
+float32 kv_spare[19];//Code="None",Help="Reserved for future KV",Group="Internal"
+float32 ff_arr[9];//Code="FF",Enum="FF_Enum",Help="Feed forward"
+int32 ui_arr[25];//Code="UI",Enum="ENUM_NONE",Help="User Integer array",Group="User"
+float32 uf_arr[25];//Code="UF",Enum="ENUM_NONE",Help="User Float array",Group="User"
+int32 xm_arr[3];//Code="XM",Enum="XM_Enum",Help="Main sensor modulo range"
+int32 ym_arr[3];//Code="YM",Enum="YM_Enum",Help="Additional sensor modulo range"
+int32 hl_arr[4];//Code="HL",Enum="HL_Enum",Help="High limit for feedback"
+int32 ll_arr[4];//Code="LL",Enum="LL_Enum",Help="Low limit for feedback"
+int32 tr_arr[7];//Code="TR",Enum="TR_Enum",Help="Allowed tracking error"
+Uint32 sp_arr[5];//Code="SP",Help="Maximum speed indication in Point 2 Point mode",Group="Motion",View="Yes",Edit="Yes",Default=0
+Uint32 ac_arr[5];//Code="AC",Help="Profile acceleration, cnt/sec/sec",Group="Motion",View="Yes",Edit="Yes",Default=1000000000
+Uint32 dc_arr[2];//Code="DC",Help="Profile decleration, cnt/sec/sec",Group="Motion",View="Yes",Edit="Yes",Default=1000000000
+Uint32 sd_arr[2];//Code="SD",Help="Stop deceleration, cnt/sec/sec",Group="Motion",View="Yes",Edit="Yes",Default=1000000000
+Uint16 pm_arr[2];//Code="PM",Help="Profiler Active switch (On/Off)",Group="Motion",View="Yes",Edit="Yes",Default=1
+int16 sf_arr[4];//Code="SF",Enum="SF_Enum",Help="Profiler Smoothing factor"
+int32 ca_arr[150];//Code="CA",Enum="CA_Enum",Help="Commutation parameters"
+float32 sc_arr[20];//Code="SC",Enum="SC_Enum",Help="Stepper Commutation"
+int32 of_arr[52];//Code="OF",Enum="OF_Enum",Help="CAN Object mnemonic"
+Uint32 fc_arr[20];//Code="FC",Enum="FC_Enum",Help="Position and Velocity Scaling Factors"
+int32 res_long;//Code="None",Help="Reserved Long",Group="Internal"
+Uint32 il_arr[17];//Code="IL",Enum="IL_Enum",Help="Digital Input logic and function definitions"
+Uint32 if_arr[17];//Code="IF",Enum="IF_Enum",Help="Digital Input filter"
+Uint32 ol_arr[17];//Code="OL",Enum="OL_Enum",Help="Digital Output logic and function definitions"
+int32 ia_arr[6];//Code="IA",Enum="IA_Enum",Help="Analog feedback settings"
+float32 nt_arr[256];//Code="NT",Enum="ENUM_NONE",Help="Non Linear Array",Group="Motion"
+int32 zi_arr[25];//Code="ZI",Enum="ENUM_NONE",Help="Wizard integer array",Group="Internal"
+float32 zf_arr[25];//Code="ZF",Enum="ENUM_NONE",Help="Wizard float array",Group="Internal"
+Uint32 gi_arr[5];//Code="GI",Enum="ENUM_NONE",Help="Capture source input Array",Group="Motion"
+int32 et_arr[2049];//Code="ET",Enum="ENUM_NONE",Help="ECAM Array",Group="Motion"
+Uint16 go_arr[17];//Code="GO",Enum="GO_Enum",Help="Output Compare Source Array",Group="Motion"
+Uint16 bp_arr[3];//Code="BP",Enum="BP_Enum",Help="Logical brake parameters",Group="Motion"
+int32 ea_arr[20];//Code="EA",Enum="EA_Enum",Help="Encoder Emulation parameters",Group="Internal"
+int32 pc_arr[9];//Code="PC",Enum="PC_Enum",Help="Position Correction parameters"
+float32 ag_arr[3];//Code="AG",Enum="AG_Enum",Help="Analog gain"
+float32 as_arr[3];//Code="AS",Enum="AS_Enum",Help="Analog offset"
+float32 ad_arr[3];//Code="AD",Enum="AD_Enum",Help="Dead Band of analog input"
+int16 ar_arr[4];//Code="AR",Enum="AR_Enum",Help="Reference units of analog input"
+float32 nf_arr[16];//Code="NF",Enum="NF_Enum",Help="non linear float parameters"
+int32 us_arr[5];//Code="US",Enum="US_Enum",Help="User Saturation parameteres",Group="Motion"
+Uint16 po_arr[2];//Code="PO",Help="Positioning Option (0x60F2)",Group="Motion",View="Yes",Edit="Yes",Default=0
+int32 em_arr[20];//Code="EM",Enum="EM_Enum",Help="ECAM parameters",Group="Motion"
+float32 ht_arr[4];//Code="HT",Enum="HT_Enum",Help="torque in stepper open loop"
+long xt_arr[8];//Code="XT",Enum="XT_Enum",Help="Extra Threshold sensing"
+Uint32 xi_arr[4];//Code="XI",Enum="XI_Enum",Help="Extended input port"
+Uint32 xo_arr[4];//Code="XO",Enum="XO_Enum",Help="Extended output port"
+long kk_arr[5];//Code="KK",Enum="KK_Enum",Help="General filter and parameter",Group="System"
+float32 bf_arr[16];//Code="BF",Enum="BF_Enum",Help="Sensorless velocity observer"
+long res_arr[754];//Code="None",Help="Reserved Array",Group="Internal"
+}CUserParametersStruct;
+
+enum KP_Enum
+{
+KP_Kpcur=1,//Help="Current controller proportional gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KP_KpSpeed=2,//Help="Speed controller proportional (No gain scheduling) gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KP_KpPos=3,//Help="Position controller proportional (No gain scheduling) gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KP_KpGantryVel=4,//Help="Velocity controller Gantry proportional gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KP_KpGantryPos=5,//Help="Position controller Gantry proportional gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KP_GantryPosYfactor=6//Help="Planar Y factor of Gantry current",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum KI_Enum
+{
+KI_Kicur=1,//Help="Current controller integral gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KI_KiSpeed=2,//Help="Speed controller integral gain (No gain scheduling)",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+KI_KiPos=3,//Help="Position controller integral gain (No gain scheduling)",Group="Motion",View="No",Edit="No",Product="H",Grade="All",Default=0
+KI_GantryKiVel=4//Help="Gantry Velocity loop integral gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+typedef enum XA_Enum
+{
+XA_TRAPEZE_TABLE=1,//Help="Set Trapeze table",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XA_HOTPLUGIN_SPEED=2,//Help="Hot plugin threshold speed [elec. cycle/sec]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=5
+XA_CURRENT_EXCEEDED_US=3,//Help="Current exceeded usec",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=600
+XA_STOP_MNG_BYPASS=4,//Help="Stop Manager Bypass",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=4
+XA_CONTROL_111=5//Help="Control structure 1:1:1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}XA_ParamsEnum;
+
+enum PP_Enum
+{
+PP_PROTOCOL=1,//Help="Communication type",Group="Communication",View="No",Edit="No",Product="H",Grade="All",Default=1
+PP_RS232_BOUD=2,//Help="RS232 baud rate",Group="Communication",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+PP_RS232_PARITY=4,//Help="RS232 parity",Group="Communication",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+PP_CAN_ID=13,//Help="CAN ID",Group="Communication",View="Yes",Edit="Yes",Product="H",Grade="All",Default=127
+PP_CAN_BAUD=14,//Help="CAN baud rate",Group="Communication",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+PP_CAN_GID=15//Help="CAN group ID",Group="Communication",View="Yes",Edit="Yes",Product="H",Grade="All",Default=128
+};
+
+typedef enum XP_Enum
+{
+XP_BUS_VOLTAGE=1,//Help="Over/Under voltage constant",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XP_PWM_FREQ_MULT=2,//Help="Pwm Frequency Multipiler",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XP_SYNC_FILT_PARAM=3,//Help="Not used",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XP_VPOLE=4,//Help="Filter constant of the bus voltage measurements",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=30720
+XP_STEP=5,//Help="Step limit for analog input filter",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=20
+XP_CPOLE=6,//Help="Not used",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=12000
+XP_MISMATCH=7,//Help="Halls encoder mismatch",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+XP_SLAVE_PHASE=8,//Help="Slave phase offset",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XP_PWM_SYNC=9,//Help="Synchronize PWM to other drives",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XP_OFFSET=10,//Help="Current offset",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+XP_AMP_VOLT_TH=11,//Help="Voltage Threshold for current derating [Volt]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XP_RESERV_12=12,//Help="Reserve 12",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+XP_UNDER_VOL=13//Help="The under voltage threshold (V)",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}XP_ParamsEnum;
+
+typedef enum CL_Enum 
+{
+CL_CONTINUOUS_LIMIT=1,//Help="Continuous current limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CL_STUCK_LIMIT=2,//Help="Motor stuck current level",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CL_STUCK_SPEED=3,//Help="Motor stuck speed level",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=60
+CL_STUCK_TIME=4,//Help="Motor stuck time-out",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=3000
+CL_CONTINUOUS_LIMIT_2=5,//Help="Continuous current limit also at heat",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CL_TEMP_TOLD=6,//Help="Temperature threshold for continuous current",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=75
+CL_CURR_PER_TEMP=7//Help="Current per temperature factor for continuous current",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=10
+}CL_CURRENT_LIMIT_Enum;
+
+typedef enum PL_Enum
+{
+PL_PEAK_LIMIT=1,//Help="Peak current limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+PL_PEAK_DURATION=2,//Help="Peak duration",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=3
+PL_CURR_BUS_FILTER=3,//Help="Current bus filter",Group="Limits",View="No",Edit="Yes",Product="H",Grade="All",Default=0.01
+PL_TEMP_TOLD=4,//Help="Temperature threshold for current limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=70
+PL_CURR_PER_TEMP=5,//Help="Current per temperature factor for current limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+PL_TEMP_FREQ_FILTER=6,//Help="Temperature frequency low pass filter",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+PL_AMP_VOLT_LIMIT=7//Help="Current Limit Slope for derating due to voltage [Amp/Volt]",Group="Limits",View="Yes",Edit="No",Product="H",Grade="All",Default=100
+//Vlad24112019notusedPL_PERCENT_PER_CURR=8//Help="percentage per current factor for voltage limit",Group="Limits",View="No",Edit="No",Product="H",Grade="All",Default=0
+}PL_CURRENT_LIMIT_Enum;
+
+typedef enum GS_Enum
+{
+GS_MIN_SPEED=1,//Help="Minimal speed for scheduling",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+GS_SET_PI=2,//Help="Gains selection",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=64
+GS_SPEED_CALC_LIM=3,//Help="Speed selection",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GS_FILTER_UP=4,//Help="Upwards filter time constant",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1500
+GS_FILTER_DN=5,//Help="Downwards filter time constant",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1500
+GS_MAX_SPEED_FACTOR=6,//Help="Maximum per minimum speed factor",Group="Motion",View="No",Edit="Yes",Product="H",Grade="All",Default=62
+GS_SPEED_SOURCE=7,//Help="Speed source for gain schedule",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GS_POSITION_FIR=8,//Help="Position FIR used in GS",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GS_ALPHA_FACTOR=9,//Help="NL factor for position Motion",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2000000000
+GS_POS_ERROR_GAIN=10,//Help="Position error coefficient",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=54
+GS_CRS_MAX_TIME=11,//Help="Max time of C&amp;RS GS",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GS_FAST_REF_FUNCTION=12,//Help="Fast reference function",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GS_MAX_SPEED=13,//Help="Maximal speed for scheduling",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=6200
+GS_POS_ERR_OPEN_KP=14,//Help="Speed error to open loop",Group="Motion",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+GS_SPEED_STEP_SCALE=15,//Help="Scheduling command step",Group="Motion",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+GS_SPEED_SET_ADV_FILTER_V1=16,//Help="Advanced filter selection Vel1",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+GS_SPEED_SET_ADV_FILTER_V2=17,//Help="Advanced filter selection Vel2",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+GS_SPEED_SET_ADV_FILTER_P1=18,//Help="Advanced filter selection Pos1",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+GS_POS_INDEX_LIMIT1=19,//Help="Schedule by position, limit 1",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GS_POS_INDEX_LIMIT2=20//Help="Schedule by position, limit 2",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}GSParamsStruct;
+
+enum VH_Enum
+{
+VH_SPEED_DYNAMIC_BRAKE=1,//Help="Maximum speed for using dynamic brake",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+VH_SPEED_LIM=2,//Help="Maximum speed reference",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2000000000
+VH_POS_LIM=3//Help="Maximum position reference",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum VL_Enum
+{
+VL_SPEED_LIM=2,//Help="Minimum speed reference",Group="Limits",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+VL_POS_LIM=3//Help="Minimum position reference",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+typedef enum ER_Enum
+{
+ER_VEL_FOLLOWING_ERR=2,//Help="Velocity Following error",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+ER_POS_FOLLOWING_ERR=3,//Help="Position Following error ",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+ER_VEL_GANTRY_FOLLOWING_ERR=4,//Help="Gantry Velocity Following  error",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+ER_POS_GANTRY_FOLLOWING_ERR=5//Help="Gantry Position Following  error ",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}ER_ENUM;
+
+enum FF_Enum
+{
+FF_ACCELERATION=1,//Help="Torque feed forward gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+FF_VELOCITY=2,//Help="Speed feed forward gain",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FF_VEL_POS_RATIO=3,//Help="The ratio between velocity resolution and pos resolution",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FF_PHASE_ADVANCED=4,//Help="Advanced field angle by velocity",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+FF_VEL_OPEN_LOOP=5,//Help="Torque feed forward according to speed",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+FF_KE_VOLTAGE=6,//Help="Motor Constant [Vrms_phase/Krpm]",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+FF_PHASE_ADVANCED_VOLTAGE=7,//Help="Advanced field angle by velocity only for voltage",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+FF_REACTIVE_CURR=8//Help="Generation of Reactive Current Phase Factor [elec.deg / cnt/sec]",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum XM_Enum
+{
+XM_LOW_LIMIT=1,//Help="Main sensor modulo lower limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XM_UP_LIMIT=2//Help="Main sensor modulo upper limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum YM_Enum
+{
+YM_LOW_LIMIT=1,//Help="Additional sensor modulo lower limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=-1000000000
+YM_UP_LIMIT=2//Help="Additional sensor modulo upper limit",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1000000000
+};
+
+enum HL_Enum
+{
+HL_SPEED_LIM=2,//Help="Maximum speed feedback",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+HL_POS_LIM=3//Help="Maximum position feedback",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum LL_Enum
+{
+LL_SPEED_LIM=2,//Help="Minimum speed feedback",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=-1000000
+LL_POS_LIM=3//Help="Minimum position feedback",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=-1000000000
+};
+
+typedef enum TR_Enum
+{
+TR_POS_WIN=1,//Help="Position Window - 0x6067",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+TR_POS_WIN_TIME=2,//Help="Position Windows time - 0x6068",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+TR_VEL_WIN=3,//Help="Velocity window - 0x606d object",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+TR_VEL_WIN_TIME=4//Help="Velocity window time - 0x606e object",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}TR_ENUM;
+
+typedef enum SF_Enum
+{
+SF_MSEC=1,//Help="Smooth Factor [mSec]",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+SF_FRAC=2,//Help="Fractional Smooth [250uSec]",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+SF_RES=3//Help="None",Group="Limits",View="No",Edit="No",Product="H",Grade="All",Default=3
+}SF_SMOOTH_Enum;
+
+typedef enum CA_Enum 
+{
+CA_HALL_LEVEL1=1,//Help="Polarity for digital Hall sensor #1",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_LEVEL2=2,//Help="Polarity for digital Hall sensor #2",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_LEVEL3=3,//Help="Polarity for digital Hall sensor #3",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_DHALLA_POSITION=4,//Help="Position for digital Hall sensor #1",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_DHALLB_POSITION=5,//Help="Position for digital Hall sensor #2",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+CA_DHALLC_POSITION=6,//Help="Position for digital Hall sensor #3",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=3
+CA_DHALL_OFFSET=7,//Help="Offset for absolute sensors",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_IGNORE_ERR=8,//Help="Serial encoder ignore bit error",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_AENC_PH_ERROR=9,//Help="Phase error for analog sensor channels",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_VELA_BITS_NUM=10,//Help="Serial Exclusive #2 number of data bits",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_AENCA_OFFSET=11,//Help="Offset for the A channel of analog sensor",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_AENCB_OFFSET=12,//Help="Offset for the B channel of analog sensor",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_AENCB_GAIN=13,//Help="Gain for the A channel of analog sensor",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=32768
+CA_REF_CMD_MULTIPLY=14,//Help="Multiply socket reference",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_REF_CMD_SHIFT=15,//Help="Shift socket reference",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_COMMUTATE_CONFIG=16,//Help="Commutation configuration",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_INIT_PHASE_METHOD=17,//Help="Initial phasing method",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_MAIN_ENCODER_BITS=18,//Help="Encoder counts per one mechanical revolution",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=4096
+CA_NPOLES=19,//Help="Number of motor pole pairs",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_DHALL_PRESENT=20,//Help="Flag digital Hall sensors are present",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_GURLEY_BITNO=21,//Help="Gurley number of sine cycles",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_ERR_BIT_NUM=22,//Help="Bit number that represents the error bit",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=-1
+CA_SSI_ERR_LOGIC=23,//Help="Flag low level error logic",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HIPERFACE_DIRECTION=24,//Help="Hiperface serial position and analog position correlation",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_MOTOR_DIRECTION=25,//Help="Flag direct/reverse motor phase connection",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_CURRENT_REF2_SOCKET=26,//Help="Connect Current[i] to reference 2 current",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_YAW_CURRENT_REF_SOCKET=27,//Help="Connect Current[i] to Yaw reference current",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_DC_FEATURE=28,//Help="Motor Type",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_OFFSET_COMM_ONLINE=29,//Help="Offset commutation for online change",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_VELA_CONF=30,//Help="Bitwise configuration of Serial Exclusive #2 from PAL",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_AENC_RESOLUTION=31,//Help="Resolution in bit per analog sensor cycle",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+CA_RESOLVER_POLES=32,//Help="Sin/Cos Pole Pairs Number",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_RESOLVER_OFFSET_SIGNAL=33,//Help="Resolver offset calibration signal",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_RESOLVER_NCYCLES=34,//Help="Resolver N cycle interpolation",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_SERIAL_GLITCH_FIL_PAL=35,//Help="Serial encoder PAL glitch filter",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+CA_SERIAL_CLK_FREQ_PAL=36,//Help="Serial encoder clock basic frequency (before post scale)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=25000000
+CA_ERR_MAP_SRC_SOCKET=37,//Help="Error mapping source socket",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_ERR_MAP_DST_SOCKET=38,//Help="Error mapping destination socket",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_PAL2_DEAD_ZONE=39,//Help="SSI Exclusive 2 dead zone",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_ONLY_INTP_TIME_MS=40,//Help="Hall only maximum interpolation time",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P1_ID=41,//Help="Set ID of position[1]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P2_ID=42,//Help="Set ID of position[2]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P3_ID=43,//Help="Set ID of position[3]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P4_ID=44,//Help="Set ID of position[4]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_POSITION_FEEDBACK=45,//Help="Connect Position[i] to position feedback",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_SPEED_FEEDBACK=46,//Help="Connect Position[i] to speed feedback",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_COMMUTAION_SENSOR=47,//Help="Connect Position[i] to commutation sensor",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_UPPER_AMP_SINCOS=48,//Help="Upper amplitude of sin/cos",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=15669722
+CA_LOWER_AMP_SINCOS=49,//Help="Lower amplitude of sin/cos",Group="Limits",View="Yes",Edit="Yes",Product="H",Grade="All",Default=18633
+CA_QUALIFICATION1=50,//Help="qualification filter of eQEP1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=10000000
+CA_QUALIFICATION2=51,//Help="qualification filter of eQEP2",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=10000000
+CA_MIN_AMP_COMM=52,//Help="Minimum amplitude for commutation (planar)",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_STEPPER_ANG_SRC=53,//Help="Stepper angle command source",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P1_DIRECTION=54,//Help="Direction of position[1]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P2_DIRECTION=55,//Help="Direction of position[2]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P3_DIRECTION=56,//Help="Direction of position[3]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P4_DIRECTION=57,//Help="Direction of position[4]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_REDUCE_HIGH=58,//Help="Serial encoder mask high bits",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_RESOLUTION=59,//Help="Serial encoder resolution bit",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_GEN_SENSOR_CONF=60,//Help="General Sensor Configuration",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_REDUCE_BITNO=61,//Help="Serial encoder reduce number of bits",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_MULTITURN_BITNO=62,//Help="Serial encoder multi turn number of bits",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_SYNC_READING=63,//Help="Serial encoder synchronize the mask signal (deltaT)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_CLK_FREQUENCY=64,//Help="Reserved64",Group="Sensors",View="No",Edit="No",Product="H",Grade="All",Default=25000000
+CA_GS_POS_INDEX=65,//Help="Connect Position[i] to schedule index",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_PROTOCOL_BITS=66,//Help="Serial encoder protocol bits",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_POS_LSB=67,//Help="Serial encoder position LSB number",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_POSITION_REF_SOCKET=68,//Help="Connect Position[i] to reference position",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SPEED_REF_SOCKET=69,//Help="Connect Speed[i] to reference speed",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_CURRENT_REF_SOCKET=70,//Help="Connect Current[i] to reference current",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FIR_P1_SOCKET=71,//Help="FIR filter items in socket 1",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FIR_P2_SOCKET=72,//Help="FIR filter items in socket 2",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FIR_P3_SOCKET=73,//Help="FIR filter items in socket 3",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FIR_P4_SOCKET=74,//Help="FIR filter items in socket 4",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FILTER_TYPE_P1_SOCKET=75,//Help="speed filter type in socket 1",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FILTER_TYPE_P2_SOCKET=76,//Help="speed filter type in socket 2",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FILTER_TYPE_P3_SOCKET=77,//Help="speed filter type in socket 3",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_FILTER_TYPE_P4_SOCKET=78,//Help="speed filter type in socket 4",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_ADDITIONAL_POS_SOCKET=79,//Help="Additional Position Select",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_GANTRY_ADD_SOCKET=80,//Help="Gantry socket number to add",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_GANTRY_SUB_SOCKET=81,//Help="Gantry socket number to sub",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_GANTRY_GANTRY_SOCKET_MODE=82,//Help="Gantry socket mode",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_GANTRY_PORT=83,//Help="Gantry Port input",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_GANTRY_COMM_FREQ=84,//Help="Gantry communication frequency",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+CA_GANTRY_SEQUENCE_MODE=85,//Help="Gantry sequence mode",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SSI_DELAY=86,//Help="SSI first clock delay",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_TOUCHPROBE_SOCKET=87,//Help="TouchProbe Socket Selection",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_POS_FIR_LENGTH=88,//Help="Main position FIR length",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PLANAR_Y1_ALIGNMENT=89,//Help="Planar Y1 alignment rate angle",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PLANAR_Y1_MAX_ANGLE=90,//Help="Max angle to search in planar Y1",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P1_OFFSET=91,//Help="Offset of position socket 1",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P2_OFFSET=92,//Help="Offset of position socket 2",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P3_OFFSET=93,//Help="Offset of position socket 3",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_P4_OFFSET=94,//Help="Offset of position socket 4",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_COMM_TIME=95,//Help="Serial sensor communication time",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SERIAL_DECIMAL_BITS=96,//Help="Serial sensor non-binary resolution",Group="Sensor",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_YAW_REF_SOCKET=97,//Help="Connect Position[i] to Yaw reference position",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_STEPPER_CLOSED_CMD=98,//Help="Stepper closed loop command",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_STEPPER_CLOSED_FB=99,//Help="Stepper closed loop feedback",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_PIN_SELECTION=100,//Help="Selection of pin for PWM Duty Cycle signal",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_COMMAND_TYPE=101,//Help="PWM Duty Cycle reference units",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_FREQUENCY_LIMIT=102,//Help="PWM Duty Cycle minimum input frequency",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+CA_PWM_MIN_DUTY=103,//Help="PWM Duty Cycle Minimum Duty Cycle Range (milliPercent)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_MAX_DUTY=104,//Help="PWM Duty Cycle Maximum Duty Cycle Range (milliPercent)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_MIN_DUTY_VALUE=105,//Help="PWM Duty Cycle Minimum Duty Cycle Range Physical Value (mA or cnt/sec)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_MAX_DUTY_VALUE=106,//Help="PWM Duty Cycle Maximum Duty Cycle Range Physical Value (mA or cnt/sec)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_DEADBAND=107,//Help="PWM Duty Cycle DeadBand (mA or cnt/sec)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_SIGNAL_TYPE=108,//Help="PWM Duty Cycle Signal Type (with direction or without)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_PWM_VALUE_INVALID_FREQ=109,//Help="PWM Duty Cycle value for signal below minimum frequency (mA or cnt/sec)",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_SET_HOME_SOCKET=110,//Help="Select the socket for DS402 homing",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_MISMATCH_PHASE=111,//Help="Mismatch commutation angle value",Group="SensCommutationors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_AN_ENC_QUAD_THRESHOLD=112,//Help="Threshold speed from which the analog signals are ignored [cycles/sec]",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_RESERVED_4_SALE=113,//Help="Reserved",Group="Sensors",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+CA_REACTIVE_SPEED_THRES=114,//Help="Threshold speed from which reactive current is generated",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_1_WIDTH=115,//Help="Hall State 1 width",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_2_WIDTH=116,//Help="Hall State 2 width",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_3_WIDTH=117,//Help="Hall State 3 width",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_4_WIDTH=118,//Help="Hall State 4 width",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_HALL_5_WIDTH=119,//Help="Hall State 5 width",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_DZONE_MIN=120,//Help="D-Zone Min value",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_DZONE_MAX=121,//Help="D-Zone Max value",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_ZERO_FF_THR=122,//Help="Zero-Feed-Forward threshold",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+CA_YASKAWA_MT_LIMIT=123//Help="Yaskawa MT Limit value",Group="Sensors",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}CA_CommutationArrayEnum;
+
+typedef enum SC_Enum
+{
+SC_MAX_CURRENT=1,//Help="Maximum current for commutation in % of PL[1]",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=50
+SC_INCREASE_TIME=2,//Help="Time to increase current to maximum [sec]",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.5
+SC_STABILIZATION_TIME=3,//Help="Stabilize time [sec]",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+SC_4_RESERVED=4,//Help="Reserved for compatibility",Group="Commutation",View="No",Edit="No",Product="H",Grade="All",Default=1
+SC_STABLE_SPEED=5,//Help="Stable speed to stop the process",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+SC_RANGE_THRESHOLD=6,//Help="Binary Search: Threshold for stepper",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=5
+SC_MAX_MOVE_DEG=7,//Help="Binary Search: Maximum movement in electrical deg",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+SC_STEPPER_TORQUE_COMMAND=8,//Help="Stepper torque command",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+SC_9_RESERVED=9,//Help="Reserved for compatibility",Group="Commutation",View="No",Edit="No",Product="H",Grade="All",Default=0
+SC_TEST_ANGLE_STEP=10,//Help="Angle for verification test",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=30
+SC_STEPPER_SPEED=11,//Help="Stepper speed during commutation",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+SC_BINARY_VERIFY_EN=12,//Help="Binary Search: Verification enabled",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+SC_UNBALANCED_AXIS_EN=13,//Help="Unbalanced axis commutation",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+SC_IR_LS=14,//Help="IR observer: Ls",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.005
+SC_IR_RS=15//Help="IR observer: Rs",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+}SC_PARAMS_Enum;
+
+enum OF_Enum
+{
+OF_ABORT_CONNECTION=1,//Help="Abort connection code - 0x6007",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_QS_OPTION_CODE=2,//Help="Quick stop Option Code - 0x605A object",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_SHUT_DOWN_OPTION_CODE=3,//Help="Shut down option code - 0x605B",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_DISABLE_OPERATION_OPTION_CODE=4,//Help="Disable operation option code - 0x605C",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_HALT_OPTION_CODE=5,//Help="Halt option code - 0x605D",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_FAULT_REACTION_OPTION_CODE=6,//Help="Fault reaction option code - 0x605E",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MODES_OF_OPERATION=7,//Help="Modes of Operation - 0x6060",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_VEL_THRESHOLD=8,//Help="Velocity threshold - 0x606f",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_VEL_THRESHOLD_TIME=9,//Help="Velocity threshold time - 0x6070",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MAX_TORQUE=10,//Help="Maximal torque - 0x6072",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MAX_CURRENT=11,//Help="Maximal current ( same as maximal torque ) - 0x6073",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MOTOR_RATED_CURRENT=12,//Help="Motor rated current - 0x6075",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MOTOR_RATED_TORQUE=13,//Help="Motor rated torque - 0x6076",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_POLARITY=14,//Help="Polarity - 0x607e",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MAX_PROFILE_VEL=15,//Help="Max profile velocity - 0x607F",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MAX_MOTOR_SP=16,//Help="Max motor speed - 0x6080",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_TORQUE_SLOPE=17,//Help="Torque slope - 0x6087",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_POS_TORQUE_LIMIT=18,//Help="Positive torque limit - 0x60E0",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_NEG_TORQUE_LIMIT=19,//Help="Negative torque limit - 0x60E1",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MAX_ACC=20,//Help="Max AC - Override by SD on BG - 0x60C5",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_MAX_DC=21,//Help="Max DC - Override by SD on BG - 0x60C6",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_INTERP_POS_SUB_MODE=22,//Help="Interpoalted position sub mode - 0x60C0",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED23=23,//Help="None",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_INTERP_DATA_ACTUAL_BUF_SIZE=24,//Help="Interpolated data actual buffer size - 0x60C4.2",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_INTERP_DATA_BUF_ORGANIZATION=25,//Help="Interpolated data buffer organization - 0x60C4.3",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_PROFILE_AC=26,//Help="Profile Acceleration - 0x6083 (Override on bg (*AC))",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_PROFILE_DC=27,//Help="Profile deceleration - 0x6084 (Override on bg (*DC))",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_QUICK_STOP_DC=28,//Help="Quick stop deceleration	 - 0x6085 (Override by SD on BG)",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_POS_FOLOW_ERR=29,//Help="Position following error - 0x6065",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_POS_FOLOW_ERR_TIME=30,//Help="Position following error time - 0x6066",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED31=31,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED32=32,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED33=33,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED34=34,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED35=35,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED36=36,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED37=37,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED38=38,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED39=39,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_POS_WINDOW=40,//Help="Position window - 0x6067 (Override by TR[1])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_POS_WINDOW_TIME=41,//Help="Position window time - 0x6068 (Override by TR[2])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_VEL_WINDOW=42,//Help="Velocity window - 0x606D (Override by TR[3])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_VEL_WINDOW_TIME=43,//Help="velocity window time - 0x606E (Override by TR[4])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_SW_LOW_LIMIT=44,//Help="Low Software Limit - 0x607D.1 (Override by VL[3])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_SW_HI_LIMIT=45,//Help="High software limit - 0x607D.2 (Override by VH[3])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_LOW_POS_RANGE=46,//Help="Low pos range - 0x607B.1 (Override by XM[1])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_HI_POS_RANGE=47,//Help="High pos range - 0x607B.2 (Override by XM[2])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_SMOOTH_FACTOR=48,//Help="Smooth factor mSec - 0x31DA (Override by SF on BG)",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_UNUSED49=49,//Help="Unused",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_TORQ_WINDOW=50,//Help="Torque window - 0x2E06 (Override by TR[5])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+OF_TORQ_WINDOW_TIME=51//Help="Torque window time - 0x2E07 (Override by TR[6])",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+typedef enum FC_Enum
+{
+FC_ENCODER_INCREMENTS=1,//Help="Position encoder resolution 0x608F.1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_MOTOR_REVOLUTIONS=2,//Help="Position encoder resolution 0x608F.2",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_ENCODER_INCREMENTS_PER_SECOND=3,//Help="Reserved: Velocity encoder resolution 0x6090.1",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=1
+FC_MOTOR_REVOLUTIONS_PER_SECOND=4,//Help="Reserved: Velocity encoder resolution 0x6090.2",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=1
+FC_MOTOR_SHAFT_REVOLUTIONS=5,//Help="Gear ratio 0x6091.1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_DRIVING_SHAFT_REVOLUTIONS=6,//Help="Gear ratio 0x6091.2",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_FEED=7,//Help="Feed constant 0x6092.1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_DRIVING_REVOLUTIONS=8,//Help="Feed constant 0x6092.2",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_VELOCITY_FACTOR_NUM=9,//Help="Velocity factor 0x6096.1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_VELOCITY_FACTOR_DEN=10,//Help="Velocity factor 0x6096.2",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_ACCELERATION_FACTOR_NUM=11,//Help="Acceleration factor 0x6097.1",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+FC_ACCELERATION_FACTOR_DEN=12//Help="Acceleration factor 0x6097.2",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+}FC_ENUM;
+
+typedef enum IL_Enum
+{
+IL_IN1=1,//Help="Digital In 1 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IL_IN2=2,//Help="Digital In 2 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN3=3,//Help="Digital In 3 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN4=4,//Help="Digital In 4 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN5=5,//Help="Digital In 5 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN6=6,//Help="Digital In 6 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN11=11,//Help="Differential Digital In 11 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN12=12,//Help="Differential Digital In 12 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN13=13,//Help="Differential Digital In 13 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN14=14,//Help="Differential Digital In 14 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN15=15,//Help="Differential Digital In 15 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+IL_IN16=16//Help="Differential Digital In 16 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=7
+}IL_ENUM;
+
+typedef enum IF_Enum
+{
+IF_IN1=1,//Help="Digital In 1 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN2=2,//Help="Digital In 2 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN3=3,//Help="Digital In 3 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN4=4,//Help="Digital In 4 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN5=5,//Help="Digital In 5 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN6=6,//Help="Digital In 6 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN11=11,//Help="Digital In 11 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN12=12,//Help="Digital In 12 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN13=13,//Help="Digital In 13 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN14=14,//Help="Digital In 14 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN15=15,//Help="Digital In 15 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+IF_IN16=16//Help="Digital In 16 filter",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}IF_ENUM;
+
+typedef enum OL_Enum
+{
+OL_OUT1=1,//Help="Digital Out 1 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+OL_OUT2=2,//Help="Digital Out 2 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+OL_OUT3=3,//Help="Digital Out 3 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+OL_OUT4=4,//Help="Digital Out 4 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+OL_OUT14=14,//Help="Differential Digital Out 14 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+OL_OUT15=15,//Help="Differential Digital Out 15 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+OL_OUT16=16//Help="Differential Digital Out 16 logic\function",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}OL_ENUM;
+
+enum IA_Enum
+{
+IA_INTENABLE=1,//Help="Analog Feedback Index search",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+IA_FLAG=2,//Help="Analog Feedback Index Clear Flag",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+IA_ANGLEPOSITIVE=3,//Help="Analog Feedback Index Angle at Positive",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+IA_ANGLENEGATIVE=4//Help="Analog Feedback Index Angle at Negative",Group="System",View="No",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+typedef enum GO_Enum
+{
+GO_OUT_1=1,//Help="Digital Output-1 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GO_OUT_2=2,//Help="Digital Output-2 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GO_OUT_3=3,//Help="Digital Output-3 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GO_OUT_4=4,//Help="Digital Output-4 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GO_OUT_14=14,//Help="Digital Output-14 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GO_OUT_15=15,//Help="Digital Output-15 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+GO_OUT_16=16//Help="Digital Output-16 Compare Selection",Group="Outputs",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+}GO_ENUM;
+
+enum BP_Enum
+{
+BP_ENGAGE_BRAKE=1,//Help="Engage brake time in millisec (motor on to motor off)",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+BP_RELEASE_BRAKE=2//Help="Release brake time in millisec (motor offn to motor on)",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum EA_Enum
+{
+EA_EMULATION_START=1,//Help="Encoder Emulation Start/Stop",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_PULSE_WIDTH=2,//Help="Encoder Emulation Pulse Width",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+EA_EMULATION_DIRECTION=3,//Help="Encoder Emulation Direction",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_EMULATED_SOCKET=4,//Help="Encoder Emulation Emulated socket number",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_FEEDBACK_SOCKET=5,//Help="Encoder Emulation feedback socket number",Group="System",View="No",Edit="No",Product="H",Grade="All",Default=0
+EA_EMULATION_MULTIPLIER=6,//Help="Encoder Emulation Emulated Socket Multiplier",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+EA_EMULATION_DIVIDER=7,//Help="Encoder Emulation Emulated Socket Divider",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_FEEDBACK_AQB=8,//Help="Encoder Emulation Include AqB Feedback Socket",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_PWM_SOURCE=9,//Help="PWM Emulation Source",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+EA_EMULATION_PWM_FREQ_INDEX=10,//Help="PWM Emulation Frequency",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=5
+EA_EMULATION_PWM_SPEED_MIN=12,//Help="PWM Emulation Minimum Speed",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_PWM_SPEED_MAX=13,//Help="PWM Emulation Maximum Speed",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100000
+EA_EMULATION_PWM_CURRENT_MIN=14,//Help="PWM Emulation Minimum Current",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_PWM_CURRENT_MAX=15,//Help="PWM Emulation Maximum Current",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_PWM_PERCENT_MIN=16,//Help="PWM Emulation Percent Minimum (milliPercent)",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EA_EMULATION_PWM_PERCENT_MAX=17//Help="PWM Emulation Percent Maximum (milliPercent)",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum PC_Enum
+{
+PC_START=1,//Help="Position correction Start/Stop",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+PC_SOCKET=2,//Help="Position correction socket selection",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+PC_TABLE=3,//Help="Position correction table selection",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+PC_TABLE_LOW_INDEX=4,//Help="Position correction start table index",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+PC_TABLE_HI_INDEX=5,//Help="Position correction end table index",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=2
+PC_TABLE_GRID=6,//Help="Position correction table grid",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=3
+PC_START_POSITION=7,//Help="Position correction table start position",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+PC_MODULO=8//Help="Position correction modulo",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+};
+
+enum AG_Enum
+{
+AG_ANALOG_IN_01=1//Help="Analog reference gain for analog input #1 ",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum AS_Enum
+{
+AS_AnalogOffset1=1,//Help="Analog offset for analog input #1",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+AS_AnalogOffset2=2//Help="Analog offset for analog input #2",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum AD_Enum
+{
+AD_AnalogDeadBandNeg=1,//Help="Analog1 dead band for negative voltage",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+AD_AnalogDeadBandPos=2//Help="Analog1 dead band for positive voltage",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum AR_Enum
+{
+AR_AnalogRefUnitIn1=1,//Help="Analog reference units for analog input #1",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+AR_AnalogRefUnitIn2=2//Help="Unused",Group="Digital/Analog interface",View="No",Edit="No",Product="H",Grade="All",Default=0
+};
+
+enum NF_Enum
+{
+NF_FRICTION_POS_COMMAND=1,//Help="Current for positive friction",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_FRICTION_NEG_COMMAND=2,//Help="Current for negative friction",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_COGGING_OPTION=3,//Help="Cogging compensation type",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_COGGING_AMP=4,//Help="Cogging by sin, amplitude",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_COGGING_HARMONIC=5,//Help="Cogging by sin, harmonic of phase angle",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_COGGING_PHASE_OFFSET=6,//Help="Cogging by sin, phase offset",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_INTEGRAL_DRAIN=7,//Help="Velocity Integral Drain (dead zone)",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_INPUT_SHAPER_TYPE=8,//Help="Input Shaper Type",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+NF_INPUT_SHAPER_FREQ=9,//Help="Input Shaper Frequency",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=20
+NF_INPUT_SHAPER_DAMP=10,//Help="Input Shaper Damping Factor",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.1
+NF_IR_OBSRV_CNT_PER_REVOLUTION=11,//Help="IR observer motor resolution",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=10000
+NF_IR_OBSRV_VOLTAGE_THR=12//Help="IR observer voltage threshold",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.1
+};
+
+enum US_Enum
+{
+US_CurrentOutput=1,//Help="Voltage limit - Current controller output",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+US_CurrentIntegral=2,//Help="Current Integral limit",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+US_VelocityIntegral=3,//Help="Velocity Integral limit",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+US_GantryVelPosOutput=4//Help="Current limit - Gantry Position/Velocity controller output",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+};
+
+enum EM_Enum
+{
+EM_MODE=1,//Help="ECAM/Follower Mode",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EM_TABLE_HI_INDEX=2,//Help="ECAM last valid index",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=10
+EM_START_POSITION=3,//Help="ECAM start position",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EM_TABLE_GAP=4,//Help="ECAM table gap",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+EM_TABLE_LOW_INDEX=5,//Help="ECAM first valid index",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+EM_CAN_HEAD_POINTER=6,//Help="ECAM CAN head pointer",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EM_LAST_SEGM_SHORT=7,//Help="ECAM last segment shortening",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EM_TABLE_CUR_INDEX=8,//Help="ECAM present executing index",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EM_RATIO_NUMERATOR=9,//Help="ECAM ratio numerator",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+EM_RATIO_DENOMINATOR=10,//Help="ECAM ratio denominator",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+EM_ECAM_OPTIONS=11,//Help="ECAM options",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+EM_VEL_FIR_LENGTH=12,//Help="ECAM velocity FIR filter length",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=8
+EM_ACC_FIR_LENGTH=13//Help="ECAM acceleration FIR filter length",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=8
+};
+
+enum HT_Enum
+{
+HT_Holding=1,//Help="Stepper open loop - holding torque at stop",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+HT_Speed=2,//Help="Stepper open loop - torque at speed",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+HT_Acceleration=3//Help="Stepper open loop - torque at acceleration",Group="Motion",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum XT_Enum
+{
+XT_LOW_VOLT_SENS=1,//Help="Threshold for under voltage level [mV]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XT_HI_VOLT_SENS=2,//Help="Threshold for over voltage level [mV]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XT_ANALOG_SENSOR_SENS=3,//Help="Threshold for analog sensors min amplitude [A2D^2]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XT_HI_TEMP_SENS=4//Help="Threshold for high temperature sensing [C]",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=85
+};
+
+enum XI_Enum
+{
+XI_VALUE=1,//Help="Extended input value",Group="Digital/Analog interface",View="No",Edit="No",Product="H",Grade="All",Default=0
+XI_LOGIC=2,//Help="Extended input logic",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0xFFFFFF00
+XI_PDO_MASK=3//Help="Extended input PDO Mask",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum XO_Enum
+{
+XO_VALUE=1,//Help="Extended output value",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+XO_LOGIC=2,//Help="Extended output logic",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0xFFFFFFFE
+XO_MASK=3//Help="Extended output Mask",Group="Digital/Analog interface",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0
+};
+
+enum KK_Enum
+{
+KK_ACFAIL=1,//Help="Filter AC fail sensing",Group="System",View="Yes",Edit="Yes",Product="H",Grade="All",Default=10
+KK_RES=2//Help="None",Group="System",View="No",Edit="No",Product="H",Grade="All",Default=0
+};
+
+typedef enum BF_Enum
+{
+BF_SNLS_LS=1,//Help="Sensorless: Ls",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.002
+BF_SNLS_RS=2,//Help="Sensorless: Rs",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=1
+BF_SNLS_LPF=3,//Help="Sensorless: LPF[Hz]",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+BF_SNLS_KSW_INIT_VEL=4,//Help="Sensorless: Ksw initial velocity",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=500000
+BF_SNLS_KSW_INIT_GAIN=5,//Help="Sensorless: Ksw initial gain ",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=25
+BF_SNLS_KSW_SLOPE=6,//Help="Sensorless: Ksw slope",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.00001667
+BF_SNLS_KSW_LPF=7,//Help="Sensorless: Ksw LPF[Hz]",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=50
+BF_SNLS_VEL_EST_K=8,//Help="Sensorless: Velocity estimator gain",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=100
+BF_SNLS_VEL_THRESHOLD=9,//Help="Sensorless: loop closing velocity",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=500000
+BF_SNLS_UM1_ACC_TIME=10//Help="Sensorless: acceleration time [sec], UM=1",Group="Commutation",View="Yes",Edit="Yes",Product="H",Grade="All",Default=0.5
+}BF_PARAMS_Enum;
+</version.h>
+  <MenemTab.h Name="DspCompiler\MenemTab.h">65,
+-1,
+66,
+67,
+-1,
+-1,
+68,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+69,
+-1,
+-1,
+-1,
+70,
+71,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+72,
+73,
+74,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+75,
+-1,
+-1,
+76,
+77,
+-1,
+78,
+-1,
+-1,
+-1,
+-1,
+79,
+-1,
+80,
+81,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+82,
+-1,
+-1,
+-1,
+83,
+-1,
+-1,
+84,
+-1,
+85,
+-1,
+86,
+-1,
+-1,
+-1,
+-1,
+87,
+88,
+89,
+-1,
+90,
+-1,
+-1,
+-1,
+-1,
+-1,
+91,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+92,
+-1,
+-1,
+-1,
+-1,
+93,
+94,
+95,
+-1,
+96,
+-1,
+-1,
+-1,
+97,
+-1,
+-1,
+-1,
+98,
+-1,
+99,
+-1,
+-1,
+100,
+-1,
+101,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+102,
+-1,
+103,
+104,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+105,
+-1,
+-1,
+106,
+107,
+-1,
+108,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+109,
+-1,
+-1,
+-1,
+-1,
+-1,
+110,
+111,
+-1,
+-1,
+112,
+-1,
+-1,
+113,
+114,
+115,
+116,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+117,
+-1,
+-1,
+-1,
+-1,
+-1,
+118,
+119,
+-1,
+-1,
+120,
+-1,
+-1,
+-1,
+121,
+-1,
+-1,
+-1,
+122,
+-1,
+-1,
+123,
+124,
+-1,
+125,
+-1,
+126,
+-1,
+-1,
+-1,
+-1,
+-1,
+127,
+-1,
+-1,
+-1,
+128,
+129,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+130,
+-1,
+-1,
+-1,
+-1,
+-1,
+131,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+132,
+-1,
+133,
+-1,
+134,
+135,
+-1,
+-1,
+-1,
+136,
+-1,
+137,
+-1,
+-1,
+-1,
+138,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+139,
+140,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+141,
+-1,
+-1,
+-1,
+142,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+143,
+-1,
+-1,
+144,
+-1,
+-1,
+145,
+-1,
+-1,
+-1,
+-1,
+-1,
+146,
+-1,
+-1,
+147,
+148,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+149,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+150,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+151,
+152,
+-1,
+-1,
+153,
+-1,
+-1,
+-1,
+-1,
+-1,
+154,
+-1,
+-1,
+-1,
+155,
+-1,
+-1,
+-1,
+-1,
+-1,
+156,
+-1,
+-1,
+-1,
+-1,
+157,
+158,
+159,
+-1,
+160,
+-1,
+-1,
+-1,
+-1,
+-1,
+161,
+162,
+163,
+-1,
+164,
+165,
+-1,
+166,
+167,
+-1,
+168,
+-1,
+-1,
+169,
+170,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+171,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+172,
+-1,
+-1,
+-1,
+173,
+-1,
+-1,
+-1,
+-1,
+174,
+175,
+-1,
+-1,
+176,
+-1,
+177,
+178,
+-1,
+-1,
+179,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+180,
+181,
+182,
+183,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+184,
+185,
+186,
+-1,
+187,
+-1,
+188,
+-1,
+189,
+190,
+-1,
+-1,
+-1,
+-1,
+-1,
+191,
+-1,
+-1,
+-1,
+-1,
+-1,
+192,
+-1,
+-1,
+-1,
+193,
+-1,
+-1,
+194,
+-1,
+195,
+196,
+-1,
+-1,
+-1,
+197,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+198,
+-1,
+-1,
+199,
+-1,
+-1,
+200,
+201,
+-1,
+-1,
+-1,
+-1,
+-1,
+202,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+203,
+-1,
+-1,
+204,
+-1,
+-1,
+205,
+-1,
+-1,
+-1,
+206,
+-1,
+-1,
+207,
+208,
+-1,
+209,
+210,
+-1,
+212,
+-1,
+-1,
+211,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+213,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+214,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+215,
+-1,
+216,
+-1,
+-1,
+-1,
+-1,
+-1,
+217,
+-1,
+-1,
+-1,
+218,
+-1,
+219,
+220,
+221,
+222,
+-1,
+223,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+224,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+225,
+-1,
+-1,
+226,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+-1,
+227,
+-1,
+228,
+</MenemTab.h>
+  <OpCod.h Name="DspCompiler\OpCod.h">MLT , 0
+SUB , 1
+ADD , 2
+DIV , 3
+REM , 4
+RSLTAND , 5
+RSLTOR , 6
+XOR , 7
+NOT , 8
+SHR , 9
+SHL , 10
+AND , 11
+F_OR , 12
+UNARY_NOT , 13
+RSLTE , 14
+RSLTA , 15
+RSLTAE , 16
+RSLTB , 17
+RSLTBE , 18
+RSLTNE , 19
+MOV , 20
+CMP , 21
+JMP , 22
+JMP_LABEL , 23
+JMP_EOL , 24
+JNZ , 25
+JNZ_EOL , 26
+JZ , 27
+JZ_EOL , 28
+SPADD , 29
+GETINDX , 30
+SETINDX , 31
+SET_COMM , 32
+GET_COMM , 33
+SYSSUBJ , 34
+EOL , 35
+FREE_VAC , 36
+USRSUBJ , 37
+USRSUBRT , 38
+LINK , 39
+FORITR , 40
+RESET_VM , 41
+TRY , 42
+ENDTRY , 43
+UNARY_MINUS , 44
+SET_COMM_E , 45
+GET_COMM_E , 46
+</OpCod.h>
+  <Sys_Funcs.h Name="DspCompiler\Sys_Funcs.h">rnd , 47 , 1 , 1
+sqrt , 48 , 1 , 1
+fix , 49 , 1 , 1
+sin , 50 , 1 , 1
+cos , 51 , 1 , 1
+abs , 52 , 1 , 1
+tdif , 53 , 1 , 1
+emit , 54 , 1 , 1
+real , 55 , 1 , 1
+emcy , 56 , 1 , 1
+clrfls , 57 , 1 , 1
+prgerr , 58 , 1 , 1
+tick , 59 , 1 , 1
+tock , 60 , 1 , 1
+sign , 61 , 1 , 1
+save , 62 , 0 , 1
+utick , 63 , 1 , 1
+utock , 64 , 1 , 1
+</Sys_Funcs.h>
+  <Flags.h Name="DspCompiler\Flags.h">262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+262
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+8456
+262
+8456
+8456
+518
+517
+518
+517
+517
+517
+518
+518
+517
+518
+518
+518
+518
+518
+518
+518
+518
+518
+-5112
+1102
+5197
+5197
+5125
+5198
+5197
+5197
+9224
+-7094
+13390
+5125
+9294
+1030
+5198
+25678
+-5112
+5197
+25608
+9294
+1030
+9294
+-5112
+1102
+1030
+25608
+9224
+13317
+13390
+13390
+17486
+5126
+9224
+13390
+1102
+5198
+13390
+5198
+25674
+5197
+13390
+9294
+13389
+13316
+5198
+5198
+13390
+5198
+13390
+13390
+13318
+13318
+13390
+5198
+13390
+25608
+5197
+25678
+5198
+13390
+1029
+5197
+5198
+9294
+1029
+9294
+9294
+5197
+5197
+5198
+25608
+5197
+9224
+5197
+1030
+25608
+5198
+29702
+1029
+1030
+9294
+9294
+13390
+1030
+5197
+13389
+13390
+13390
+13390
+5198
+9294
+13390
+9294
+9222
+13390
+9222
+25674
+5197
+9294
+1102
+13390
+9294
+25606
+1030
+9294
+9294
+13390
+9294
+9294
+9294
+9294
+13390
+9294
+25608
+13390
+5197
+1102
+5197
+1102
+13318
+1030
+1102
+1030
+9224
+25608
+1030
+9293
+13318
+9294
+13389
+5198
+17486
+13386
+13389
+13390
+25674
+9294
+5198
+-5112
+1030
+5198
+5198
+-5112
+1030
+-5112
+-5112
+1030
+1030
+13318
+13317
+5198
+25608
+5198
+5198
+5198
+5198
+-5112
+13390
+5198
+5198
+13389
+13390
+13390
+13390
+</Flags.h>
+  <Vectors.ini Name="Vectors.ini">Recorded Signals = 254
+{0,1,8,Unused,None,Velocity}
+{1,1,8,Velocity,User,Velocity}
+{2,0,8,Position,User,Position}
+{3,0,8,Position Command,User,Position}
+{4,0,8,Digital Input,User,Inputs}
+{5,0,8,Position Error,User,Position}
+{6,1,8,Current Command [A],User,Current}
+{7,0,4,DC Bus Voltage,User,Voltage}
+{8,1,8,Velocity Command,User,Velocity}
+{9,0,4,Field Angle,User,Control}
+{10,1,8,Active Current [A],User,Current}
+{11,1,8,Reactive Current [A],User,Current}
+{12,1,4,Analog Input 1,User,Inputs}
+{13,0,4,Analog Input 2,User,Inputs}
+{14,1,8,Current - Phase A,User,Current}
+{15,1,8,Current - Phase B,User,Current}
+{16,1,8,Current - Phase C,User,Current}
+{17,0,4,Identification Experiment,Developer,Control}
+{18,0,8,Commutation Sensor,Expert,Control}
+{19,0,4,A Voltage,Expert,Voltage}
+{20,0,4,B Voltage,Expert,Voltage}
+{21,0,4,C Voltage,Expert,Voltage}
+{22,1,8,Filtered Trq Cmd,Expert,Current}
+{23,1,8,I_QIntL,Developer,Current}
+{24,0,8,Exception,User,General}
+{25,1,8,Q Controller Out,Expert,Control}
+{26,1,8,D Controller Out,Expert,Control}
+{27,0,4,Hall Sensor,User,General}
+{28,0,8,EQep2 Free timer,Developer,System}
+{29,0,8,SYNC0 latch time,Developer,System}
+{30,0,8,Timer1 Global time,Developer,System}
+{31,0,8,Unused,User,None}
+{32,0,4,Unused,User,None}
+{33,0,8,MatlabTestLong,Developer,System}
+{34,0,4,MatlabTestShort,Developer,System}
+{35,1,8,MatlabTestFloat,Developer,System}
+{36,0,16,MatlabTestDouble,Developer,System}
+{37,0,4,ADC IA,Developer,Current}
+{38,0,4,ADC IB,Developer,Current}
+{39,0,4,ADC IC,Developer,Current}
+{40,0,4,ADC ID,Developer,Current}
+{41,0,4,ADC ENC 2 or EAG:ADC IN0,Developer,System}
+{42,0,4,ADC VBUS  or EAG:ADC IN1,Developer,Voltage}
+{43,0,4,ADC ENC 0,Developer,System}
+{44,0,4,ADC ENC 1,Developer,System}
+{45,1,4,ADC INPUT 0 or EAG:ADC Enc2,Developer,System}
+{46,0,4,ADC INPUT 1 or EAG:ADC VBUS,Developer,System}
+{47,0,4,ADC ENC 0_2,Developer,System}
+{48,0,4,ADC ENC 1_2,Developer,System}
+{49,0,4,ADC REF,Developer,System}
+{50,0,4,ADC TMP,Expert,System}
+{51,0,4,ADC GND,Expert,System}
+{52,0,4,ADC 5V,Expert,System}
+{53,1,8,Filtered Vbus,Developer,System}
+{54,0,8,Profiler process absolute time,Developer,System}
+{55,0,8,Unused,Developer,None}
+{56,1,8,Profiler Acceleration Out,Expert,Current}
+{57,0,8,Control process absolute time,Developer,System}
+{58,0,8,RtInterpRho,Developer,System}
+{59,1,8,PiSpeedCmd,Expert,Control}
+{60,1,8,VelAdvFilterOutput,Expert,Control}
+{61,1,8,VelAdvFilterInput,Expert,Control}
+{62,1,8,SpeedError,Developer,Control}
+{63,1,8,SpeedPiOut,Developer,Control}
+{64,1,8,SpeedIntegral,Expert,Control}
+{65,1,8,fDebug1,Developer,System}
+{66,1,8,fDebug2,Developer,System}
+{67,1,8,fDebug3,Developer,System}
+{68,1,8,fDebug4,Developer,System}
+{69,1,8,fDebug5,Developer,System}
+{70,0,8,Socket 1 Position,Expert,Position}
+{71,0,8,Socket 2 Position,Expert,Position}
+{72,0,8,Socket 3 Position,Expert,Position}
+{73,0,8,Socket 4 Position,Expert,Position}
+{74,1,8,Socket 1 Velocity,Expert,Velocity}
+{75,1,8,Socket 2 Velocity,Expert,Velocity}
+{76,1,8,Socket 3 Velocity,Expert,Velocity}
+{77,1,8,Socket 4 Velocity,Expert,Velocity}
+{78,0,4,Unused,Expert,None}
+{79,0,8,SinCos Atan2,Expert,Position}
+{80,0,8,Program Var1,User,General}
+{81,0,8,Program Var2,User,General}
+{82,0,8,Program Var3,User,General}
+{83,0,8,Program Var4,User,General}
+{84,0,8,Program Var5,User,General}
+{85,0,8,Program Var6,User,General}
+{86,0,8,Program Var7,User,General}
+{87,0,8,Program Var8,User,General}
+{88,0,4,Closed Loop Current Identificatio,Expert,Current}
+{89,0,8,Sin Encoder,User,System}
+{90,0,8,Cos Encoder,User,System}
+{91,0,4,Speed Ident Flag,Expert,System}
+{92,0,4,GS Index,User,Control}
+{93,1,8,Acceleration Command,Expert,Current}
+{94,0,8,Absolute Serial Position,Expert,Position}
+{95,0,8,Debug03,Developer,System}
+{96,0,8,Debug04,Developer,System}
+{97,0,8,Debug05,Developer,System}
+{98,0,8,Debug06,Developer,System}
+{99,0,8,Debug07,Developer,System}
+{100,0,8,Debug08,Developer,System}
+{101,0,4,Debug09,Developer,System}
+{102,0,8,Target Position 0x607A,User,Position}
+{103,0,8,Target Velocity 0x60FF,User,Velocity}
+{104,0,4,Target Torque 0x6071,User,Current}
+{105,1,8,Speed Error [cnt/sec],User,Velocity}
+{106,0,8,Sine Cycles Counter,Expert,Current}
+{107,1,8,Socket 1 Current,Expert,Current}
+{108,1,8,Socket 2 Current,Expert,Current}
+{109,1,8,Socket 3 Current,Expert,Current}
+{110,1,8,Socket 4 Current,Expert,Current}
+{111,1,8,Total Current Command [A],User,Current}
+{112,1,8,Total Velocity Command,User,Velocity}
+{113,0,8,Total Position Command,User,Position}
+{114,0,4,Ds402WaitMo0,Developer,System}
+{115,0,4,Ds402WaitMo1,Developer,System}
+{116,0,4,Ds402WaitTransition,Developer,System}
+{117,0,4,Ds402FsaState,Expert,System}
+{118,0,8,Actual Position 0x6064,User,Position}
+{119,0,8,Position Demand 0x6062,Expert,Position}
+{120,0,4,Control Word 0x6040,Expert,System}
+{121,0,4,Status Word 0x6041,Expert,System}
+{122,0,4,MO Proc,Expert,System}
+{123,1,8,Profiler Speed Out Internal,Expert,Velocity}
+{124,1,8,Smoothed Profiler Speed Out,Expert,Velocity}
+{125,1,8,Profiler Torque Out,User,Current}
+{126,1,8,Smoothed Profiler Acceleration Ou,Expert,Current}
+{127,0,8,Profiler Position Out internal,Expert,Position}
+{128,0,8,Smoothed Position Out Internal,Expert,Position}
+{129,1,8,Stop Manager Speed Out,Expert,Velocity}
+{130,0,8,Stop Manager Position Out,Expert,Position}
+{131,0,8,Socket 1 HwPosition,Expert,Position}
+{132,0,8,Socket 2 HwPosition,Expert,Position}
+{133,0,8,Socket 3 HwPosition,Expert,Position}
+{134,0,8,Socket 4 HwPosition,Expert,Position}
+{135,1,8,Unused,Expert,None}
+{136,1,8,Profile Torque RT,Expert,Current}
+{137,0,4,Motion Status Main,User,General}
+{138,0,8,Idle Loop time,Expert,System}
+{139,0,4,Control Loop,Expert,Control}
+{140,0,4,GS Index by Speed,Expert,Control}
+{141,0,4,GS Index by Position,Expert,Control}
+{142,0,4,GS Index by CRS,Expert,Control}
+{143,0,8,Position RT Reference Command,User,Position}
+{144,1,8,Velocity RT Reference Command,User,Velocity}
+{145,0,4,Cyclic Ref Is Active,Expert,System}
+{146,0,8,Absolute Gurley Cycles Count,Expert,Position}
+{147,0,4,Gurley Position Valid,Expert,Position}
+{148,0,4,Profile Position Queue Head,Expert,System}
+{149,0,4,Profile Position Queue Tail,Expert,System}
+{150,0,4,Switch\Halt\QS\Fault Active Flags,Expert,System}
+{151,0,8,TimeOfSync,Expert,System}
+{152,0,8,Digital Output OP value (SCORE),Expert,Inputs}
+{153,0,8,Digital Output 0x60FE (GCON),Expert,Inputs}
+{154,0,4,Tamagawa FS,Expert,Position}
+{155,0,8,Resolver Signal Offset,Expert,System}
+{156,0,4,Resolver ADC ENC 0 Sync,Expert,System}
+{157,0,4,Resolver ADC ENC 1 Sync,Expert,System}
+{158,0,4,Resolver top reading flag,Expert,System}
+{159,0,8,OC1 pulses generated (OC[12]),Expert,System}
+{160,0,8,OC2 pulses generated (OC[32]),Expert,System}
+{161,0,8,Gantry Differential Position,User,Position}
+{162,1,8,Gantry Velocity before filter,Expert,Velocity}
+{163,1,8,Gantry Velocity after filter,Expert,Velocity}
+{164,1,8,Next Gantry Current,Expert,Current}
+{165,1,8,Gantry Current,User,Current}
+{166,0,8,Velocity Offset 0x60B1,User,Velocity}
+{167,1,8,Additional Speed [cnt/sec],Expert,Velocity}
+{168,0,8,Additional Position 0x20A0,User,Position}
+{169,0,8,Additional Position [cnt],Expert,Position}
+{170,1,8,Current - Phase D,User,Current}
+{171,0,4,D Voltage,Expert,Voltage}
+{172,0,4,Drive Temperature [C],User,System}
+{173,0,8,SR - Status Register,User,System}
+{174,0,4,Torque Offset 0x60B2,User,Current}
+{175,0,4,Gantry Sync and CRC Error,Expert,System}
+{176,0,8,PvtUsecCounter,Expert,System}
+{177,0,8,Profiler Position Out UU,Expert,Position}
+{178,1,8,Speed Out Internal,Expert,Velocity}
+{179,0,4,Interpolation Active,Expert,System}
+{180,0,4,Mode Of Operation Display 0x6061,Expert,System}
+{181,0,8,Actual Velocity 0x606C,User,Velocity}
+{182,0,8,5V Digital Supply,User,Voltage}
+{183,0,8,Phasing Profiler Position Out,Expert,Position}
+{184,1,8,Phasing Profiler Speed Out,Expert,Velocity}
+{185,1,8,Phasing Profiler Acceleration Out,Expert,Current}
+{186,0,8,Superimposed Profiler Pos Out,Expert,Position}
+{187,1,8,Superimposed Profiler Speed Out,Expert,Velocity}
+{188,1,8,Superimposed Profiler Acc Out,Expert,Current}
+{189,0,8,ECAM Position In,Expert,Position}
+{190,0,8,ECAM Position Out,User,Position}
+{191,0,8,ECAM Slave Segment Index,User,Position}
+{192,1,8,ECAM Speed Out,User,Velocity}
+{193,1,8,ECAM Acceleration Out,User,Current}
+{194,0,8,SinCos amplitude,Expert,System}
+{195,0,4,Brake output Active,User,Inputs}
+{196,0,4,IP extrapolation,Developer,System}
+{197,0,4,First Record Loaded,Developer,System}
+{198,0,8,Interpolated Data 0x60C1.1,Expert,Position}
+{199,0,8,Interpolated Data 0x60C1.2,Expert,Velocity}
+{200,0,4,Hw Limits Flag,Expert,Inputs}
+{201,0,8,CAN IP mode SyncMboxTime,Developer,System}
+{202,0,8,Interpolation Buf[0],Expert,Position}
+{203,0,4,Reference mode (RM),Expert,System}
+{204,1,8,Cogging Current [A],Expert,Current}
+{205,0,4,ADC STO1,Developer,System}
+{206,0,4,ADC STO2,Developer,System}
+{207,0,8,Fast Reference 0x2005,Expert,Position}
+{208,0,4,None-DC Counter,Developer,System}
+{209,0,4,None-DC Correction,Developer,System}
+{210,0,4,SysTiming Flags,Developer,System}
+{211,0,4,Actual Torque 0x6077,User,Current}
+{212,0,4,Cyclic Extrapolation,Expert,System}
+{213,1,8,Filtered RMS current,User,Current}
+{214,0,8,Extended in 0x2202,Expert,System}
+{215,0,8,CCD indication,Expert,System}
+{216,0,8,PVT New Target,Expert,Position}
+{217,0,4,Temperature Threshold High,Expert,System}
+{218,0,4,Motion Status Superimposed,Expert,General}
+{219,0,4,Motion Status Simple Socket,Expert,General}
+{220,0,4,Motion Status Phasing,Expert,General}
+{221,0,4,GS Index by 0x2E00 low bits,Expert,Control}
+{222,0,4,GS Index by 0x2E00 high bits,Expert,Control}
+{223,0,4,Unused,Expert,None}
+{224,0,4,Unused,Expert,None}
+{225,0,8,Step Block Detect Time,Expert,System}
+{226,0,8,Velocity Demand 0x606B,Expert,Velocity}
+{227,0,4,Torque Demand 0x6074,User,Current}
+{228,0,8,PWM Sensor - On Time,Expert,System}
+{229,0,8,PWM Sensor - Cycle Time,Expert,System}
+{230,1,8,PWM Sensor - Duty Cycle,Expert,System}
+{231,0,4,PWM Emul - Full Range (PWM cnt),Expert,System}
+{232,0,4,PWM Emul - Actual Value (PWM cnt),Expert,System}
+{233,0,8,Pos Err of Additional Controller,User,Position}
+{234,0,4,STO Diag PWM Not Active,Developer,System}
+{235,0,4,Dynamic Brake Engaged,User,System}
+{236,0,4,Motor temperature [C],User,System}
+{237,0,4,CAN IP SubMode0BufNotEmpty,Developer,System}
+{238,0,4,CAN IP SyncOverHs,Developer,System}
+{239,0,4,Trapeze Current Flag,Expert,Current}
+{240,0,4,External A2D CHA,User,System}
+{241,0,4,External A2D CHB,User,System}
+{242,0,4,External A2D Status,Developer,System}
+{243,1,4,External A2D CHA [+/-V],Developer,System}
+{244,0,8,ShuntCnt,Expert,System}
+{245,0,4,IsShuntOn,Developer,System}
+{246,0,4,AIN1 [mV],Expert,Inputs}
+{247,0,4,AIN2 [mV],Expert,Inputs}
+{248,1,8,Estimated BEMF (alpha),Expert,Voltage}
+{249,1,8,Estimated BEMF (beta),Expert,Voltage}
+{250,0,8,Estimated position (by BEMF),Expert,Position}
+{251,1,8,Estimated velocity (by BEMF),Expert,Velocity}
+{252,1,8,BEMF estimator Ksw,Expert,System}
+{253,0,4,Exclusive Signal,Expert,Position}
+End Recorded Signals
+</Vectors.ini>
+  <CompilerSetup.ini Name="DspCompiler\CompilerSetup.ini">[Program Limits]
+TextSpace=30000
+CodeSpace=30000
+MaxUserFuncs=50
+MaxUserVars=100
+NameLength=12
+StackDepth=280
+DataSpace=2048
+UserProgMaxSize=131071
+
+[Automatic Routines]
+AUTOEXEC=0
+AUTO_ER=1
+AUTO_STOP=2
+AUTO_BG=3
+AUTO_RLS=4
+AUTO_FLS=5
+AUTO_ENA=6
+AUTO_I1=7
+AUTO_I2=8
+AUTO_I3=9
+AUTO_I4=10
+AUTO_I5=11
+AUTO_I6=12
+AUTO_HM=13
+AUTO_HY=14
+AUTO_PERR=15
+</CompilerSetup.ini>
+  <Text_10 Name="Text 10">1 , Don't Update
+2 , Bad Command
+3 , Bad Index
+4 , PAL Does not support this sensor
+5 , Not used error code 5
+6 , Not used error code 6
+7 , Mode cannot be started - bad initialization data
+8 , Not used error code 8
+9 , CAN message HW buffer was overrun 
+10 , Can not be used by PDO 
+11 , Cannot write to flash memory
+12 , Not used error code 12
+13 , Cannot reset communication - UART is busy
+14 , Not used error code 14
+15 , Not used error code 15
+16 , Array '[ ]' is expected, or empty expression in array
+17 , Format of UL command is not valid - check the command definition
+18 , Empty Assign
+19 , Command syntax error
+20 , Bad Set Point sending order
+21 , Operand Out of Range
+22 , Zero Division
+23 , Command can not be assigned
+24 , Bad Operation
+25 , Command Not Valid While Moving
+26 , Profiler mode not supported in this unit mode (UM)
+27 , Bad  ECAM setting, refer to EE[6]
+28 , Out Of Limit Range
+29 , CAN set object return an abort when called from interpreter
+30 , No program to continue
+31 , Object does not exist or returned an error
+32 , Communication overrun, parity, noise, or framing error
+33 , Bad sensor setting, check CA[18], CA[19]
+34 , There is a conflict with another command
+35 , Max bus voltage (BV) or max current (MC) is not valid
+36 , Commutation method (CA[17]) or commutation table does not fit to sensor
+37 , Hall sensors are defined to the same place, check CA[4],CA[5] or CA[6]
+38 , PORT C mux is with conflict with other GO[] or cannot be assigned to the output
+39 , Motion start specified for the past
+40 , In Wizard Experiment!
+41 , Command is not supported by this product
+42 , Label was not detected in the User Progam
+43 , CAN state machine in fault(Obj 0x6041 in DS402)
+44 , Comma character - don't use as an error code
+45 , An Attempt to read a write only command
+46 , May Not Use Multicapture Homing Mode With Stop Event
+47 , Program does not exist or not Compiled
+48 , Motor could not start - fault reason in EE[5]
+49 , Ecam must be disabled during init (RM=0)
+50 , Stack Overflow
+51 , Inhibit OR Abort inputs are active, Cannot start motor
+52 , PVT Queue Full
+53 , Only For Current
+54 , Bad Data Base
+55 , Bad Context
+56 , The product grade does not support this command
+57 , Motor Must be Off (MO=0)
+58 , Servo (SO) must be on
+59 , Semicolon - don't use as an error code
+60 , Bad Unit Mode
+61 , Data Base Reset
+62 , Socket change not allowed while capture is enabled
+63 , Question mark character don't use as error code
+64 , Can not set the index of an active table
+65 , Disabled By SW
+66 , Amplifier Not Ready
+67 , Recorder Is Busy or data is uploaded
+68 , Required profiler mode is not supported
+69 , Recorder Usage Error
+70 , Recorder data Invalid
+71 , Homing is busy
+72 , Modulo range must be even
+73 , Socket Profiler must be stopped before setting its position
+74 , Bad profile database see EE[2] or 0x2081 for the failed object number
+75 , DL is in progress
+76 , Error mapping is not allowed while Homing is in progress (HM[1]\HF[1])
+77 , Buffer Too Large
+78 , Out of Program Range
+79 , Sensor setting error, possible conflict with other socket settings
+80 , In DC mode and no speed sensor, need to disable the dynamic brake
+81 , Download failed see specific error in EE[3]
+82 , Program Is Running
+83 , Command is not permitted in a program
+84 , The System Is Not In Point To Point Mode
+85 , STO is not active OR During STO Diagnostic
+86 , PVT table is soon going to underflow
+87 , Hall sensed with illegal value, may be not connected
+88 , Event type HM[3],HF[3] is et to wrong value
+89 , Wrong after event behavior. HM[4],HF[4] is set to wrong value
+90 , Wrong after event setting, HM[5]=1 is not supported
+91 , Sensor select HF[10] is set to wrong value
+92 , HF cannot be enabled on main position feedback, if configured to set main position (HF[5]&lt; 2)
+93 , HF cannot be enabled on socket with not initialized sensor Vlad19122019
+94 , Not allowed while Error mapping (PC[1]) is in progress
+95 , ER[3] Too large for modulo setting applied
+96 , User program time out
+97 , RS232 receive buffer overflow
+98 , Current offsets are beyond the allowed limit
+99 , The sensor does not support this command
+100 , The requested PWM multiplication value is not supported
+101 , Absolute encoder setting problem
+102 , Output Compare (OC[1] \ OC[21]) or Emulation (EA[1]) are busy
+103 , Output Compare Sensor Is Not QUAD Enc
+104 , Output Compare Table Length OR Data
+105 , Speed loop KP out of range
+106 , Position loop KP out of range
+107 , Encoder emulation parameters do not match - refer to EE[7]
+108 , Encoder emulation (EA[1]) is already in progress
+109 , unused
+110 , Number exceeds the integer range
+111 , KV vector is invalid
+112 , KV defines scheduled block but scheduling is off
+113 , Exp task queue is full
+114 , Exp task queue is empty
+115 , Exp output queue is full
+116 , Exp output queue is empty
+117 , Bad KV setting for sensor filter
+118 , Bad KV setting
+119 , Analog Sensor filter out of range
+120 , Analog Sensor filter may contain 0 or 2 blocks
+121 , Please wait until Analog Sensor initialized
+122 , Motion mode is not supported or with initialization conflict
+123 , Profiler queue is full
+124 , unused
+125 , Personality not loaded
+126 , User Program failed - variable out of program size
+127 , Modulo range must be positive
+128 , Bad variable index in database - internal compiler error
+129 , Variable is not an array
+130 , Variable name does not exist
+131 , Cannot record local variable
+132 , Variable is an array
+133 , Number of function input arguments is not as expected
+134 , Cannot run local label/function with xq command
+135 , Frequency identification failed
+136 , A float value is not a number
+137 , Program already compiled
+138 , Position Interpolation buffer underflow
+139 , The number of break points exceeds maximal number
+140 , An attempt to set/clear break point at the not relevant line
+141 , Boot Identity parameters section is not clear
+142 , Checksum of data is not correct
+143 , Missing boot identity parameters
+144 , Numeric Stack underflow
+145 , Numeric stack overflow
+146 , Expression stack overflow
+147 , Executable command within math expression
+148 , Nothing in the expression
+149 , Unexpected sentence termination
+150 , Sentence terminator not found
+151 , Parantheses mismatch
+152 , Bad operand type
+153 , Overflow in a numeric operator
+154 , Address is out of data memory segment
+155 , Beyond stack range
+156 , Bad opcode
+157 , No Available program stack
+158 , Out of flash memory range
+159 , Flash verify error
+160 , Program Aborted by another thread
+161 , Program is not halted
+162 , Badly formatted number
+163 , Not enough space in program data segment
+164 , EC command (not an error)
+165 , An attempt to access flash while busy
+166 , The resulted user unit position is out of modulo range (XM[] or YM[])
+167 , Infinite loop in for loop - zero step
+168 , Speed too large to start motor
+169 , Time out using peripheral.(overflow or busy)
+170 , Cannot erase sector in flash memory
+171 , Cannot read from flash memory
+172 , Cannot write to flash memory
+173 , Executable area of program is too large
+174 , Program has not been loaded
+175 , Cannot write program checksum - clear program (CP)
+176 , User code,variables and functions are too large
+177 , Capture/Compare conversion error in analog encoder. Require known quad location
+178 , CAN bus off
+179 , Consumer HB event
+180 , DF is not supported in this communication type
+181 , Writing to Flash program area, faild
+182 , PAL Burn Is In Process or no PAL is burnt or Incompatible PAL version
+183 , PAL Burn (PB Command) Is Disabled
+184 , Capture option already used by other operation
+185 , This element may be modified only when interpolation is not active
+186 , Interpolation queue is full
+187 , Incorrect Interpolation sub-mode
+188 , Gantry slave disable
+189 , CAN message was lost, SW buffer overflow
+190 , Profile Acceleration is out of range
+191 , Motor over temperature
+192 , Reserve
+193 , Reserve
+194 , Reserve
+195 , Reserve
+196 , Reserve
+197 , Reserve
+198 , Reserve
+199 , Reserve
+200 , Main feedback error. Refer to EE[1]
+201 , Commutation sequence failed
+202 , Encoder-Hall sensor mismatch. Refer to XP[7]
+203 , Current limit was exceeded
+204 , External inhibit input detected
+205 , AC fail: Loss of phase
+206 , Digital halls run too fast or disconnected 
+207 , Speed error limit exceeded. Refer to ER[2]
+208 , Position limit error exceeded. Refer to ER[3]
+209 , Cannot start motor . Bad data base. Refer to CD
+210 , Bad ECAM table
+211 , Sensorless is permitted under UM=1 or UM=2 only
+212 , Reserve
+213 , Reserve
+214 , Reserve
+215 , Reserve
+216 , Cannot find zero position without digital halls
+217 , Over speed. Refer to HL[2]
+218 , Reserve calculated by Exception code
+219 , Reserve calculated by Exception code
+220 , Reserve calculated by Exception code
+221 , Motor stack
+222 , Out of position limits. Refer to HL[3], LL[3]
+223 , Numerical overflow
+224 , Gantry slave is not enabled
+225 , Reserve calculated by Exception code
+226 , Reserve calculated by Exception code
+227 , Reserve calculated by Exception code
+228 , Reserve calculated by Exception code
+229 , Cannot start motor because of internal problem
+230 , Reserve calculated by Exception code
+231 , Reserve calculated by Exception code
+232 , Reserve calculated by Exception code
+233 , Undervoltage protection
+234 , Reserve calculated by Exception code
+235 , Overvoltage protection
+236 , Reserve calculated by Exception code
+237 , Safety switch
+238 , Reserve calculated by Exception code
+239 , Feedback in error state or not initialized
+240 , Reserve calculated by Exception code
+241 , Short protection
+242 , Reserve calculated by Exception code
+243 , Over temperature protection
+244 , Reserve calculated by Exception code
+245 , Additional inhibit input
+245 , None
+246 , None
+247 , None
+248 , None
+249 , None
+250 , None
+251 , None
+252 , None
+253 , None
+254 , None
+255 , None
+</Text_10>
+  <Text9 Name="Text9">0x00000001 , Main Feedback error refer to: EE[1]
+0x00000002 , Commutation sequence failed
+0x00000004 , Encoder - Hall sensor mismatch refer to: CA[111]
+0x00000008 , Current limit was Exceeded
+0x00000010 , External inhibit input detected
+0x00000020 , AC Fail: loss of phase
+0x00000040 , Digital Hall run too fast or disconnected
+0x00000080 , Speed error limit exceeded refer to: ER[2]
+0x00000100 , Position error limit exceeded see ER[3]
+0x00000200 , Reserved: Cannot start motor because of bad database refer to: EE[5] or CD
+0x00000400 , Gantry Yaw or Stepper closed loop Position error see ER[5]
+0x00000800 , Motor Disabled due to a heartbeat violation or loss of frame
+0x00001000 , Motor Disabled due to a General fault
+0x00003000 , Motor disabled due to Under voltage protection
+0x00005000 , Motor disabled due to Overvoltage protection
+0x00007000 , Motor disabled by a Safety switch
+0x00009000 , Motor disabled by a Feedback error
+0x0000B000 , Motor disabled due to Short protection 
+0x0000D000 , Motor disabled due to Over temperature protection
+0x0000F000 , Motor disabled by Additional Inhibit input
+0x00010000 , Motor disabled due to motor over temperature 
+0x00020000 , Over Speed violation refer to: HL[2]
+0x00040000 , Reserve: Stack overflow
+0x00080000 , Reserve: Null interrupt
+0x00100000 , Reserve: Timing error
+0x00200000 , Motor stuck
+0x00400000 , Out of position limits refer to: HL[3] or LL[3]
+0x00800000 , Numerical overflow
+0x01000000 , Gantry slave is not enabled
+0x02000000 , PWM Sensor input frequency is below the allowed limit
+0x04000000 , BEMF observer error
+0x08000000 , Gantry master disabled by fault
+0x10000000 , Reserved: Cannot tune current offsets
+0x20000000 , Cannot start motor because of internal problem
+0x40000000 , Reserved 30
+0x80000000 , Reserved 31
+</Text9>
+  <Text10 Name="Text10" />
+  <Text11 Name="Text11" />
+  <Text12 Name="Text12" />
+  <Text13 Name="Text13" />
+  <Text14 Name="Text14" />
+  <Text15 Name="Text15" />
+</ROOT>

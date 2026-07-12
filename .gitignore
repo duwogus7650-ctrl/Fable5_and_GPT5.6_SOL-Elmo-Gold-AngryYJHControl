@@ -1,0 +1,10 @@
+# large media (529MB demo video — keep local only)
+media/operation_video.mp4
+# python caches
+__pycache__/
+*.py[cod]
+.pytest_cache/
+# windows reserved-name artifact
+NUL
+# transient scratch
+*.tmp

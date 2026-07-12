@@ -1,0 +1,5397 @@
+
+===== PAGE 1 =====
+ 
+ 
+ 
+ 
+ 
+Elmo Gold Drive 
+Firmware Release 
+Notes 
+Version: 01.02.18.00 B00 
+For Elmo Gold Drives 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+ 
+February 2024 (Ver. 1.019) 
+www.elmomc.com 
+ 
+ 
+
+===== PAGE 2 =====
+Notice 
+ 
+This guide is delivered subject to the following conditions and restrictions: 
+• 
+This guide contains proprietary information belonging to Elmo Motion Control Ltd. Such 
+information is supplied solely for the purpose of assisting users of Elmo’s servo drive(s) in 
+their installation. 
+• 
+The text and graphics included in this manual are for the purpose of illustration and reference 
+only. The specifications on which they are based are subject to change without notice. 
+• 
+Elmo Motion Control and the Elmo Motion Control logo are trademarks of Elmo Motion 
+Control Ltd. 
+• 
+Information in this document is subject to change without notice. 
+ 
+Elmo Motion Control and the Elmo Motion Control logo are 
+registered trademarks of Elmo Motion Control Ltd.  
+ 
+EtherCAT Conformance Tested. EtherCAT® is a registered trademark 
+and patented technology, licensed by Beckhoff Automation GmbH, 
+Germany. 
+ 
+CANopen compliant. CANopen® is a registered trademark and 
+patented technology, licensed by CAN in Automation (CiA) GmbH, 
+Kontumazgarten 3, DE-90429 Nuremberg, Germany. 
+Document no. MAN-FirmwareRNElmo (Ver. 1.019) 
+Copyright  2024  
+Elmo Motion Control Ltd.  
+All rights reserved. 
+ 
+
+===== PAGE 3 =====
+ Table of Contents 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+|General|www.elmomc.com 
+3 
+Table of Contents 
+Chapter 1. 
+General ....................................................................................................... 7 
+Chapter 2. 
+01.02.18.00 B00 ........................................................................................... 8 
+2.1 
+Details ......................................................................................................................... 8 
+2.2 
+Bug fixes 1.2.18.00 B00 .............................................................................................. 8 
+Chapter 3. 
+01.02.17.05 B00 ........................................................................................... 9 
+3.1 
+Details ......................................................................................................................... 9 
+3.2 
+Bug fixes 1.2.17.05 B00 .............................................................................................. 9 
+Chapter 4. 
+01.02.17.04 B08 ......................................................................................... 11 
+4.1 
+Details ....................................................................................................................... 11 
+4.2 
+Bug fixes 1.2.17.04 B08 ............................................................................................ 11 
+Chapter 5. 
+01.02.17.04 B00 ......................................................................................... 12 
+5.1 
+Details ....................................................................................................................... 12 
+5.2 
+Bug fixes 1.2.17.04 B00 ............................................................................................ 12 
+Chapter 6. 
+01.02.17.02 B00 ......................................................................................... 13 
+6.1 
+Details ....................................................................................................................... 13 
+6.2 
+Bug fixes 1.2.17.02 B00 ............................................................................................ 13 
+Chapter 7. 
+01.02.17.01 B00 ......................................................................................... 14 
+7.1 
+Details ....................................................................................................................... 14 
+7.2 
+Bug fixes 1.2.17.01 B00 ............................................................................................ 14 
+Chapter 8. 
+01.02.17.00 B10 ......................................................................................... 15 
+8.1 
+Details ....................................................................................................................... 15 
+8.2 
+Bug fixes 1.2.17.00 B10 ............................................................................................ 15 
+Chapter 9. 
+01.02.17.00 B01 ......................................................................................... 16 
+9.1 
+Communication Processor Adjustment .................................................................... 16 
+9.2 
+Details ....................................................................................................................... 17 
+9.3 
+Bug fixes 1.2.17.00 B01 ............................................................................................ 17 
+Chapter 10. 01.01.16.10 B04 ......................................................................................... 18 
+10.1 
+Details ....................................................................................................................... 18 
+10.2 
+Bug fixes 1.1.16.10 B04 ............................................................................................ 18 
+Chapter 11. 01.01.16.05 B00 ......................................................................................... 20 
+11.1 
+Details ....................................................................................................................... 20 
+11.2 
+Bug fixes 1.1.16.05 B00 ............................................................................................ 21 
+Chapter 12. 01.01.16.00 B01 ......................................................................................... 22 
+
+===== PAGE 4 =====
+Table of Contents 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+|General|www.elmomc.com 
+4 
+Table of Contents 
+12.1 
+Details ....................................................................................................................... 22 
+12.2 
+Bug fixes 1.1.16.00 B01 ............................................................................................ 25 
+Chapter 13. 01.01.15.10 B02 ......................................................................................... 27 
+13.1 
+Details ....................................................................................................................... 27 
+13.2 
+Bug fixes 1.1.15.10 B02 ............................................................................................ 28 
+Chapter 14. 01.01.15.05 B00 ......................................................................................... 29 
+14.1 
+Details ....................................................................................................................... 29 
+14.2 
+Bug fixes 1.1.15.05 B00 ............................................................................................ 31 
+Chapter 15. 01.01.15.00 B00 ......................................................................................... 33 
+15.1 
+Details ....................................................................................................................... 33 
+15.2 
+Bug fixes 1.1.15.00 B00 ............................................................................................ 35 
+Chapter 16. 01.01.14.08 B00 ......................................................................................... 37 
+16.1 
+Details ....................................................................................................................... 37 
+16.2 
+Bug fixes 1.1.14.08 B00 ............................................................................................ 39 
+Chapter 17. 01.01.14.05 B02 ......................................................................................... 40 
+17.1 
+Details ....................................................................................................................... 40 
+17.2 
+Bug fixes 1.1.14.05 B02 ............................................................................................ 40 
+Chapter 18. 01.01.14.01 B00 ......................................................................................... 41 
+18.1 
+Details ....................................................................................................................... 41 
+18.2 
+Bug fixes 1.1.14.01 B00 ............................................................................................ 41 
+Chapter 19. 01.01.14.00 B01 ......................................................................................... 42 
+19.1 
+Details ....................................................................................................................... 42 
+19.2 
+Bug fixes 1.1.14.00 B01 ............................................................................................ 42 
+Chapter 20. 01.01.13.00 B02 ......................................................................................... 43 
+20.1 
+Details ....................................................................................................................... 43 
+20.2 
+Bug fixes 1.1.13.00 B02 ............................................................................................ 45 
+Chapter 21. 01.01.12.02 B00 ......................................................................................... 46 
+21.1 
+Details ....................................................................................................................... 46 
+21.2 
+Bug fixes 1.1.12.02 B00 ............................................................................................ 46 
+Chapter 22. 01.01.12.00 B01 ......................................................................................... 47 
+22.1 
+Details ....................................................................................................................... 47 
+22.2 
+Bug fixes 1.1.12.00 B01 ............................................................................................ 47 
+Chapter 23. 01.01.12.00B00  (same as 01.01.11.16 B00) ................................................ 48 
+
+===== PAGE 5 =====
+Table of Contents 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+|General|www.elmomc.com 
+5 
+Table of Contents 
+23.1 
+Details ....................................................................................................................... 48 
+23.2 
+Bug fixes 1.1.12.00 B00 ............................................................................................ 49 
+Chapter 24. 01.01.11.11 B00 ......................................................................................... 50 
+24.1 
+Details ....................................................................................................................... 50 
+24.2 
+Bug fixes 1.1.11.11 B00 ............................................................................................ 50 
+Chapter 25. 01.01.11.09 B00 ......................................................................................... 51 
+25.1 
+Details ....................................................................................................................... 51 
+25.2 
+Bug fixes 1.1.11.09 B00 ............................................................................................ 51 
+Chapter 26. 01.01.11.08 B00 ......................................................................................... 52 
+26.1 
+Details ....................................................................................................................... 52 
+26.2 
+Bug fixes 1.1.11.08 B00 ............................................................................................ 57 
+Chapter 27. 01.01.11.00 B00 ......................................................................................... 60 
+27.1 
+Details ....................................................................................................................... 60 
+27.2 
+Bug fixes 1.1.11.00 B00 ............................................................................................ 62 
+Chapter 28. 01.01.10.07 B01 ......................................................................................... 64 
+28.1 
+Details ....................................................................................................................... 64 
+28.2 
+Bug fixes 1.1.10.07B01 ............................................................................................. 66 
+Chapter 29. 01.01.10.05 B04 ......................................................................................... 68 
+29.1 
+Details ....................................................................................................................... 68 
+29.2 
+Bug fixes 1.1.10.05B04 ............................................................................................. 70 
+Chapter 30. 01.01.10.00 B00 ......................................................................................... 72 
+30.1 
+Details ....................................................................................................................... 72 
+30.2 
+Bug fixes 1.1.10.00B00 ............................................................................................. 74 
+Chapter 31. 01.01.09.12 B00 ......................................................................................... 78 
+31.1 
+Details ....................................................................................................................... 78 
+31.2 
+Bug fixes 1.1.9.12B00 ............................................................................................... 79 
+Chapter 32. 01.01.09.11 B07 ......................................................................................... 80 
+32.1 
+Details ....................................................................................................................... 80 
+32.2 
+Bug fixes 1.1.9.11B07 ............................................................................................... 82 
+Chapter 33. 01.01.09.10 B03 ......................................................................................... 83 
+33.1 
+Details ....................................................................................................................... 83 
+33.2 
+Bug fixes 1.1.9.10B03 ............................................................................................... 85 
+Chapter 34. 01.01.09.08 B08 ......................................................................................... 87 
+
+===== PAGE 6 =====
+Table of Contents 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+|General|www.elmomc.com 
+6 
+Table of Contents 
+34.1 
+Details ....................................................................................................................... 87 
+34.2 
+Bug fixes 1.1.9.8B08 ................................................................................................. 90 
+Chapter 35. 01.01.09.04 B01 ......................................................................................... 93 
+35.1 
+Details ....................................................................................................................... 93 
+35.2 
+Bug fixes 1.1.9.4B01 ................................................................................................. 93 
+Chapter 36. 01.01.09.00 B00 ......................................................................................... 94 
+36.1 
+Details ....................................................................................................................... 94 
+36.2 
+Bug fixes 1.1.9.0B00 ................................................................................................. 95 
+Chapter 37. 01.01.08.00 B00 ......................................................................................... 96 
+37.1 
+Details ....................................................................................................................... 96 
+37.2 
+Bug fixes 1.1.8.0B00 ................................................................................................. 98 
+Chapter 38. 01.01.07.15 B00 ......................................................................................... 99 
+38.1 
+Details ....................................................................................................................... 99 
+38.2 
+Bug fixes 1.1.7.15B00 ............................................................................................. 100 
+ 
+ 
+
+===== PAGE 7 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+|General|www.elmomc.com 
+7 
+Table of Contents 
+Chapter 1. 
+General  
+The following Gold Level release notes include all modifications from version 01.01.07.15 released 
+in January 2014 until version 01.02.18.00 B00 released in February 2024. 
+Note  
+Modifications between firmware versions may result in parameter database going back to default 
+values. It is advisable to upload the drive’s parameters via the Elmo Application Studio (EAS) prior of 
+updating any firmware version. The parameters can be downloaded to the drive after the firmware 
+was downloaded. 
+ 
+
+===== PAGE 8 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.18.00 B00|www.elmomc.com 
+8 
+Table of Contents 
+Chapter 2. 
+01.02.18.00 B00 
+Component 
+Version 
+Firmware Version 
+01.02.18.00 13Feb2024B00 
+Communication Server 
+1.1.9.07 
+PAL 
+90 
+ESI 
+0x00010420 V14 
+ 
+2.1 Details 
+Subject  
+Details 
+New Profile Position target 
+processed in Quick stop 
+From this version, new Set Points that the drive received via 
+Object 0x607A are processed in the Quick Stop state as well. 
+The outcome ofr the midification is that the motor will move to 
+the new Set Point as soon as the state machine will be switched 
+back to Operational Enable state. Previously, Set Points that 
+were received during the Quick Stop state were ignored. 
+New homing mode under Halt 
+From this version, new DS402 Homing method that are 
+requested when the drive is in Halt are processed and executed 
+as soon as the “resume to motion” is permitted. Previously new 
+Home methods were ignored.   
+Tuba 30/480 High PWM 
+switching 
+From this version Tuba 30/480 can be activated in PWM 
+frequency of 20KHz via the XP[2] command. Note that with this 
+frequency the max current is limited to 20 amps. 
+2.2 Bug fixes 1.2.18.00 B00 
+Bug 
+Details 
+IAI sensor Zero Cross 
+detection when position is 
+inverted 
+Zero Cross detection emulates Index allowing the application to 
+e.g. perform Homing on Index or count a single turn event. 
+With the IAI sensor, when the Zero Cross was used for Homing 
+on Index, the capture position (Home position) was wrongly 
+calculated when the sensor readout was defined as “Invert” via 
+CA[28]. This was fixed. A correct capture is reported regardless 
+of the “Invert bit” state. 
+
+===== PAGE 9 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.05 B00|www.elmomc.com 
+9 
+Table of Contents 
+Chapter 3. 
+01.02.17.05 B00 
+Component 
+Version 
+Firmware Version 
+01.02.17.05 12Dec2023B00 
+Communication Server 
+1.1.9.07 
+PAL 
+90 
+ESI 
+0x00010420 V14 
+ 
+3.1 Details 
+Subject  
+Details 
+Present Current Command 
+before cogging 
+The Gold drive supports method to overcome a non-linear 
+cogging disturbances. The current command before the cogging 
+compensation is now reported via WI[49]. The value of the 
+current command can also be mapped to a PDO via object 
+0x2203 (Application Object) by setting 0x2F41 to 10.   
+Stepper commutation 
+improvement 
+The stepper commutation procedure can result in an undesired 
+fast current modification. From this version the current can be 
+gradually decreased per SC[16]. The parameters is in seconds 
+and default is 0.01.  
+3.2 Bug fixes 1.2.17.05 B00 
+Bug 
+Details 
+Non-Dual-Use speed limit 
+In some situations the speed for a Q drives was wrongly 
+calculated resulted in lower speed than required. Typically 
+happened when using a high resolution sensor for the 
+commutation. This was fixed. In any case the electrical speed is 
+limited to 599Hz.   
+CST mode speed calculation 
+In Cyclic Synchronous Torque mode under Halls Only the speed 
+calculation was wrong resulting in a wrong speed limit 
+protection. This was fixed.  
+CANOpen NMT reset after 
+motor fault 
+In some rare situations setting NMT mode 0x81 (reset Node) 
+following a motor faults that occurred during the servo enable 
+procedure (via MO=1 or via DS402 Operation Enable state), 
+resulted in damage to the power bridge. The relevant faults are 
+“Speed too High” and “Halls mismatch”.  This was fixed.  
+
+===== PAGE 10 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.05 B00|www.elmomc.com 
+10 
+Table of Contents 
+Bug 
+Details 
+Position tracking error under 
+CANopen IP mode 
+A steady state position error was detected during constant 
+speed when the drive is under CANopen Interpolated Position 
+mode and a high resolution is used. This was fixed.  
+
+===== PAGE 11 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.04 B08|www.elmomc.com 
+11 
+Table of Contents 
+Chapter 4. 
+01.02.17.04 B08 
+Component 
+Version 
+Firmware Version 
+01.02.17.04 22May2023B08 
+Communication Server 
+1.1.9.07 
+PAL 
+90 
+ESI 
+0x00010420 V14 
+ 
+4.1 Details 
+Subject  
+Details 
+IAI sensor  
+The IAI sensor is supported including the IS & RCS types for 17 
+& 15 bits of single turn with option for a multi rotation of 552  
+(-276 ~ +275). Sensor is supported by the Elmo Application 
+Studio as well.  
+4.2 Bug fixes 1.2.17.04 B08 
+Bug 
+Details 
+Handling SDO size under 
+EtherCAT mailbox read option 
+If the EtherCAT host request expedite SDO that is longer than 
+the permitted size, the drive copies the maximum permitted 
+size. Previously in such situations the drive fetched a wrong 
+memory allocation and failed. In some situations the failure 
+resulted in a request for another firmware download.   
+Non-Dual-Use drives – lower 
+speed when different sensor 
+resolution is used. 
+  
+If different sensors were used for a Non-Dual-Use drives (Q 
+Drives) and the resolution of the commutation sensor differ 
+from the resolution of the velocity sensor, the speed limit 
+preventing the dual use was wrongly calculated. The new 
+CA[124] parameter denote the factor between the velocity and 
+the commutation sensors in order to allow the proper speed. 
+The units of the new parameter are 1/10000 which means that 
+10000 (default) is ‘1’ which means that the commutation 
+sensor and the velocity sensor have the same resolution. 
+
+===== PAGE 12 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.04 B00|www.elmomc.com 
+12 
+Table of Contents 
+Chapter 5. 
+01.02.17.04 B00 
+Component 
+Version 
+Firmware Version 
+01.02.17.04 13Mar2023B00 
+Communication Server 
+1.1.9.05 
+PAL 
+90 
+ESI 
+0x00010420 V14 
+ 
+5.1 Details 
+Subject  
+Details 
+Jori \ Leopard  new power 
+rate 
+Jori with max current of 70 amps was added. The bus voltage is 
+800V DC. Drive availability are per marketing announcements 
+only.  
+5.2 Bug fixes 1.2.17.04 B00 
+Bug 
+Details 
+Wrong Demand value with 
+modulo 
+Object 0x6062 is the demand value for the Position Control 
+loop. The values may have overshoot when reaching the high 
+limit of the position modulo as denoted via XM[2]. This was 
+fixed.  
+XP[11] current derating 
+voltage threshold  
+The XP[11] threshold, if was set by a user,  was calculated 
+wrongly and may have started the derating of the current on 
+lower voltage than intended. This was fixed.  
+FoE download last message 
+In situation where the file downloaded via FoE have the same 
+size as the FoE mailbox, a last empty message is required to 
+conclude the transfer. Before the fix drive concluded the 
+transfer previously. This was fixed. Drive is wating for an empty 
+message in such rare situations.  
+ESI file 10420 V14 
+Some objects properties were fixed from UINT to INT. 
+Objects 0x6070 & 0x606F mapping attribute was removed 
+Object 0x2E00 map-able attribute was added 
+These modifications effected only the offline dictionary from 
+the ESI. The on-line dictionary from the drive was not modified.   
+
+===== PAGE 13 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.02 B00|www.elmomc.com 
+13 
+Table of Contents 
+Chapter 6. 
+01.02.17.02 B00 
+Component 
+Version 
+Firmware Version 
+01.02.17.02 24Jul2022B00 
+Communication Server 
+1.1.9.04 
+PAL 
+90 
+ESI 
+0x00010420 V12 
+ 
+6.1 Details 
+Subject  
+Details 
+QV[] & QT[] commands 
+These commands were removed from old versions and now are 
+restored for the sake of general usage. Each entry includes 64 
+entries, QT is sign 16 bits and QV is signed 32 bits. 
+6.2 Bug fixes 1.2.17.02 B00 
+Bug 
+Details 
+Current limits initiation  
+In CST mode the current limits were not initiated which prevent 
+the stepper commutation to be properly activated. This was 
+fixed. 
+
+===== PAGE 14 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.01 B00|www.elmomc.com 
+14 
+Table of Contents 
+Chapter 7. 
+01.02.17.01 B00 
+Component 
+Version 
+Firmware Version 
+01.02.17.01 13Apr2022B00 
+Communication Server 
+1.1.9.04 
+PAL 
+90 
+ESI 
+0x00010420 V12 
+ 
+7.1 Details 
+Subject  
+Details 
+Adding Jori \ Leopard to Gold 
+Family 
+Jori and Leopard are high power drives based on TWI\BEE.  
+These are “R” type drives with maximum current of 30 & 60 
+and 800V DC. Note that the drives are available for orders only 
+when announced by marketing and not by this document.  
+ 
+ 
+7.2 Bug fixes 1.2.17.01 B00 
+Bug 
+Details 
+ 
+ 
+ 
+ 
+
+===== PAGE 15 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.00 B10|www.elmomc.com 
+15 
+Table of Contents 
+Chapter 8. 
+01.02.17.00 B10 
+Component 
+Version 
+Firmware Version 
+01.02.17.00 22Mar2022B10 
+Communication Server 
+1.1.9.03 
+PAL 
+90 
+ESI 
+0x00010420 V12 
+ 
+8.1 Details 
+Subject  
+Details 
+ 
+ 
+8.2 Bug fixes 1.2.17.00 B10 
+Bug 
+Details 
+Downloading between mixed 
+version 
+An attempt to download version from 1.1.xx.xx to a drive with 
+new communication chip will now results in a failure. 
+Previously the drive could be locked and lose communication 
+for good.  
+Mitsubishi set up 
+In some situation the Mitsubishi sensor setup failed and 
+required a reset. This was fixed.  
+Sine signal with encoder 
+sensor 
+The sine signal could not be activated with an encoder sensor. 
+This was fixed.  
+ 
+ 
+
+===== PAGE 16 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.00 B01|www.elmomc.com 
+16 
+Table of Contents 
+Chapter 9. 
+01.02.17.00 B01 
+Component 
+Version 
+Firmware Version 
+01.02.17.00 16Jan2022B01 
+Communication Server 
+1.1.9.00 
+PAL 
+90 
+ESI 
+0x00010420 V12 
+ 
+9.1 Communication Processor Adjustment 
+Due to a global component shortage, the firmware version of the drive was adjusted to fit a 
+reduced memory chip-set.  
+The modifications are directly related to the communication processor only and have no effect on 
+the motion, servo, or other operational features of the drive. 
+The new communication processor revision supports memory of 256K while the previous supported 
+512K.  
+The modification includes both boot and firmware versions. 
+The modified version is relevant to all firmware files allowing the firmware downloading via all 
+communication channels - FoE & USB\RS223. 
+The modified version can be downloaded seamlessly to both types of drives - 256K or 512K.  
+All present firmware versions support the 512K only. These versions cannot be downloaded to the 
+256K drives. An attempt of doing so will result in an immediate error and the drive remains in boot 
+state. 
+In order to maintain compatibility with existing EtherCAT configuration files and minimize 
+integration time, the product code (0x1018.2) and the revision number (0x1018.3) were not 
+modified. 
+These are the modifications: 
+Subject  
+Details 
+Firmware version 
+The drive firmware versions via VR, AA[5] and object 0x100A 
+are modified to reflect the new change. See the release note. 
+Telnet Removed 
+Telnet is no longer available in this version. 
+DHCP Removed 
+DHCP is no longer available, static addressing is required. 
+Unable to update boot loader 
+version via FoE 
+The ability to update the boot loaded via FoE is no longer 
+supported. 
+UDP buffers reduced 
+Under Ethernet mode the UDP buffers are reduced, this may 
+cause some limitations in the situation of broadcast messages if 
+
+===== PAGE 17 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.02.17.00 B01|www.elmomc.com 
+17 
+Table of Contents 
+Subject  
+Details 
+for example, the drives are connected to a factory network 
+while communicating via UDP.  
+9.2 Details 
+Subject  
+Details 
+Communication processor 1st 
+version 
+The version includes the modifications reported on Chapter 2 In 
+this doc 
+Mitsubishi sensor supported  
+The Mitsubishi serial sensors with single turn of 14-26 and multi 
+turn of 16. The sensor  is supported from EAS version 2.9.  
+9.3 Bug fixes 1.2.17.00 B01 
+Bug 
+Details 
+ 
+ 
+ 
+ 
+
+===== PAGE 18 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.10 B04|www.elmomc.com 
+18 
+Table of Contents 
+Chapter 10. 01.01.16.10 B04 
+Component 
+Version 
+Firmware Version 
+01.01.16.10 16Dec2021B04 
+Communication Server 
+1.1.8.6 
+PAL 
+90 
+ESI 
+0x00010420 V12 
+ 
+10.1 
+Details 
+Subject  
+Details 
+NRZ sensors roll over 
+Indication for absolute sensor roll over is not available for NRZ 
+sensors. The roll over can be used as Index 
+Emulation position indication 
+From this version WI[59] indicates the emulation position as 
+calculated by the drive.  
+Dual Use with DC brush 
+motors 
+Until this version the Dual use (Q drives) could not be operated 
+with DC brush motors. This was fixed.  
+ 
+ 
+10.2 
+Bug fixes 1.1.16.10 B04 
+Bug 
+Details 
+Smooth Factor - SF not active 
+The SF command was not effective after power up and required 
+a new setting of the SF[1] each time. This was fixed. The issues 
+started when the SF[2] was added (version 1.1.16.0 B01). This 
+was fixed.  
+Home attain bit in DS402 
+Status word 
+In DS402 Status word under homing mode, bit 12 is set when 
+the home is attained. This bit is set to ‘1’ when the drive is in 
+Homing Mode (0x60601 = 6) and after a successful homing 
+procedure in all homing methods.  
+When the homing method was “Immediate Homing” bit 12 was 
+not reset to ‘1’ as expected when Homing mode was requested 
+again. This was fixed. The bit behaves in “Immediate homing 
+mode” like in all modes.  
+CSP mode when FLS\RLS limit 
+switches are encountered 
+When drive under cyclic synchronous position mode and a limit 
+switch was hit, an attempt to disable the drive via control word 
+6 (shutdown command) failed and the drive remained in servo 
+enable. This situation is relevant when the shutdown option 
+code requires deceleration to 0 speed.  
+
+===== PAGE 19 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.10 B04|www.elmomc.com 
+19 
+Table of Contents 
+Bug 
+Details 
+The bug was fixed. The drive, in this situation, will be disabled 
+after the velocity command will decelerate to 0. 
+
+===== PAGE 20 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.05 B00|www.elmomc.com 
+20 
+Table of Contents 
+Chapter 11. 01.01.16.05 B00 
+Component 
+Version 
+Firmware Version 
+01.01.16.05 04Mar2021B00 
+Communication Server 
+1.1.8.6 
+PAL 
+90 
+ESI 
+0x00010420 V12 
+ 
+11.1 
+Details 
+Subject  
+Details 
+Twitter and Bee PWM 
+multiplication enhanced   
+PWM multiplication is done via XP[2] command. From this 
+version the TWI & BEE with BV=100 & MC=20 can have 
+multiplication of x3 (XP[2]=6).  
+Note that the permitted current  limits will be reduced to 50% 
+from the nominal one (when the multiplication is 1) 
+Current phases sum tracking 
+error 
+ 
+The total current derived from the motor phases should be 0. 
+From this version, ER[10] & ER[11] commands can be used to 
+set threshold for differences of the current phases (ER[10]) with 
+time window (ER[11]).  
+The current sum tracking error assures that in situations that 
+the sum of the current exceeds the threshold of ER[10] (in 
+milliamps) for ER[11] (in milliseconds), than the motor is 
+disabled with MF=0x4000000 and EMCY message 0x8382. 
+Note: the parameter database will be reset to default. 
+Velocity limit in Cyclic 
+Synchronous Torque mode  
+In CST mode the velocity can be limited to a desired value. This 
+is done by reducing the current limit as follows: 
+The velocity limit is set via object 0x6080 (in RPM). Via XA[10] 
+the user sets the desired limits in 0.1% from 0x6080.  
+For example: if the 0x6080 is 2000 [RPM] and the XA[10] is 800 
+(i.e. 80%) than the torque will decrease from 1600 [RPM] which 
+are the 80% from 0x6080 to 2000 [RPM] in such a way that in 
+2000 RPM the torque will be 0.  
+NF[9]: input shaping 
+frequency limit improved 
+The frequency of the input shaping are now improved for: 
+NF[8]=1 (ZV mode) limit to 2.02Hz.  
+NF[8]=2 (ZVD mode) limit to 4.05Hz.  
+Twitter \ Bee new power 
+rates 
+The TWI and BEE MC=100 BV=100 were added to the Gold 
+family and can be used from this version on. 
+
+===== PAGE 21 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.05 B00|www.elmomc.com 
+21 
+Table of Contents 
+11.2 
+Bug fixes 1.1.16.05 B00 
+Bug 
+Details 
+Unplanned final speed motion 
+Sequence of commands that included JP->SP->PA & BG, 
+resulted in a continuation of the motion with Final Speed (FS) 
+of SP. This was fixed.  
+Field angle is not reset in 
+UM=3 
+When motor is enabled in UM=3 mode the field angle (stepper 
+angle) was not reset to 0 resulting in different start of the 
+motor every motor enable. This was fixed. Field angle is 0 in 
+this mode. 
+Hall mismatch adjusted  
+In some situation the Halls width were not used properly 
+(CA[115 – 119]) this was fixed.  
+Motor enable fails after fault 
+In some rare situations the motor enabled procedure (MO=1) 
+could be completed successfully only after 2nd attempt. This 
+happened only after an attempt to enable after a motor fault. 
+This was fixed. 
+NMT buffer overflow EMCY 
+message 
+The CANopen NMT allows the host to control over the state 
+machine of the CANopne communication. In situations that the 
+buffer was overflowed we got undesired EMCY messages. This 
+was fixed. Only relevant NMT messages are processed by the 
+drive. 
+CST mode: bit 12 statuword  
+In CST mode bit 12 of object 0x6041indicates if the set point is 
+processed (‘1’) or not (‘0’). This indication was not handled 
+properly in Cyclic Synchronous Torque mode. This was fixed.  
+TCP\IP buffer stacked  
+Bursts of ARP messages to the drive resulted-in situations that 
+messages process were stacked and not processed anymore 
+even after the bursts were stopped. This was fixed.  
+Resolver capture modes  
+Using the resolver feedback, capture modes were not available 
+preventing all sorts of homing and position capture modes (e.g. 
+touch probe). This was fixed. All touch modes are now available 
+with resolver as well.   
+
+===== PAGE 22 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.00 B01|www.elmomc.com 
+22 
+Table of Contents 
+Chapter 12. 01.01.16.00 B01 
+Component 
+Version 
+Firmware Version 
+01.01.16.00 05Mar2020B01 
+Communication Server 
+1.1.8.1 
+PAL 
+90 
+ESI 
+0x00010420 V11 
+12.1 
+Details 
+Subject  
+Details 
+Drum/Eagle merged to 
+official version 
+DRU\EAG with the following rate are added to the official 
+version: 
+430/80, 650/80,360/100, 550/100. 
+The following details are relevant for these drives only.  
+Current derating in 
+Drum/Eagle due to voltage 
+limits 
+For the above mentioned drives the maximum current of the 
+drive is now de-rated as a function of the input bus voltage. The 
+De-rating starts at the threshold limit defined by XP[11], and 
+decrease from its max value, with a slope defined by PL[7].  
+The following relevant parameters apply:  
+XP[11]: Set the voltage threshold for the derating (from this 
+voltage the derating starts). 
+PL[7]: determines the derating rate in Amp/Volt (slope) 
+NOTE: Proper default values are automatically set by the drive. It 
+is not allowed to modify these values. 
+Current derating in 
+Drum/Eagle due to 
+temperature limits 
+For the above mentioned drives the maximum current of the 
+drive is now de-rated as a function of the drive temperature (TI). 
+This allows reducing the current gradually as the drive approach 
+its temperature limit, thus avoiding sudden over-temperature 
+fault. The following parameters apply to this mode, the derating 
+is done for continuous and for peak limits separately: 
+PL[4]: Temperature threshold to start the derating of the peak 
+limit. 
+CL[6] : Temperature threshold to start the derating of the 
+continuous limit. 
+PL[5] determines the peak limit derating rate in Amp/C° 
+CL[7] : determines the continuous limit derating rate in Amp/C° 
+PL[6]: temperature filter for reading the derating mechanism. 
+
+===== PAGE 23 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.00 B01|www.elmomc.com 
+23 
+Table of Contents 
+Subject  
+Details 
+CL[5]: minimum continuous current to be reduced for.  
+NOTE: Proper default values are automatically set by the drive. It 
+is not allowed to modify these values. 
+Current Limit monitoring 
+flag 
+The current limit state can be monitored via WI[45] command or 
+PDO 0x2301(mapped to the EtherCAT PDO 0x1A25) as follows: 
+Bit 
+Description 
+0 
+Use continuous current as current limit (CL[1]\PL[1]) 
+1 
+Peak current is reduced due to high temperature 
+2 
+Reserved 
+3 
+Peak current is reduced due to high bus voltage 
+4 
+Continuous current is reduced due to high temperature 
+ 
+According to the bit set, the reason for the limit can be 
+monitored. Note that bit 0 is similar to the LC command.  
+Peak limit time increased for 
+Drum/Eagle 
+For the above drives the peak limit time will be 60 seconds and 
+not the default 3 seconds 
+Twitter current derating due 
+to voltage limits  
+From this version all Twitter & Bee drives are now de-rated as a 
+function of the input bus voltage. The De-rating starts at the 
+threshold limit defined by XP[11], and decrease from its max 
+value, with a slope defined by PL[7].  
+The following relevant parameters apply:  
+XP[11]: Set the voltage threshold for the derating (from this 
+voltage the derating starts). 
+PL[7]: determines the derating rate in Amp/Volt (slope) 
+NOTE: Proper default values are automatically set by the drive. It 
+is not allowed to modify these values. 
+New Errors indication for 
+HM\HF 
+When HM\HF are set, some of the parameters may conflict with 
+each other. New enhanced error indicators are introduced for 
+such situations that will be reported via the EC command during 
+the initiation of the homing procedure.  
+Smooth Factor increase 
+resolution 
+The smooth factor denoted by SF[1] sets the smoothing of the 
+motion in milliseconds. From this version, the smoothing can be 
+set via SF[2] to a resolution of 250μSec as follows: 
+
+===== PAGE 24 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.00 B01|www.elmomc.com 
+24 
+Table of Contents 
+Subject  
+Details 
+SF[2] = 0 , 0 µSec 
+SF[2] = 1 , 250 µSec 
+SF[2] = 2 , 500 µSec 
+SF[2] = 3 , 750 µSec 
+where each value increases the smoothing of SF[1] by 250uSec. 
+For example: if SF[1] is set to 10 and SF[2] is set to 2 than the 
+smooth will take 10 milliseconds + 500uSec due to SF[2].  
+Note that with this new ability the smoothing can be as low as 
+250uSec by setting SF[1] = 0 and SF[2]=1. 
+EnDat 2.2 External 
+Temperature Sensor 
+Reading Support 
+Reading of external temperature sensor through the EnDat 2.2 
+communication can be configured by setting CA[60] bit 0 to 1. 
+The temperature is reported via the TI[3] command, according to 
+the units set by the encoder. 
+Note that when reading the external temperature, the operating 
+status error source from the additional information is inactive. 
+
+===== PAGE 25 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.00 B01|www.elmomc.com 
+25 
+Table of Contents 
+12.2 
+Bug fixes 1.1.16.00 B01 
+Bug 
+Details 
+NMT 0x81 while servo is 
+enabled 
+NMT 0x81 soft resets the drive via CANopen networks. This 
+command should not be sent while the motor is enabled 
+(MO=1). In some situations, sending this command could lead 
+to power stage failure. From this version the NMT 81 is 
+protected and if sent while the servo is enabled an EMCY 
+message will be sent and the command will be discarded.  
+Feedback Error via EC 239 
+When enabling the motor while there is a feedback error the EC 
+239 was transmitted to inform a feedback error. The 
+information about this error was not update. This was fixed. EC 
+239 is now reporting “Feedback in error state or not initialized” 
+In these situations, the drive report EMCY 0x2311. 
+Halls Encoder mismatch – 
+CA[111] 
+The CA[111] sets the permitted offset between the halls and 
+the encoder in electrical angle internal units (512 per 360). This 
+feature is used to detect mismatch between these sensors and 
+possible loss of feedback. As from this version CA[111] will be 
+used during motor enable as well and not only after the first 
+Halls transition, hence any mismatch higher than 
+CA[111]+60°elect. between the Halls and the encoder while the 
+motor is enabled will be regarded as an error. Note that during 
+this initial phase, the mismatch limit is CA[111]+60°elect, 
+Setting CA[111] will force a commutation search the next time 
+that the motor is enabled. 
+Extended Inputs wrong report 
+via XI[1] 
+XI[1] reports the state of the extended digital inputs in drives 
+that support this feature. In drives that either support CANopen 
+or have no EtherCAT switches, the report of the XI[1] was 
+shifted by 8 bits to the left and actually started from 256. This 
+was fixed. Now the report is done correctly from bit 0.  
+Undesired motion in mode 
+switch 
+When switching from Jog position (JP) to Profile Position (PA) 
+and modifying the SP (speed profiler), the Final speed (via FS) 
+was set to the value of the JP. This was fixed. Now when setting 
+JP->SP->PA the final speed is zeroed.  
+Recorder wrong state after LD 
+and RS 
+After LD (load parameters) and RS (reset parameters) 
+commands, the recorder status was wrongly reported as 
+“waiting for trigger”. Status is reported via RR or SR command. 
+This was fixed, Now the status is reported as “Invalidated” – RR 
+is -1.  
+
+===== PAGE 26 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.16.00 B01|www.elmomc.com 
+26 
+Table of Contents 
+Bug 
+Details 
+CANopen IP mode wrong 
+EMCY 
+In Interpolated Position mode when the set point buffer was 
+underflow a wrong EMCY message was transmitted. This was 
+fixed.  
+Motor on procedure with Hot 
+Plug in   
+The hot plug-in allows the user to enable the servo while the 
+motor spins. This feature is set when the Motor Constant is set 
+via FF[6]. In rare situations and when the FF[6] was set the 
+following phenomena could be seen: 
+• 
+Stray communication watchdog: typically “heartbeat” 
+EMCY message. 
+• 
+Feedback error 
+• 
+Motion jump after the servo enabled 
+All the above were fixed. 
+
+===== PAGE 27 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.10 B02|www.elmomc.com 
+27 
+Table of Contents 
+Chapter 13. 01.01.15.10 B02 
+Component 
+Version 
+Firmware Version 
+01.01.15.10 30Oct2019B02 
+Communication Server 
+1.1.8.1 
+PAL 
+90 
+ESI 
+0x00010420 V11 
+13.1 
+Details 
+Subject  
+Details 
+Hiperface error reports  
+If the Hiperface sensor reports an error (i.e. CRC/Checksum) at 
+any time, the drive status LED will become RED and the 
+amplifier status flags, reported in bits 0:3 of the SR command 
+will report 9. 
+Home Attain bit 
+The Home Attain bit is now reported via the Extra Status 
+register (Object 0x2085). The bit is set when a homing process 
+done via DS402 Homing mode was completed successfully. The 
+bit will remain set regardless of the motion mode.  
+The bit is reset to 0 in the following events: 
+• 
+Power up, CAN NMT 0x81 
+• 
+RS command 
+• 
+New home request is received via the DS402 Control 
+word  
+Dual Use Support 
+Based on the EU Dual use regulations and US Dual use 
+regulations the electric frequency is limited to 599 Hz. As from 
+this version drives with suffix “Q” that support this feature will 
+be limited according to the regulation. Any previous firmware 
+loaded to a “Q” drive will fail to enable the servo. 
+Fast Reference Torque  
+ID 39 sets a fast reference torque command to the drive 
+allowing the use of current feedforward in any motion mode. 
+The setting of the current is done via Object 0x2005 and is 
+calculated similar to all the current\torque references as 
+1/1000 of rated torque. 
+New DRUM\ EAGLE drives 
+DRU & EAG 70/880 and 100/880 are now supported.  
+
+===== PAGE 28 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.10 B02|www.elmomc.com 
+28 
+Table of Contents 
+13.2 
+Bug fixes 1.1.15.10 B02 
+Bug 
+Details 
+Switching from IP mode to PP 
+mode 
+In CANopen, switching from Interpolated Position Mode to 
+Profile Position mode could sometimes cause an offset. This 
+was fixed.  
+XP[1]: Overvoltage 
+report\setting 
+The XP[1] allow the user to lower the overvoltage protection in 
+order to get a more margin for this indication. The XP[1] was 
+limited to the BV and not to the actual over voltage set by the 
+factory. This was fixed. The XP[1] is now limited to WI[35]. For 
+compatibility reason the value will be saturated to the WI[35] 
+w/o an error. 
+Masked FoE Errors 
+Some Errors reported during File Over EtherCAT (FoE) were 
+masked. This was fixed. All errors are not reported.  
+Max Profile Velocity units 
+The Object 0x607F is the maximum permitted profile velocity 
+limit was calculated in encoder counts only and not in User 
+Units. This was fixed. 
+Ignore illegal Hall bit  
+CA[16] bit 1 allowed the user to request the drive to ignore 
+illegal Halls after the initiation. This allowed the user to ignore 
+the noises that Halls may produce during run time. This bit was 
+reset after the first servo enable preventing the protection and 
+causing stray alarms. This was fixed.  
+Gantry current limit 
+The Gantry slave current command was not limited properly 
+when it reached the CL/PL saturation. This is fixed. The master 
+adjusts the command to the slave limit conditions.  
+Total Current Command 
+recording 
+The current command recording done via the EAS recorder was 
+recorded before the current limit resulted-in a wrong 
+interpretation of the current state. This was fixed.  
+Motion jump after Stop 
+command  
+When a socket reference is used the ST command caused a 
+jump in the motion. This was fixed.  
+Wrong DS402 state transition  In rare situations when the fault deceleration is very low and 
+the master sends Control word = 0 during fault reaction state, 
+the drive reported an illegal state. This was fixed.  
+Serial sensor checked in 
+Stepper motion 
+In stepper motion the feedback does not take any roll. The drive 
+reported a fault if an open loop stepper was used (UM=3) while 
+the sensor is in error state. This was fixed.  
+Addressing Elmo’s sub index > 
+255 
+When using Objects 0x3000 and upwards to address Elmo’s 
+legacy, addressing sub-indices higher than 255 failed with an 
+error. This was fixed. Using the 0x3000 concept as described in 
+“Elmo Commands via Object.pdf” is now available.  
+
+===== PAGE 29 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.05 B00|www.elmomc.com 
+29 
+Table of Contents 
+Chapter 14. 01.01.15.05 B00 
+Component 
+Version 
+Firmware Version 
+01.01.15.05 01May2019B00 
+Communication Server 
+1.1.8.0 
+PAL 
+90 
+ESI 
+0x00010420 V11 
+14.1 
+Details 
+Subject  
+Details 
+I2T filter in % via tPDO  
+(rms current filter)  
+The peak limit filter can now be retrieved via the Application 
+Object 0x2203 by setting object 0x2F41 bits 16-19 to 8. 
+When the value is 100% the filter limits the current to CL[1].  
+New High power Gold Twitter  
+G-TWI with power rates of R45/120 & R40/200 were added. 
+Additional speed reported via 
+tPDO 
+Additional Speed can be retrieved according to the socket 
+pointed by CA[79]. The additional speed can now be mapped to 
+the Application Object 0x2203 by setting object 0x2F41 bits 16-
+19 to 7. 
+New Gold OBOE 
+OBOE 16/230 and 13/230 are introduced.  
+Position is not updated when 
+CRC error in serial sensors 
+When a sensor CRC error is detected by the drive the position is 
+not updated. Previously the position reported 0.  
+Serial sensors error & warning 
+indications 
+Serial Encoder error status is reported as follows: 
+• 
+SR command (object 0x1002) bits 0-3 are set to 9 
+• 
+EC=200 will be set if the motor enable attempt is done 
+while sensor is in error state 
+• 
+Motor fault (MF) 1 is reported if an error occurred during 
+operation state (servo enable) with adequate emergency 
+• 
+EE[1] will indicate the reason for the error 
+• 
+Drive status LED will be red 
+Sensor Status raw data can be retrieved via object 0x2084 
+(OV[49] alias command). 
+Note: During Sensor initiation the status LED will indicate Red.  
+Serial Sensor temperature 
+reported via object 
+Temperature BiSS sensor that supports this feature is now 
+available. TI[3] command reports the value as well as object 
+0x22A5. If temperature is not available, the reported value is 
+set to 0.  
+
+===== PAGE 30 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.05 B00|www.elmomc.com 
+30 
+Table of Contents 
+Subject  
+Details 
+The Temperature is reported via the map able Application 
+object 0x2203 when setting object 0x2F41 bits 16-19 to 9. 
+(ESI modification)  
+Panasonic 20 & 23 bits new 
+Error report format support 
+In Panasonic absolute sensors the new format of the 
+information data field for 20 & 23 bit encoders is now 
+supported. This includes the BLA (Battery Alarm) report. In the 
+17 bit models this field is 0.  
+The BLA is reported in "Battery warning" bit 6 of Extra Status 
+Register (0x2085). 
+Panasonic Sensor Status 
+Report 
+The sensor status report was changed to be more convenient 
+by reporting the same status for both Single-turn and Multi-
+turn feedbacks.  
+For details refer to EE[1] Table 4 in the Gold Command 
+Reference. 
+Red LED indication when 
+sensor fails 
+The drive status LED is RED when sensor fault is detected. This 
+new feature is relevant to: 
+• 
+All the absolute sensors faults, including sensor 
+initalization 
+• 
+When analog sensor amplitude threshold is violated  
+• 
+When the halls are in illegal state in "Halls Only" 
+feedback 
+
+===== PAGE 31 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.05 B00|www.elmomc.com 
+31 
+Table of Contents 
+14.2 
+Bug fixes 1.1.15.05 B00 
+Bug 
+Details 
+Current command limitation 
+Objects 0x6072, 0x6073, 0x60E0, 0x60E1 are now limiting the 
+current command to the current loop. Previously only the set 
+points were limited causing in some rare situations undesired 
+overshoots.   
+Object 0x60E3: Homing 
+methods  
+Methods -3, -4 and 37 were missed from the Object 0x60E3. 
+This was fixed.  
+Homing speed limits 
+The Speed limit during a homing procedure was not limited to 
+the Speed reference Limit denoted via VH[2]. This was fixed.  
+Emulation  disabled after 
+parameter loading 
+The emulation, denoted via EA[1], was disabled after the LD 
+command. LD loads the non-volatile parameters from the flash 
+and activates any required function if it was activated prior to 
+the loading. The issue was that even if the emulation was 
+activated i.e. EA[1]=1, than after the loading  the emulation 
+was disabled i.e. EA[1]=0. This was fixed.   
+Enable servo while serial 
+sensor in Error 
+The Servo Enable procedure worked even when a serial sensor 
+reported an error. This incorrect behavior caused an undesired 
+brake release. This was fixed. The error is now reported prior to 
+the servo enable and the brake release is prevented.  
+Inverse Warning indication in 
+BiSS 
+General BiSS sensor the warning bit was inversed causing a 
+wrong indication via the Status Word warning bit. This was 
+fixed. 
+Serial sensor issues after 32 
+bits roll-over (Halt & MT 
+reset) 
+Halt after the absolute sensor rolled over 32 bits (internal 
+count) caused an undesired gap between the feedback and the 
+position command. This was fixed. 
+Multi-turn reset:  the actual position was not presented 
+properly resulting in a wrong absolute position after power up 
+cycle. This was fixed. 
+Setting RM=0 or EI 
+In some situations setting the RM=0 caused the drive to loss 
+communication. This was fixed.  
+PWM emulation accuracy  
+In some situations the PWM emulation report was not accurate 
+due to float rounding. This was fixed.  
+Tamagawa sensor warning 
+not cleared  
+Tamagawa warnings were not cleared from the data report to 
+the user. This resulted in a warning to be appeared as an error. 
+Halls Only wrong speed 
+In some situation when the a Hall changed direction at the 
+same sampling cycle a wrong speed was calculated which 
+
+===== PAGE 32 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.05 B00|www.elmomc.com 
+32 
+Table of Contents 
+Bug 
+Details 
+sometimes resulted in a negative speed direction. This was 
+fixed. The speed is calculated properly.  
+
+===== PAGE 33 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.00 B00|www.elmomc.com 
+33 
+Table of Contents 
+Chapter 15. 01.01.15.00 B00 
+Component 
+Version 
+Firmware Version 
+01.01.15.00 09Oct2018B00 
+Communication Server 
+1.1.7.98 
+PAL 
+90 
+ESI 
+0x00010420 V10 
+15.1 
+Details 
+Subject  
+Details 
+Digital output indication 
+when motion status 0 
+enhancement 
+The user can set the digital output to indicate that a motion reached 
+the desired set point. This is done via the OL[] command. The 
+indication was related to the Target Reached bit which is not valid in 
+time based motion such as IP mode and CSP mode. From this version 
+the digital output will also be set when the motion is in reset i.e. 
+when consecutive set points are the same resulting zero speed 
+command.  
+Object 0x100B boot 
+version 
+Object 0x100B is now reporting the boot version. Previously this 
+object was reserved.  
+Ignoring Gantry YAW  
+ER[5] is the maximum permitted tracking for Gantry Yaw controller 
+or Stepper Closed loop controller. In some situations e.g. during 
+tuning of the controller there might be a need to discard this error 
+monitoring. From this version when ER[5] is equal to 0, Yaw 
+controller or Stepper Closed Loop controller tracking error is 
+ignored.  
+Sensor less observers: 
+Using the velocity 
+observer allows 
+estimation of the speed 
+for feedback purposes 
+when no physical 
+feedback exists 
+Sensor ID 37 for Brushless (Special Firmware is required): 
+The parameters BF[1-10] are used to define the sensor properties. 
+The commutation is also estimated. Adequate windows for the 
+sensor-less configuration are available in the “Expert Tuning” in EAS 
+version 2.6. 
+Sensor ID 38 for DC Brush: 
+The parameters SC[15] defines the sensor resistance and NF[11-12] 
+are used to define the observer resolution and voltage threshold.  
+Halls Only speed readout 
+Advanced algorithm was designed which improves the halls readout 
+significantly. 
+New Gold Whistle  
+G-WHI with power 25/100 was added. 
+
+===== PAGE 34 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.00 B00|www.elmomc.com 
+34 
+Table of Contents 
+Subject  
+Details 
+Profile conditioning 
+enhanced 
+The profile conditioning can now also be operated in Cyclic 
+Synchronous Position Mode (CSP). Prior to this version, the feature 
+could be only activated on Profile position and Profile velocity 
+modes. 
+Note that due to this enhancement the Smooth Factor denoted by 
+SF command might influence the trajectory of the CSP mode as well. 
+If this is not required SF[1]=0 should be set.  
+Application Object 
+0x2203 enhancement 
+The EtherCAT application Object 0x2203 is used to retrieve process 
+data from different signals. Refer to Ver. 01.01.13.00 B02 section 
+20.1 Details for a full explanation and list of prior values added. This 
+enhancement includes extension of the “Value” options 7, 8, and 9: 
+Value 
+Description 
+0 
+(default) 
+In Duet Stepper: 
+16 bits A2D CHA & 16 bits A2D CHB 
+Other drives: 
+Drive Temperature  
+1 
+Amplitude of the analog sensor (sin2+cos2), 
+~2,380,000 to 2,750,000 for 1Vp-p sensor. 
+2 
+Speed following error in user units  
+3 
+Drive temperature in ⁰C (TI[1]) 
+4 
+Analog input 2 (AN[2]) 
+5 
+Shunt Counter (see Note below) 
+6 
+VQ, the current controller output voltage 
+7 
+Additional Speed from socket pointed via CA[79] 
+8 
+Filtered RMS current in %: peak\continuance ratio for 
+current saturation. 
+(Ver 1.1.15.3) 
+9 
+Serial sensor temperature as reported from the sensor (if 
+available, 0 if not) 
+(Ver 1.1.15.4) 
+
+===== PAGE 35 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.00 B00|www.elmomc.com 
+35 
+Table of Contents 
+15.2 
+Bug fixes 1.1.15.00 B00 
+Bug 
+Details 
+Sensor ID 16 not active 
+The analog input 1 can be used as a real time reference signal 
+for all motion modes via sensor ID 16 (EAS Tuner). When this ID 
+was used the reference did not work and no signal was sensed. 
+This was fixed.  
+CANOpen LSS partial drive 
+serial number reported 
+The drive serial number which was derived from the LSS 
+protocol was partially reported. This resulted in some situations 
+in an incorrect identification and a failure. This was fixed. The 
+whole LSS message of the CANopen is now properly reported. 
+Communication time out in 
+CSV & CST 
+In Cyclic Synchronized Torque and Cyclic Synchronized Velocity 
+modes, if the communication was disconnected and no new 
+frames (set points) arrived to the drive other than the previous 
+set points, these set points were used for endless motion. This 
+undesired behavior is now fixed and the motion stops 
+according to the Quick stop option code (Object 0x605A). Note 
+that in CST the quick stop does not stop the motion but can 
+only disable it.   
+Current Control modes in 
+UM=2 
+When UM=2 is used (unit mode is Velocity controller) torque 
+motion modes could not be activated. This means that the 
+Profile Torque and Cyclic Synchronous Torque modes were not 
+functioning properly. This was fixed. When the drive in UM=2 
+the user can activate the torque modes as presumed.  
+DV[5]: speed command 
+report 
+DV[5] reported an incorrect velocity value. This was fixed. The 
+value is now reported as User Units. 
+Absolute sensor 32 bits data 
+When using SSI, BiSS & General BiSS sensor with position 
+resolution of over 32 bits, the position readout was incorrect. 
+This was fixed. 
+Halls Only read out 
+When using Halls Only, on rare scenarios velocity feedback was 
+reported as extreme values. This was fixed. 
+Following Error via DS402 – 
+no fault indication 
+The user can select the following error monitoring between 
+Elmo legacy via ER[3] or DS402 via Objects 0x6065 & 0x6066. 
+This selection is done via Object 0x2F41 (bit 3). When the 
+DS402 was selected the fault was not triggered as expected. 
+This faulty behavior was limited to Interpolated Position mode 
+of the CANopen and the Cyclic Position Mode of the EtherCAT. 
+This was fixed. The position error fault alarm will be triggered 
+when DS402 is selected.  
+
+===== PAGE 36 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.15.00 B00|www.elmomc.com 
+36 
+Table of Contents 
+Bug 
+Details 
+ST command in stepper open 
+loop 
+In Stepper Open Loop ST caused a motor run-away. This was 
+fixed.  
+Lead-lag filter, wrong 
+direction 
+When a Lead-Lag filter is used (EAS tuner) the sign of the filter 
+reversed causing an incorrect bandwidth and sometimes loss of 
+loop stability. This was fixed.  
+Repetitive motion in User 
+Units 
+The repetitive motion did not work properly when a relative set 
+point was used and the user unit factor was not 1. This was 
+fixed and user units can be used with repetitive motion as well. 
+Note that the first relative motion is from the present Position 
+Command location. 
+Setting capture to infinite 
+cycles 
+HM[] is used for homing and capture of position. When the 
+value is set to 32000 the capture is infinite. Previously setting 
+the value to 16384 was also treated as infinite. This was fixed.  
+Relative object indexing in 
+EtherCAT 
+For Object 0x3xxx the use of indices higher than 255 is done via 
+the offset. Using the offset was not permitted and prevented 
+the ability to address indices higher than 255. This was fixed. 
+Limit the speed in UM=3  
+The speed in stepper open loop was wrongly limited by VH[2]. 
+This was fixed.  
+Gantry Yaw error – wrong 
+calculation 
+When the sensor 32 bits was rolled over, the Gantry Yaw 
+controller error was not calculated properly . This was fixed. In 
+situations where the sensor 32 bits is rolled over, a jump of the 
+motion is now prevented. Note that the max permitted error 
+limit is defined via ER[5]. 
+Wrong DS402 status word 
+identification 
+In some situations, the status word indication during Current 
+Identification caused a report of motor off while the motor was 
+on. This was fixed. The wrong indication happened only during 
+the identification done via the EAS. 
+
+===== PAGE 37 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.14.08 B00|www.elmomc.com 
+37 
+Table of Contents 
+Chapter 16. 01.01.14.08 B00 
+Component 
+Version 
+Firmware Version 
+01.01.14.08 17Dec2017B00 
+Communication Server 
+1.1.7.97 
+PAL 
+90 
+ESI 
+0x00010420 V07 
+16.1 
+Details 
+Subject  
+Details 
+Field Weakening  
+For situations where a high velocity is required and the voltage is 
+limited, employ a field weakening by controlling the reactive 
+current reference to reduce the voltage saturation due to Back 
+EMF.  
+FF[8] is the reference for the reactive current in elec.deg/cnt/sec.  
+(default 0) 
+CA[114] Speed threshold from which the FF[8] starts to take 
+effect.  
+Please note that the FF[8] is a new variable that will result in a 
+parameter reset after the firmware is updated.  
+Phase Advance is enhanced  
+Phase advance was defined by a single compensation using FF[4], 
+where positive values compensated both for current & voltage 
+and negative values compensated for voltage only. 
+From this version, FF[4] compensates for the delay between the 
+sensor and the current and an additional compensation between 
+the current and the voltage was added and is defined by FF[7]. 
+The units of FF[4] and FF[7] are multiple of TS/2 (half of the 
+sample time). 
+Object 0x603F Error Code 
+mapped  
+The Object 0x603F reports the last error code and can now be 
+mapped to PDO. In EtherCAT PDO 0x1A26 contain this object. 
+Note that during motor enabling the 0x1A26 will be cleared.  
+Object 0x201B: Read the 
+Current RMS filter 
+The Object 0x201B retrieved the filtered RMS current which is 
+used for the I2T filter. This allows the host to monitor the state of 
+the current and if required to take adequate measurements prior 
+to current saturation. Available via the CANopen network only. 
+New High power Gold Twitter  
+G-TWI with power rates of R45/120 & R40/200 were added. 
+
+===== PAGE 38 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.14.08 B00|www.elmomc.com 
+38 
+Table of Contents 
+Subject  
+Details 
+Profile Conditioning 
+The Profile Conditioning method modifies the motion profile and 
+as a result minimizes the vibrations in a moving system. NF[8] 
+enables the relevant conditioning modes. NF[9] and NF[10] are 
+used for the parameters of the selected mode. Using Profile 
+Conditioning shortens the stabilization time and improves the 
+profile performance.  
+
+===== PAGE 39 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.14.08 B00|www.elmomc.com 
+39 
+Table of Contents 
+16.2 
+Bug fixes 1.1.14.08 B00 
+Bug 
+Details 
+Current command limitation 
+Objects 0x6072, 0x6073, 0x60E0, 0x60E1 are now limiting the 
+current command to the current loop. Previously only the set 
+points were limited causing in some rare situations undesired 
+overshoots.   
+Object 0x60E3: Homing 
+methods  
+Methods -3, -4 and 37 were missed from the Object 0x60E3. 
+This was fixed.  
+Homing speed limits 
+The Speed limit during a homing procedure was not limited to 
+the Speed reference Limit denoted via VH[2]. This was fixed.  
+Emulation  disabled after 
+parameter loading 
+The emulation, denoted via EA[1], was disabled after the LD 
+command. LD loads the non-volatile parameters from the flash 
+and activates any required function if it was activated prior to 
+the loading. The issue was thateven if the emulation was 
+activated i.e. EA[1]=1, than after the loading  the emulation 
+was disabled i.e. EA[1]=0. This was fixed.   
+
+===== PAGE 40 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.14.05 B02|www.elmomc.com 
+40 
+Table of Contents 
+Chapter 17. 01.01.14.05 B02 
+Component 
+Version 
+Firmware Version 
+01.01.14.05 22Oct2017B02 
+Communication Server 
+1.1.7.96 
+PAL 
+90 
+ESI 
+0x00010420 V06 
+17.1 
+Details 
+Subject  
+Details 
+New High power Gold Twitter  
+G-TWI with power rates of 80/80 & R160/80 & R140/100 were 
+added. 
+DS402 Homing Method 37 
+Homing method 37 allows user to set the Homing Offset 
+Positing (0x607C) as the present position.  
+Home Attained bit indicates 
+that home was already done 
+From this version bit 12 in the status word (0x6041) can be 
+used as an indication if a homing was attained without 
+performing the homing procedure. This indication is relevant if 
+bit 4 in Object 0x2F41 was set to ‘1’. In this case when Home 
+Mode is selected via object 0x6060.0, bit 12 is set to ‘1’ if the 
+homing was successfully performed since the last power on 
+cycle. The Home attain bit is cleared is case of feedback error.  
+17.2 
+Bug fixes 1.1.14.05 B02 
+Bug 
+Details 
+Profile Speed affects the 
+Homing mode speed  
+Setting the profile velocity Object 0x6081 to 0 undesirably 
+caused the homing mode to stop. This was fixed. The homing 
+mode speed is not affected by the profile velocity object. 
+Fault warning from absolute 
+sensor 
+Randomly, when absolute sensors are used the Warning bit of 
+the DS402 Status Word (0x6041) was unintentionally set to 1. 
+The cause of this was due to the incorrect initiation of the 
+warning during power up. This was fixed. 
+Wrong parameter CRC 
+calculation after reset 
+Due to a wrong default value of the emulation parameters 
+EA[13] & EA[14], the parameter CRC indicated via OV[52] or 
+Object 0x2060. 
+
+===== PAGE 41 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.14.01 B00|www.elmomc.com 
+41 
+Table of Contents 
+Chapter 18. 01.01.14.01 B00 
+Component 
+Version 
+Firmware Version 
+01.01.14.01 20Aug2017B00 
+Communication Server 
+1.1.7.95 
+PAL 
+90 
+ESI 
+0x00010420 V06 
+18.1 
+Details 
+Subject  
+Details 
+CANopen Applications 
+This version was created to provide a firmware version only 
+recommended for CANopen applications. Consult Elmo Support 
+prior to using it in EtherCAT based applications. 
+18.2 
+Bug fixes 1.1.14.01 B00 
+Bug 
+Details 
+Delay of ~30secs during 
+power up.  
+Sometimes after power up, a delay of about 30 seconds 
+suspends communication to the drive. 
+This was fixed. 
+NOTE: when the delay occurs, the Safe Torque Off (STO) 
+diagnostics reports an error that prevents any attempt to 
+enable the motor. 
+No deceleration & 
+acceleration limits in PTP 
+mode 
+In profile Position mode (PTP) the deceleration (DC) and 
+acceleration (AC) were not limited by the Stop Deceleration 
+value (SD) as expected. This was fixed.  
+
+===== PAGE 42 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.14.00 B01|www.elmomc.com 
+42 
+Table of Contents 
+Chapter 19. 01.01.14.00 B01 
+Component 
+Version 
+Firmware Version 
+01.01.14.00 05June2017B01 
+Communication Server 
+1.1.7.94 
+PAL 
+90 
+ESI 
+0x00010420 V06 
+ 
+19.1 
+Details 
+Subject  
+Details 
+Safe Torque Off (STO) version 
+14 certified. 
+The STO diagnostic tests were modified according to 
+ IEC61800-5-2 with one of the tests removed as superfluous. 
+This was approved by TUV SUD report number:  
+EP85169C-A1 from 09/05/2017. 
+STO version is retrieved via VS command: 1.0.14.0 
+Panasonic serial sensor new 
+resolutions 
+Panasonic serial sensor with 20 & 23 bits resolution is now 
+supported. 
+19.2 
+Bug fixes 1.1.14.00 B01 
+Bug 
+Details 
+UI[5] to UI[8] wrong default 
+value 
+The UI[5] to UI[8] indexed default values (after RS 
+command)were not set to 0 as expected. In addition, these 
+parameters did not set correctly when negative values were 
+introduced. This was fixed. 
+OV[] and OF[2] to OF[6] 
+Some of OV[] parameters and OF[2] to OF[6] did not updated 
+when a legal value was set to them. This could cause a wrong 
+behavior of the alias objects of these variables. This was fixed.  
+RS232 disconnected after RS 
+command 
+The RS232 communication was disconnected after the RS 
+command was invoked. This was fixed. 
+Stepper commutation did not 
+abort 
+Sometimes when stepper commutation was activated during 
+the motor enable process, if the commutation procedure failed, 
+the motor remained in servo. This was fixed. The motor is now 
+disabled with the MF 2: “Commutation sequence Failed” 
+message. 
+General BiSS sensor failure 
+In some situations the General BiSS sensor caused the drive to 
+fail. This was fixed. 
+
+===== PAGE 43 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.13.00 B02|www.elmomc.com 
+43 
+Table of Contents 
+Chapter 20. 01.01.13.00 B02 
+Component 
+Version 
+Firmware Version 
+01.01.13.00 20Apr2017B02 
+Communication Server 
+1.1.7.94 
+PAL 
+90 
+ESI 
+0x00010420 V06 
+20.1 
+Details 
+Subject  
+Details 
+Position tracking error fault 
+via DS402 Position Following 
+window 
+Starting from this version, the Position Following Error can be 
+determined via Objects 0x6065 & 0x6066 (Following Error 
+Window & Following Error time out). By setting bit 3 of 
+Object 0x2F41 to ‘1’, the position following error fault 
+(MF = 128) will be determined by these two Objects instead of 
+the legacy ER[3] command. This means that when the Position 
+controller following error is greater than Object 0x6065 for a 
+longer period than 0x6066, the drive goes into Fault state with 
+MF and the relevant EMCY message. If bit 3 of 0x2F41 is set to 
+‘0’ (default) the position following error is determined by the 
+ER[3] value. 
+Application Object 0x2203 
+enhancement 
+The EtherCAT application Object 0x2203 is used to retrieve 
+process data from different signals. Signals are selected via 
+Object 0x2F41 bits 16 to 19. From this version VQ (active 
+output voltage of the Current Controller) can also be recorded. 
+The following summarizes the optional variables that can be 
+mapped to 0x2203 – the “Value” is Object 0x2F41 bits 16-19 : 
+Value 
+Description 
+0 (default) 
+In Duet Stepper: 
+16 bits A2D CHA & 16 bits A2D CHB 
+Other drives: 
+Drive Temperature  
+1 
+Amplitude of the analog sensor (sin2+cos2), 
+~2,380,000 to 2,750,000 for 1Vp-p sensor. 
+2 
+Speed following error in user units  
+3 
+Drive temperature in ⁰C (TI[1]) 
+4 
+Analog input 2 (AN[2]) 
+5 
+Shunt Counter (see Note below) 
+6 
+VQ, the current controller output voltage 
+
+===== PAGE 44 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.13.00 B02|www.elmomc.com 
+44 
+Table of Contents 
+Subject  
+Details 
+7 
+Additional Speed from socket pointed via CA[79] 
+(See Chapter 3 Ver 1.1.15.0) 
+8 
+Filtered RMS current in %: peak\continuance 
+ratio for current saturation. 
+(Ver 1.1.15.3) 
+9 
+Serial sensor temperature as reported from the 
+sensor (if available, 0 if not) 
+(Ver 1.1.15.4) 
+Note: 
+Shunt Counter : The shunt counter used in Bassoon and Oboe 
+drives can now be retrieved via the above object. The counter 
+is 32 bits and counts the time when the shunt is active and 
+dissipating regeneration power. When the counter reaches 
+2,500,000 the shunt is disconnected. 
+EtherCAT scan is discarded 
+during servo on 
+The EtherCAT master scans the network to identify EtherCAT 
+devices. This scan happens if a device was connected to the 
+network. During the scan no EtherCAT message is processed. 
+This means that the process data fails to arrive in time and as a 
+result any motion which is time dependent (such as Cyclic 
+Synchronous Position) must use an extrapolation in order to 
+maintain the motion. From this version, in order to prevent the 
+extrapolation in such scenarios, the scan request from the host 
+will be discarded when the motion is enabled. The host should 
+expect a timeout in such situations. 
+Recording the Digital Halls 
+The Digital Hall recorded signals are now available via the EAS 
+recorder for any user. The “Hall Sensor” signal indicates the 
+halls pattern.  
+Warning Bit of general BiSS is 
+now reported in 0x2085 
+If CA[60] bit 10 is set, the warning of a BiSS sensor will be 
+reported via bit 6 of the map-able Object 0x2085. This feature 
+is available for BiSS sensors where the Warning Bit arrives 
+immediately after the sensor Error Bit.  
+IA Command – not valid 
+From this version, the IA command is no longer active. For 
+compatibility reasons, the command will not return an error 
+when set or requested. 
+ 
+
+===== PAGE 45 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.13.00 B02|www.elmomc.com 
+45 
+Table of Contents 
+20.2 
+Bug fixes 1.1.13.00 B02 
+Bug 
+Details 
+SDO message is discarded by 
+EMCY message via EtherCAT 
+channel 
+In rare situations, when an EMCY message and a reply to an 
+SDO message are required at the same time, the SDO message 
+was discarded. The situation caused a timeout at the host. This 
+was corrected.   
+Following Error was not 
+indicated in the DS402 
+Interpolated Position Mode 
+In position motion modes bit 13 of Object 0x6041 (Status 
+Word) indicates the following error. When the drive was in 
+Interpolated Position Mode (Object 0x6060 = 7 in CANopen) 
+the bit was ignored. This was corrected.  
+Setting OV[37] was 
+overwritten 
+When setting the Home Speed via Object OV[37], the actual 
+value was not reported correctly. This was corrected. Note that 
+the same issue can happen when other OV[] variables are read.  
+EtherCAT ID switches after 
+firmware downloading via FoE  
+In rare situations, the EtherCAT identification switches were 
+reported 0 after firmware downloading via FoE. 
+A power up cycle was required to recover the identification 
+number. This was corrected.  
+From this version the EtherCAT ID is reported properly after 
+firmware update via FoE. Note that PAL 90 is required. 
+ 
+
+===== PAGE 46 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.12.02 B00|www.elmomc.com 
+46 
+Table of Contents 
+Chapter 21. 01.01.12.02 B00 
+Component 
+Version 
+Firmware Version 
+01.01.12.02 13Feb2017B00 
+Communication Server 
+1.1.7.90 
+PAL 
+89 
+ESI 
+0x00010420 V06 
+ 
+21.1 
+Details 
+Subject  
+Details 
+Friction compensation in 
+Synchronous Cyclic Position 
+(CSP) mode 
+Friction compensation is now allowed also in CSP mode and 
+when Object 0x60B1 is mapped. Friction compensation is set 
+via NF[1] and NF[2] command (Amps) for positive and negative 
+directions respectively.  
+21.2 
+Bug fixes 1.1.12.02 B00 
+Bug 
+Details 
+Gantry Homing was not 
+accurate during high speed 
+When Gantry homing was performed at high speed, the actual 
+position (PX) value and Object 0x6064 (PU) were sometimes 
+unexpectedly different. This was corrected. 
+When XP[2]>2, analog inputs 
+readout may not be properly 
+synchronized  
+The XP[2] command allows the user to modify the frequency of 
+the control PWM. When XP[2] was set to a value higher than 2 
+the synchronization of the analog inputs may not have been 
+correct. This was corrected. 
+Note that by default XP[2]equals or is lower than 2. 
+Undesirable Reset of the 
+absolute position in 
+Tamagawa sensor 
+Sometimes when a Tamagawa sensor is used and the user loads 
+the parameters via the LD command or resets the parameters 
+via the RS command, the absolute position was reset. This was 
+corrected.  
+
+===== PAGE 47 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.12.00 B01|www.elmomc.com 
+47 
+Table of Contents 
+Chapter 22. 01.01.12.00 B01 
+Component 
+Version 
+Firmware Version 
+01.01.12.00 14Nov2016B01 
+Communication Server 
+1.1.7.90 
+PAL 
+89 
+ESI 
+0x00010420 V06 
+ 
+22.1 
+Details 
+Subject  
+Details 
+Improving velocity readout in 
+Sine\Cosine sensors  
+When an analog sensor is in high frequency there is an option 
+to read the position and the speed of the quadrature signals 
+rather than the analog signal. This feature overcomes a possible 
+distortion due to the analog filters. CA[112] sets the threshold 
+speed from which the analog signals are ignored and the speed 
+and position are updated from the quad signals. CA[112] is the 
+analog frequency in Hz.  
+If the value is 0 (default) the function is ignored and the speed 
+is given from the analog signals. The hysteresis threshold for 
+resuming to analog readout is 80%.   
+22.2 
+Bug fixes 1.1.12.00 B01 
+Bug 
+Details 
+ 
+ 
+ 
+ 
+
+===== PAGE 48 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.12.00B00  (same as 01.01.11.16 B00)|www.elmomc.com 
+48 
+Table of Contents 
+Chapter 23. 01.01.12.00B00  (same as 01.01.11.16 B00)  
+Component 
+Version 
+Firmware Version 
+01.01.12.00 14Nov2016B00 
+Communication Server 
+1.1.7.90 
+PAL 
+89 
+ESI 
+0x00010420 V06 
+ 
+23.1 
+Details 
+Subject  
+Details 
+Target Reached in Stepper 
+Closed loop (UM=6) 
+From this version, when the drive is in Stepper Closed Loop, the 
+Target Reached bit (0x6041, bit 10) is available. The indication 
+of the motion status is available via the MS command as well. 
+Before this version the target reached indication function was 
+ignored in stepper closed loop. 
+Analog input 2 readout via 
+EtherCAT process data 
+From this version, the analog input 2 (AN[2]) can be mapped to 
+Object 0x2203 and read via EtherCAT Sync Manager 2 
+(PDO 0x1A24). By setting bits 16-19 of Object 0x2F41 to 4, the 
+analog input is mapped. The value of the object is the same as 
+the AN[2] command.  
+Emit() function added 
+The legacy emit() function is used to transmit an EMCY 
+message from the User Program to the CAN network. This 
+function is now implemented in the Gold Family as well. The 
+emit(data) results in a transmission of EMCY message: 0xFF01 
+0x81 and the data. 
+Lead\Lag first order filter 
+enhancements 
+The Lead\Lag first order filter can be set via the KV[] command. 
+From this version, the phase can be set to +/-85 degrees, 
+previously +/-60 degree, and the frequency to 0.2Hz, previously 
+1Hz. 
+Plant identification 
+improvement 
+The frequency used for the identification of the plant during 
+the tuning (SE[3] command) is now set to 6667 HZ allowing 
+identification at higher frequencies. Previously the highest 
+frequency was limited to 5000Hz. 
+
+===== PAGE 49 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.12.00B00  (same as 01.01.11.16 B00)|www.elmomc.com 
+49 
+Table of Contents 
+23.2 
+Bug fixes 1.1.12.00 B00 
+Bug 
+Details 
+Sync Manager 3 processing 
+failed in SafeOP state 
+In SafeOP state, SM3 was not processed properly causing the 
+message from the drive to be discarded. This was corrected. 
+PDO 0x1A03 – not aligned 
+PDO 0x1A03 was not aligned, causing an incorrect readout 
+value of any object which followed it. This was corrected. 
+SDO segmented process failed 
+In some situations, the use of commands handling objects 
+directly (i.e. OF[], OV[], CW & FC) caused an on-going SDO 
+segmented process to fail with a dead-lock situation. This was 
+corrected.  
+The use of these commands is now permitted without causing 
+the mentioned failure. 
+Object 0x3xxx wrong handling 
+of the index 
+No indication when the sub-index of Object 0x3xxx is out of 
+permitted range. From this version, the sub-index of Object 
+0x3xxx is handled properly.  
+Homing after PA\PR 
+command 
+When the PR command is followed by the PA command, using 
+Homing caused an undesirable move, compensating the PR 
+value. After the target is reached, this undesired motion is now 
+inhibited. Even setting a homing after the target was reached, 
+does not cause any motion. However, setting a homing during 
+the motion will cause a recalculation of the target which results 
+in a motion to the new position as a result of the homing 
+command. 
+Undesirable motion when 
+setting PA command to a limit 
+switch while in ECAM mode  
+When the axis encountered a FLS\RLS limit while the ECAM is 
+active and the PA command is used, an undesirable motion 
+occurs. This was corrected. Now if the ECAM command with 
+combination of the PTP command is beyond the limit switch 
+position, then the motion towards the switch is inhibited. 
+Jog command (JV) violated 
+the limit switch (FLS\RLS) 
+when FF[1] is used 
+If the acceleration feedforward command is used (FF[1]!=0) and 
+a jog motion encounters a limit switch (FLS\RLS), the motion 
+did not stop as expected. This was corrected. The limits are not 
+violated in such situations.  
+Position Limit in stepper 
+closed loop did not work 
+properly 
+In Stepper closed loop, when a software position limit was 
+reached, the motor could not be moved out of the limit. This 
+was corrected. 
+Mandolin temperature report 
+In the G-Mandolin drive the temperature was reported 
+incorrectly with an offset of ~3⁰C. This was corrected. 
+
+===== PAGE 50 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.11 B00|www.elmomc.com 
+50 
+Table of Contents 
+Chapter 24. 01.01.11.11 B00 
+Component 
+Version 
+Firmware Version 
+01.01.11.11 12Sep2016B00 
+Communication Server 
+1.1.7.89 
+PAL 
+89 
+ESI 
+0x00010420 V06 
+ 
+24.1 
+Details 
+Subject  
+Details 
+Download parameter file in 
+PreOP state 
+The parameters file can be downloaded via FoE. Before the 
+modification the FoE download was permitted only in Boot 
+Strap state. From this version the file can be downloaded 
+during PreOP state as well. Note that firmware download via 
+FoE is allowed only in Boot Strap state, 
+Bassoon\Oboe shunt ability 
+The regeneration power dissipation of the G-BAS & G-OBO was 
+further improved.  
+24.2 
+Bug fixes 1.1.11.11 B00 
+Bug 
+Details 
+Trigger on Begin 
+When the BG command was requested prior to the pre-trigger 
+delay time, the recorder failed to start. This was fixed. The 
+recorder starts when the pre-trigger elapses.   
+Yaskawa sensor CRC 
+In some situations, when Yaskawa sensor is used, an incorrect 
+CRC error was detected. This was fixed. The modification 
+requires the use of PAL Version 89 (VP). 
+ESI fixes 
+The following was fixed: 
+- Object 0x1003 was missed 
+- Object 0x60FD type change from DINT to UDINT 
+
+===== PAGE 51 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.09 B00|www.elmomc.com 
+51 
+Table of Contents 
+Chapter 25. 01.01.11.09 B00 
+Component 
+Version 
+Firmware Version 
+01.01.11.09 12Jul2016B00 
+Communication Server 
+1.1.7.87 
+PAL 
+88 
+ESI 
+0x00010420 V04 
+ 
+25.1 
+Details 
+Subject  
+Details 
+ 
+ 
+25.2 
+Bug fixes 1.1.11.09 B00 
+Bug 
+Details 
+Analog input 1 offset 
+The analog input 1 offset was not calculated properly.This was 
+fixed. 
+ 
+
+===== PAGE 52 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+52 
+Table of Contents 
+Chapter 26. 01.01.11.08 B00 
+Component 
+Version 
+Firmware Version 
+01.01.11.08 29Jun2016B00 
+Communication Server 
+1.1.7.87 
+PAL 
+88 
+ESI 
+0x00010420 V04 
+ 
+26.1 
+Details 
+Subject  
+Details 
+Trapezoidal commutation 
+Setting CA[28]=8 will allow commutation in real 6-step trapeze 
+mode. This improves the performance of the servo when the 
+motor windings are a real trapezoidal. 
+This mode can be used with DC-brushless where Halls Only 
+feedback is used. The main improvement is to maintain a 
+smooth torque when the motor switches direction. 
+Ignore digital Halls fault after 
+commutation was found 
+Setting CA[16] bit 1 to ‘1’ indicates to the drive, to ignore the 
+Halls state, when the commutation is located in a 
+Halls+Encoder sensor. When there is an illegal Hall state, bit 10 
+of object 0x2085 (indicated via the setting of OV[61]). The bit is 
+cleared when the next motor enabled (e.g. MO=1) is 
+commanded. 
+Ignore digital Halls mismatch 
+fault 
+CA[111] sets the mismatch field angle between the Halls and 
+the Encoder in field angle units (512 is 360 electrical angles). 
+Setting CA[111] to 0 disables this function. 
+If the difference between the field angle calculated by the Halls, 
+and that calculated by the encoder is higher than CA[111], the 
+drive disables the servo with MF=4.  
+This fault can be ignored by setting CA[16] bit 2 to ‘1’. If the 
+“ignore” bit is set and a fault occurred, Object 0x2085 bit 11 is 
+set to indicate a warning. The warning is also reflected via 
+OV[61] bit 11. 
+Object 0x201B retrieves the 
+current RMS 
+The current RMS is calculated for the CL\PL protection filter. 
+This value can now be retrieved via the map able object 
+0x201B. The object is map able via CAN only. 
+Gantry applications, CA[60] 
+bit 7: Allows separation of the 
+analog current offset for 
+master and slave 
+For a Gantry application during identification, CA[26] points to 
+the socket used by the master to produce the Yaw torque also 
+for the slave. If the user wishes to use CA[26] for current offset 
+in the master, setting bit 7 of CA[60] will prevent the master 
+
+===== PAGE 53 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+53 
+Table of Contents 
+Subject  
+Details 
+from sending the Yaw torque. This means that the CA[26] 
+socket of the master will now serve as a reference to the 
+master only.    
+Home supported in closed 
+loop Stepper Mode 
+In UM=6 and closed loop Homing modes are now valid. 
+Mandolin drive 
+The Mandolin drive was added to the Gold family.  
+Interpolated Position (IP 
+mode) synchronization 
+enhancement.  
+The CANopen IP mode requires a SYNC message to synchronize 
+the motion between several drives. SYNC is a CAN message 
+produced by the host, so that the drives adjust their internal 
+timers. From this version, the drive tolerance for SYNC message 
+jitters and drifts is improved. Previously, the drive reported 
+underflow due to the SYNC message drifts. 
+Note that the minimum SYNC interval in IP mode is 1mSec. The 
+SYNC interval determines the motion interpolation period via 
+object 0x60C2. The drive does not check this period 
+The host must guarantee the interpolation time to avoid buffer 
+underflow. 
+Reading QUAD sensor from 
+PAL 
+Sensor ID 36 allows reading of a quad sensor based on the 
+CPLD hardware interfaces. This feature allows very high 
+resolution timing synchronization (<20 nanosecs) of quad 
+signals lock, which is useful in some cases for high speed quad 
+signals (> Few MHz Pulse rates). In this mode, capture and 
+Homing are limited. 
+Prevent movement when 
+Hard Stop is active 
+When Hard Stop is active (IL[] command :Soft & Auxiliary stop),  
+the drive will not perform commutation search. Any attempt to 
+enable the servo (e.g. MO=1) when the commutation is not 
+known, receives the reply EC 201: “Commutation Sequence 
+Failed”. The user should reset the input prior to enabling the 
+motor.  
+Note that If the commutation is known, or if the sensor allows 
+absolute commutation (e.g. Halls sensors) the servo can be 
+enabled even when Hard Stop is active. 
+External 16 bits A2D sensor 
+In the Duet Stepper, the drive can now read data from two 16 
+bits A2D channels for general purpose. The A2D channel A & 
+channel B values are reported via WI[70] & WI[71] respectively. 
+These values are also reported via Object 0x2203 where the 
+high 16 bits are the readout from channel A and the low 16 bits 
+are from channel B of the A2D.  
+
+===== PAGE 54 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+54 
+Table of Contents 
+Subject  
+Details 
+Interpolation time threshold 
+between Halls transition  
+In Halls only sensor, CA[40] is the threshold interpolation time 
+between digital halls transitions in mSec. If the time between 
+transitions is higher than CA[40], then the speed interpolation 
+is disabled. Setting CA[40] to 0 means that the default 
+interpolation is 2000 mSec.  
+Enhanced stop of motion 
+when drive in saturation 
+When the drive is in voltage saturation, meaning that the bus 
+voltage is so low, it prevents the motor from following the 
+required speed command, and a speed tracking error is 
+developed between the feedback and the speed command. 
+When the motion is stopped (with the ST or Halt command) in 
+these situations, the feedback continues to move until the 
+tracking error fades. This undesired movement of the motor 
+may last for a relatively long period after the speed command 
+was actually set to 0. From version 1.1.11.4, the tracking error 
+in such situations, will be closed immediately, allowing the 
+drive to stop the motor at the desired deceleration regardless 
+of the tracking error caused by the voltage saturation.  
+Interpolated Position active 
+state & underflow 
+modification 
+The CANopen IP mode starts when the host sends the SYNC 
+messages and sets bit 4 of object 0x6040. If the host fails to 
+send the first set-point (object 0x60C1) prior to the 0x6040 
+setting, the drive assumes a failure and informs that there is an 
+underflow by resetting the interpolation active flag (object 
+0x6041 bit 12).  
+From version 1.1.11.6, the drive will not start the underflow 
+counter before the first set-point arrives even if bit 4 of object 
+0x6040 (IP active) is set. This enhances the tolerance of the 
+drive for different timings of the CANopen host.  
+Setting a new set-point in 
+Profile Position mode while 
+the drive is in Halt 
+When the host sends a Halt command via object 0x6040 (bit 8), 
+the drive halts the motion according to the definition in Halt 
+Option Code (0x605D). If during this time, the drive is halted, a 
+new set point is issued by the host, so that when the Halt is 
+“released” by the host, the new motion trajectory will be 
+according to the new set-point. In previous version the new 
+trajectory requested during Halt was discarded.  
+Twitter over temperature  
+The Gold Twitter over temperature is 87⁰C. Previously it was 
+85⁰C.  
+Home to block + Index 
+Sub modes -3 & -4 
+New homing modes -3 & -4 are introduced in this version. 
+Homing mode -3 means that the motor moves in the negative 
+direction with limited torque and defined threshold velocity 
+until blocked. When the motor is blocked and the torque 
+
+===== PAGE 55 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+55 
+Table of Contents 
+Subject  
+Details 
+reaches the torque limit, if the speed is lower than the 
+threshold speed for a threshold speed time, then the motor 
+moves in the positive direction where the torque limit which 
+was used before the homing is restored, until the Index is 
+detected and the home is attained.  
+The -4 mode is the same except that the motor moves to the 
+positive direction until it is blocked and then to the negative 
+direction until it detects the Index pulse.  
+FLS & RLS during homing 
+modes  
+The reverse and forward limit switches were disabled during 
+homing mode. Starting from this version during the DS402 
+Homing Mode, the FLS & RLS are monitored. If the drive 
+detects one of the mentioned limits and this limit is not part of 
+the homing procedure, then the motor stops and Home Error 
+bit is set (Object 0x6041 bit 13). The limit can be monitored via 
+0x60FD. 
+Improving the current 
+identification frequency range 
+The frequency which is used for frequency identification is now 
+improved. Previously the lowest frequency was 1Hz. From this 
+version onwards, it can be set as low as 0.01Hz. 
+Position Software Capture of 
+digital absolute sensors and 
+analog sine\cosine sensors 
+Position capture is used for touch probe and homing functions.  
+The capture is now permitted in all absolute sensors as well as 
+in analog sine/cosine sensors.  
+The supported absolute sensors are: 
+BiSS, Panasonic, EnDAT, Tamagawa, SSI, Kawasaki & Sanyo 
+Denki. When an absolute sensor is used for capture, the 
+accuracy of the captured position depends on the velocity 
+according to: 
+Feedback velocity x TS 
+For analog sine\cosine sensors the user can select between 
+hardware and software capture. Hardware capture is very 
+accurate but with low resolution, whereas the software 
+position captures is with high resolution but low accuracy.  
+The analog sensors which support the software capture are 
+Hiperface, Sine\Cosine and Gurley sensor. Software capture is 
+selected by setting bit 8 in CA[60] (CA[60] = 512). 
+Note that the user is required to reset the sensor via CA[41] to 
+CA[44].  
+When selecting hardware capture (default, compatible to 
+previous version) the position is captured by quadrature 
+transition of the signal. Alternatively, when selecting software 
+
+===== PAGE 56 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+56 
+Table of Contents 
+Subject  
+Details 
+capture, the resolution is according to the analog resolution but 
+the accuracy is limited to:  
+Feedback velocity x TS 
+Note that Halls sensor and Resolver cannot be captured by 
+software.  
+The capture is performed via the Index or Strobe inputs of Port 
+A.  
+Any digital input can be routed to the Index or Strobe via GI[3] 
+or GI[4] respectively.  
+Temperature mapped via 
+EtherCAT 
+The drive temperature can now be monitored via Object 
+0x2203.Object 0x2203 is a general object pointer that can 
+retrieve different data. Object 0x2F41 bits 16 to 19 are used to 
+select which data can be retrieved. Setting these bits to 3 
+means that the 0x2203 retrieves the drive temperature (alias to 
+0x22A3 sub index 1). For EtherCAT channel, 0x2203 is 
+mappable via tPDO 0x1A24. 
+Shunt logic improved 
+Shunt logic software protects the drive’s shunt. The shunt logic 
+is available in G-BAS & G-OBO. The handling of the shunt logic 
+was improved allowing a higher dissipation of the shunt power.  
+Downloading PAL via CAN 
+From this version it is permitted to download the PAL via a CAN 
+interface. Previously, PAL downloading was limited.  
+Note that the user should confirm the PAL version is suitable to 
+the firmware version, meaning that the download via CAN is 
+performed from the same FW file (*.gabs file). 
+
+===== PAGE 57 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+57 
+Table of Contents 
+26.2 
+Bug fixes 1.1.11.08 B00 
+Bug 
+Details 
+ESI modifications 
+Minor adjustments in data type definition. 
+Jump in position when 
+stepper\binary commutation 
+is done 
+Sometimes after a stepper commutation, the position jumped. 
+This was fixed.  
+Possible position jump in non-
+periodical ECAM  
+In a non-Periodical ECAM (EM[1]=1) where a non-constant 
+master gap (EM[2] bit 11 set to 1), if the ECAM starting point 
+was non-zero, a position jump occurred out of the ECAM. This 
+was fixed.  
+SR bit 21: Shunt indication 
+Shunt indication was reversed and the bit was set when shunt 
+was inactive. This was fixed.  
+G-TUBA internal fan 
+constantly active 
+When downloading the previous version of firmware to G-TUBA 
+the internal fan continues to operate although switched OFF. 
+This was fixed. The G-TUBA fan only works when the 
+temperature threshold is reached.   
+Wrong deceleration during 
+Position limit reaction 
+When the drive reaches the position limit it automatically 
+decelerate the motion using the SD command. In some 
+situations the end of this deceleration was incorrectly 
+managed, especially at the last interval of the motion causing 
+an actual deceleration which is higher than the one defined via 
+SD. This was fixed. 
+Speed 0 indication in motor 
+off 
+Bit 23 in SR command reports when the speed is 0. This bit 
+reported incorrectly when the servo was off i.e. SO=0. This was 
+fixed.  
+Fail to engage brake in torque 
+modes 
+When the drive is in Profile Torque or Cyclic Synchronous 
+Torque modes and a brake function is required via BP[], the 
+brake was not engaged when the drive was disabled. This was 
+fixed.   
+CANopen: RTR not supported 
+RTR allows a remote transmission mechanism of the CANopen. 
+The Gold drive does not support the RTR, which is informed via 
+Object 0x1800 to 0x1803 sub index 1 bit 30. Note that for 
+compatibility reasons, if the host sets bit 30 to 0, the request 
+for RTR will be ignored, without error. Drive always reports 1 in 
+this bit.  
+User program: wrong code 
+size 
+The allowed Code size for the user program is 30000 chars. 
+Previously it was set to 15000. This was fixed. 
+
+===== PAGE 58 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+58 
+Table of Contents 
+Bug 
+Details 
+Software position limits 
+during homing 
+During homing procedure (DS402 Operation Mode 6) the 
+Position software limits (VH[]3\VL[3]) blocked the motion. 
+Starting from version 01.01.11.02 these limits are ignored until 
+the home is attained.  
+Object 0x0002 map able 
+The 0x0002 object is a byte object that allows performance of a 
+virtual CANopen PDO mapping for padding. Previously, the 
+object could not be mapped to both Read & Write PDOs. Now it 
+is permitted. Note that the object is not valid for EtherCAT, 
+which uses object 0x0000 for padding.  
+Interpolated Position (IP 
+mode) with velocity reference 
+When using IP mode sub-mode -1 where the velocity of the 
+next set-point is handled by the host, the velocity was not 
+handled correctly causing jitters in the motion. This was fixed.  
+Motion jumps in Profile 
+Position Halt & Start 
+transition 
+In Profile Position Mode, if the host sends Halt and New Set-
+Point (bit 4 in 0x6040) repeatedly in quick succession, the 
+motion jumped. This was fixed.  
+Hiperface sensors not working 
+after LD 
+LD loads the parameters from the flash memory. The LD is 
+automatically called during power up. If the host issued LD 
+after the power up, the Hiperface sensor position readout was 
+not updated. This was fixed.   
+Changes in the EtherCAT ESI 
+file 
+The following objects were fixed in the ESI file: 
+0x60E3 changed type to SINT 
+0x60c2.2 changed type to SINT 
+0x608F, 0x6091, 0x6092, 0x6099 changed type to UDINT 
+Recorder trigger on Begin 
+The BG recorder trigger started the recording prior to the 
+trigger delay timing. This was fixed. 
+Interlock polarity modified 
+The Interlock bit is reset to ‘0’ in object 0x60FD when STO is 
+active and the drive is in safe state. Prior to this version the 
+logic of the Interlock bit was wrongly inversed.   
+A cycle delay when tPDO 
+event is triggered on digital 
+inputs,  
+When a tPDO is set for a Asynchronous event with a Digital 
+Input trigger, the transmitted data of the digital input was from 
+the previous cycle. As a result, the transmitted digital input 
+data were wrong. This was fixed. The integrity of the digital 
+inputs which are transmitted via tPDO is now corrected. Note 
+that this issue did not occur when tPDOs were triggered by the 
+SYNC message. 
+
+===== PAGE 59 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.08 B00|www.elmomc.com 
+59 
+Table of Contents 
+Bug 
+Details 
+Quick Stop during Homing 
+procedure 
+When the drive is in Homing Mode Quick Stop state, a Home 
+Error indication (bit 13 object 0x6041) occurs. In order to 
+resume motion, bit 4 of object 0x6040 must be toggled from 0 
+to 1.  
+Homing method modification 
+only when home is not active 
+In previous versions, setting a new homing method while the 
+previous method did not complete resulted in uncertain 
+situation. From this version, switching method, while the 
+previous method is operational is permitted only after setting 
+bit 4 in 0x6040 to 0.  
+Nikon sensor initiation 
+Sometimes the Nikon sensor started unexpectedly with a 
+negative value. This is due to error reset after a battery change. 
+This was fixed.  
+
+===== PAGE 60 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.00 B00|www.elmomc.com 
+60 
+Table of Contents 
+Chapter 27. 01.01.11.00 B00 
+Component 
+Version 
+Firmware Version 
+01.01.11.00 19Nov2015B00 
+Communication Server 
+1.1.7.85 
+PAL 
+87 
+ESI 
+0x00010420 V03 
+ 
+27.1 
+Details 
+Subject  
+Details 
+Prevent movement when 
+Hard Stop is active 
+When Hard Stop is active (IL[] command :Soft & Auxiliary stop), 
+if during the motor enable the commutation is not known, the 
+drive discards the enable request with EC 201: “Commutation 
+Sequence Failed”. The user is required to reset the input prior 
+to enabling the motor.  
+Note that If the commutation is known, (no commutation 
+search is required) or if the sensor allows absolute 
+commutation (e.g. Halls sensors) the servo can be enabled even 
+when Hard Stop is active. 
+ECAT Complete Access 
+removed from ESI 
+Complete Access allows setting or obtaining of arrays and 
+records in a single communication packet. In the Gold drives, 
+this feature is permitted for a limited set of objects mainly 
+Startup and mapping objects. As the Complete Access option is 
+now removed from the ESI (0x00010420), a new EtherCAT 
+configuration can address all objects in a similar fashion.  
+For compatibility reason addressing the limited objects as 
+described above with Complete Access is still permitted.  
+EtherCAT PDO Padding object 
+Padding is required during PDO mapping to maintain even 
+octet's memory boundaries. Previously object 0x0002 was used 
+to align 8 bit objects to 16 bits. According to ETG 2000, the 
+padding object for this purpose is 0x00000008, which adds 
+padding of 8 bits. Therefore, the 0x0002 object is replaced with 
+the 0x00000008 object.  
+AS a result of this padding object change, the following PDOs 
+are affected: 
+• 
+Rx (Inputs): 0x1605, 0x160B, 0x161E (SM3) 
+• 
+Tx (Outputs): 0x1A02, 0x1A03, 0x1A04, 0x1A0B, (SM2) 
+The ESI Elmo ECAT 00010420 V03 supports this option.  
+
+===== PAGE 61 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.00 B00|www.elmomc.com 
+61 
+Table of Contents 
+Subject  
+Details 
+Note that for compatibility reasons object 0x0002 is still valid 
+via the on-line dictionary. 
+Speed range enhancements 
+Speed parameters can now be set to 0.  
+Object 0x607F determines the Max Speed via DS-402, which 
+can be set to 0. This means that the speed command is 
+saturated to 0 for all motion modes, when the max. speed is 0. 
+Object 0x6099 (sub index 1 & 2) determines the speed used 
+when DS-402 Homing mode is activated. The object can now be 
+set to 0.  
+The SP is the maximum speed of the Profile Position. From this 
+version, setting between SP[1] to SP[4] to 0, is permitted.  
+If the value of SP is set to 0, the next BG command results in a 
+Stop, similar to the ST command. 
+Object 0x6081 is similar to SP, and sets the Profile Velocity. 
+Setting this object to 0 is permitted. It results in a ‘Halt’ 
+command when the New Set-Point bit (bit 4) in the Control 
+Word is next set.  
+DS-402 Homing re-activation 
+enhancement 
+When a DS-402 homing procedure is interrupted via the control 
+word (0x6040) by setting bit 4 to 0, the homing sequence is 
+considered as “failed” and a Homing Error bit is set to 1. 
+Resetting bit 4 back to 1 initiates the homing procedure again. 
+Previously a re-initialization of the Home Mode via 0x6060 was 
+required.  
+ 
+
+===== PAGE 62 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.00 B00|www.elmomc.com 
+62 
+Table of Contents 
+27.2 
+Bug fixes 1.1.11.00 B00 
+Bug 
+Details 
+EMCY via EtherCAT, missed 
+bytes 
+When emergency message was transmitted via EtherCAT, only 
+the first 4 bytes were transmitted properly. This was fixed. Now 
+all 8 bytes are transmitted.  
+Stop On Fault during Torque 
+motion modes 
+In Torque modes (Profiled torque and Cyclic Synchronous 
+Torque), when Fault Option Code (0x605E) is Slow Down before 
+disabling the servo, in rare situations the servo was not 
+disabled. This was fixed. Now if Torque modes are operational 
+the servo is disabled immediately.  
+Position drift when Gantry is 
+homed 
+In Gantry systems, the reported position after a home is 
+attained, was offset from the actual position. If multiple 
+homing procedures were performed, the absolute position 
+drifted. This was fixed. 
+Torque increased when a 
+higher CL[1] value is set. 
+When torque is applied to the motor via TC command and the 
+CL[1] (Continuance Limit) was increased. This actual torque (IQ) 
+was unintentionally increased regardless of the state of the 
+torque saturation. This was fixed. Increasing the CL[1] does not 
+affect the torque that was applied to the motor.  
+Object 0x20B0 sub 9 incorrect 
+report 
+Object 0x20B0.9 reports the socket which is used for the 
+Additional Position report (CA[79]). Previously, the object 
+reported the additional position instead of the socket number. 
+This was fixed.  
+XP[3] added to parameter file 
+XP[3] sets the filter of the CANopen SYNC message arriving 
+from the host. The value was not uploaded by EASII as part of 
+the Parameter file. This was fixed.  
+EA[4] indication of the 
+Velocity socket for Emulation 
+EA[4] indicates the socket used for Velocity PWM emulation. 
+When set to 0, the drive automatically routes the actual 
+velocity socket (defined by CA[46]) to the PWM emulation. 
+Previously, setting EA[4]=0 was not permitted. This was fixed. 
+Axis continues after reaching 
+software limit in CSP mode. 
+In Cyclic Synchronous Position, when the motion arrived to a 
+limit switch it continued the movement towards the limit if the 
+set-point was beyond the limit. This was fixed. The motion does 
+not continue beyond the software limits. 
+Unexpected move when using 
+brake. 
+Enabling and disabling the motor rapidly when a brake is 
+defined (OL[]) caused an unexpected delay during the brake 
+engage procedure. As a result, in unbalanced systems (e.g. 
+vertical load) the motor moved more than expected. This was 
+fixed. The brake engaged time is as expected via the BP[] 
+command.  
+
+===== PAGE 63 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.11.00 B00|www.elmomc.com 
+63 
+Table of Contents 
+Bug 
+Details 
+Quick Stop command while 
+brake is engaged  
+When a DS-402 Quick Stop command is sent while the brake 
+function is defined, and the Quick Stop Option code (0x605A) is 
+Switch On Disabled (0x605A set to 0, 1 or 2), the DS-402 State 
+(0x6041) sometimes indicated an incorrect state. This was 
+fixed. The state is now reported as Switch On Disable. 
+Lost CAN emergency (EMCY) 
+messages 
+Sometimes a CAN EMCY message, which was a result of an 
+error code (e.g. wrong command via PDO), was not 
+transmitted. This resulted in situations where the received 
+command failed and the host was not aware of it. This was 
+fixed.  
+ 
+ 
+
+===== PAGE 64 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.07 B01|www.elmomc.com 
+64 
+Table of Contents 
+Chapter 28. 01.01.10.07 B01 
+Component 
+Version 
+Firmware Version 
+01.01.10.07 05Aug2015B01 
+Communication Server 
+AA[5]: 1.1.7.77 
+PAL 
+87 
+ESI 
+0x0010400 V08 
+ 
+28.1 
+Details 
+Subject  
+Details 
+New G-DRUM & G-EAGLE 
+G-DRUM & G-EAGLE 60/100, 13/400 60/400 were added. 
+New G-TWITTER &  G-BEE 
+G-TWITTER & G-BEE R15/200 were added. 
+New Drive: Baritone 
+The Baritone drive was added to the Gold family. PAL version 87 is 
+required (VP is 87).  
+Motion in reset (MS=0) 
+indication in Time depended 
+modes 
+When Interpolated Position mode and Cyclic Synchronous Position 
+mode are used, the Motion Status indication (MS) will be set to 0 
+when the speed command is zero. The indication is also available 
+via the 0x1002 object (map-able) and SR command bit 18.  
+Note that the Target reached bit in DS402 status word (0x6041) is 
+not affected by this change and remains as defined in the relevant 
+motion mode.  
+Motor Temperature 
+measurement (PTC) in 
+G-DUET 
+The G-DUET includes a motor temperature indicator. This is read 
+via TI[5] or object 0x22A4 (map able via CAN). If the temperature 
+exceeds 110⁰C, the servo will be disabled with Motor Fault (MF) 
+0x10000. An Emergency message with error code register 0x4210 
+via CAN\EtherCAT channels will be transmitted. After the servo is 
+disabled due to the fault, it can only be enabled when 
+temperature drops below 100⁰C. An attempt to enable the motor 
+before this, will result in error code (EC) 191. Motor Temperature 
+can be recorded by the EASII via “Motor Temperature[C]” (Group: 
+System) 
+Current Integral Saturation 
+US[2] limits the current integral. This limit is in addition to the 
+anti-windup limit. The range is in percentage (0..100), where 100 is 
+max voltage output (PWM). For compatibility reasons 0 is 
+interpreted as 100%. Limiting the integral reduces overshoots, 
+allowing a faster settling time and maintaining integral usage for 
+small errors. 
+Speed integral Saturation 
+US[3] limits the speed integral. This is in addition to the anti-
+windup limit. The range is in percentage (0..100) of the maximum 
+
+===== PAGE 65 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.07 B01|www.elmomc.com 
+65 
+Table of Contents 
+Subject  
+Details 
+allowed current. For compatibility reasons 0 is interpreted as 
+100%. Limiting the integral reduces overshoots allowing a faster 
+settling time and maintaining integral usage for small errors. 
+DS402 State Machine Option 
+Code via Ox605B & 0x605C 
+The Shutdown option code (0x605B) and Disable operation option 
+code (0x605C) allows the user to select the behavior of the drive 
+when these transitions are requested via the DS402 state machine 
+(object 0x6040). From this version, setting these objects to value 
+1, decelerates the motion under servo control before the servo is 
+disabled, preventing motor spin w/o control. 
+The deceleration that is used is the Profile deceleration (object 
+0x6084). 
+Interlock indication 
+The STO (safe torque off) switches are now indicated via the 
+Interlock indication (bit 3) in object 0x60FD. The bit is set to 1 
+when the STO is disabled and the drive is in safe state.  
+The indication also affects objects 0x2201 & 0x20FD. 
+Boot Version via EtherCAT 
+Object 0x200A indicates the Boot version. For example: 1.1.3.35 
+ 
+ 
+
+===== PAGE 66 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.07 B01|www.elmomc.com 
+66 
+Table of Contents 
+28.2 
+Bug fixes 1.1.10.07B01 
+Bug 
+Details 
+False Over Voltage alert 
+In rare occasions, the Over Voltage was falsely alerted. This 
+was fixed. 
+Object 0x1000 correction 
+The object 0x1000 indicates the device type that is supported. 
+In Gold the device type is DS 402. The value of the object did 
+not indicate that the device supports servo drives. This was 
+fixed. The value now is 0x00020192, as DS402 requires. 
+Uploading procedure via CAN 
+failed to complete 
+The upload sequence is performed via object 0x2036 (UL 
+command). In situations that the uploading procedure failed, 
+the drive was locked and the CAN communication failed to 
+respond. This was fixed.  
+Wrong limit indication (ILA 
+bit) when drive encountered 
+Software Position  
+The ILA bit (bit 11 of the Status Word: 0x6041) is set when 
+internal limit occurs. This indication did not work properly 
+when a Software position limit was reached. Prior to the fix, 
+the ILA indication was set only if the motor was enabled 
+outside the Position Limit boundaries. Now the indication is 
+set whenever the software position limits are sensed. 
+Note that the ILA indication for software limits is reset back to 
+0, when the motor is disabled and when mode of operation 
+(0x6060) is changed. 
+Hard Stop input (IL[x]=2/3) 
+enhancement  
+Hard Stop function is activated when one of the digital inputs 
+is routed via IL[] to this function. When the input is active, the 
+drive stops all motion. Previously, when the drive operated in 
+time-depended motion modes (Interpolated Position mode or 
+Cyclic Synchronous motions mode) and the Hard Stop was 
+activated, the motion was automatically disabled. Now, the 
+drive decelerates to full stop using the SD command and 
+remains enabled.  
+When the Hard Stop is active, the drive discards any motion 
+reference and prevents any movement. This includes any 
+motion commands such as PA, JV, ECAM, velocity and position 
+reference via socket, as well as Yaw reference (Gantry).  
+Note that current reference from socket will not be discarded. 
+If the digital input is reset, the motion resumes immediately. It 
+is recommended to use the “sticky-bit” function as described 
+in IL[] command (Command Reference manual) and set an 
+anti-bouncing filter via IF[] command.  
+The FLS\RLS functionality remains unchanged. 
+EMCY messages via EtherCAT, 
+wrong byte pattern 
+The ECMY messages are transmitted when the motor is 
+disabled due to a fault. The ECMY that were transmitted via 
+the EtherCAT channel included a wrong pattern on bytes. This 
+
+===== PAGE 67 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.07 B01|www.elmomc.com 
+67 
+Table of Contents 
+Bug 
+Details 
+was fixed. The indication of the EMCY is as defined in DS301 
+manual. 
+Sync Manager 3 Watchdog 
+The use of SM3 watchdog caused a jump in the motion after 
+the watchdog recoverys. This was fixed. The SM3 is no longer 
+used in the Gold drive. SM3 watchdog should be implemented 
+by the EtherCAT host. 
+Gantry Yaw reference socket 
+reset.  
+CA[97] denotes the Yaw reference socket when Gantry system 
+is used. After LD command the variable was unintentionally 
+reset to 0, instead of loading the socket number saved during 
+SV. This reset prevented the Yaw profile from working 
+properly. This was fixed. LD loads and initiates the reference 
+socket.  
+MS behavior in Profile Torque 
+mode 
+In Profile Torque mode, the Motion status (MS) was not set to 
+0 when the Halt command or Quick Stop state were requested 
+via the DS402 state machine. This was fixed. Now, the MS is 
+set to 0 whenever the motor speed is 0.  
+Note that this does not affect the Target reached bit in DS-402 
+Status Word.  
+Battery error in Sanyo/Nikon 
+single turn sensors.  
+When a multi-turn sensor was defined as a single turn and did 
+not include a battery, a battery error (PS_ERR) was invoked. 
+Starting from this version, in such occasions, the error is 
+automatically reset when the sensor is initialized by the drive.  
+Bad reply for objects which 
+are not in OD 
+Addressing an Object that is lower or higher than the lowest 
+index or highest index of the object dictionary, caused the 
+EtherCAT stack to lock. This was fixed. Addressing these areas 
+in the object dictionary is now replied with “Object does not 
+exist” abort code.  
+RS232 communication lost 
+after RS 
+RS232 communication to the host was lost after an RS 
+command. This happened when the communication 
+parameters of the RS232 (parity, baud rate) were set to values 
+other than the default. This was fixed. The RS232 
+communication remains after RS or LD commands. 
+ 
+ 
+
+===== PAGE 68 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.05 B04|www.elmomc.com 
+68 
+Table of Contents 
+Chapter 29. 01.01.10.05 B04 
+Component 
+Version 
+Firmware Version 
+01.01.10.05 19May2015B04 
+Communication Server 
+AA[5]: 1.1.7.73 
+PAL 
+85 
+ESI 
+0x0010400 V08 
+ 
+29.1 
+Details 
+Subject  
+Details 
+Panasonic incremental sensor  Version supports Panasonic incremental of 10,000 counts.  
+Version supports Panasonic incremental 20 bits via Encoder ID 29 
+(CA[41] to CA[44]) . 
+Capture function on index of this sensor was added. The capture 
+is required for functions such as homing & touch probe. 
+PWM emulation error report 
+Feedback emulation as well as PWM emulation are set via EA[1]. 
+If an error occurs during the initiation process, EC will be set to 
+107 while EE[7] or Object 0x2081.7 details the reason for the 
+error. 
+UM=6, Stepper mode Open 
+Loop, Allow modulo & 
+Position Limit 
+In Stepper mode (UM=6), open loop, where no sensor is used, 
+the modulo (XM[1]\XM[2]) and the position limit (VH[3]\VL[3]) 
+are influencing the motion. The stepper angle is derived from the 
+profiler output and can be used with User Units (e.g. FC[] 
+command). The profile output in this mode can be copied to the 
+feedback presentation (0x6064 or PU) by setting the "Copy Main 
+Profile" (Sensor ID=15 via EAS Feedback Settings) into position 
+socket. 
+Master\Slave mode for slaves 
+without feedback 
+In this mode a master drive can be connected via "Gantry 
+connection" to any number of slaves. The master transmits 
+Current reference and field angle, which the slaves follow. 
+The slave commutation method is set via CA[17]=7. 
+The master commutation angle can be offset via CA[7] & CA[29], 
+so that each slave can adjust the angle offset. 
+Slave must be manually enabled (motor ON). The UM of all 
+slaves should be 1 (current mode).  
+Note that in situations where the motor ON procedure failed for 
+the slaves, there is no indication at the Master drive. The same 
+applies when one or all of the slaves is faulty. The Master is 
+unaware of this situation and will continue to transmit the set 
+
+===== PAGE 69 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.05 B04|www.elmomc.com 
+69 
+Table of Contents 
+Subject  
+Details 
+point as if all is OK. If a situation occurs where the Master is 
+disabled, the slaves reset the current command to 0, while 
+remaining in servo enabled.  
+Profile Acceleration and 
+Deceleration range 
+enlargement 
+The following parameters and objects range were modified: 
+AC[1] to AC[4]: [2147483647...1] , setting 0 results in an error. 
+DC[1] to DC[4]: [2147483647...1] , setting 0 results in an error.  
+The following objects limits were also modified to 
+[2147483647...1]: 
+0x6083, 0x6084, 0x60C5, 0x60C6 
+Note that if 0x6063 or 0x6084 is set to 0, the set point is ignored 
+by the drive. The default values of these commands and objects 
+were also modified. 
+Profile Speed range 
+enhancements   
+The SP is the maximum speed of the Profile Position. Starting 
+from this version setting 0 to SP[1] to SP[4] is permitted. If the 
+value of SP is set to 0, the next BG command results a Stop 
+similar to ST command.  
+Object 0x6081 sets the Profile Velocity. Setting 0 to this object is 
+permitted but results ‘Halt’ on the next setting of the New set-
+point bit (bit 4) of the Control Word.  
+Halls only speed calculation 
+enhancement  
+When using ‘Halls only’ as the feedback sensor, the speed 
+calculation between 2 Halls transition depends on the speed of 
+the Halls. Previously the detection of Halls transition for the 
+speed calculation was 1 counts every 0.1 Sec. From this version, 
+it was improved by 20 fold, allowing calculation of 1 count every 
+2 Secs. This allows smoother movement at much lower speeds. 
+New G-HORNET 
+G-HORNET 9/200, 3/200, 6/200, 9/200, 12/200 were added. 
+Offset the stepper angle in 
+Halls Only  
+CA[29] is used to move the stepper angle. From this version this 
+feature is also permitted while the servo is on. 
+YM[] default value  
+YM[] (object 0x207B) denotes the modulo of the additional 
+position reference for e.g. ECAM. The default value is now set to 
+0 which implies "No Modulo".  
+ 
+
+===== PAGE 70 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.05 B04|www.elmomc.com 
+70 
+Table of Contents 
+29.2 
+Bug fixes 1.1.10.05B04 
+Bug 
+Details 
+Cyclic Position extrapolation 
+recovery 
+In CSP mode, if the next set-point failed to arrive during the 
+interpolation period due to e.g. lost frame, an extrapolation 
+that calculates the next set-point is used. In such situations, if 
+the master serves as the DC clock (SYNC0) producer (slave 
+mode synchronization), a jump in the position occurred when 
+a valid set-point was received. This was fixed. The motion 
+resumes the desired trajectory.  
+PWM saturation was not 
+updated after US[x] 
+command. 
+US[1] is used to saturate the motor PWM command (voltage 
+command). The desired value was updated only after the 
+relevant US[1] was sent twice. This was fixed. The saturation 
+value is now updated immediately after sending the US[1]. 
+PWM Multiplication  
+The motor PWM frequency is limited by the current sampling 
+time (TS) and the multiplication factor denoted by XP[2].The 
+drive prevents setting a combination of TS and XP[2] that 
+might result in a frequency which can damage the drive. In 
+some cases, modifying the TS after the XP[2] resulted in PWM 
+frequencies which are forbidden. This was fixed. Any order for 
+setting these commands is now permitted.   
+Recorder setting for Output 
+Compare 
+The OC[1] & OC[2] signals can be recorded via the EAS 
+recorder. The name of these signals is now modified to 
+“generated pulses” instead of “remaining pulses”.  
+XP[3] uploaded via EAS 
+parameter 
+The XP[3] refer to the Interpolate mode SYNC filter and was 
+not updated by the EAS during parameter upload and 
+download. This was fixed. 
+Motor failed to move after 
+Inhibit switch release 
+In rare situations, when the Inhibit function (IL[] ) was 
+released, the motion was erratic. This happened when for 
+example a JP was requested after Inhibit is released (Enabled). 
+This was fixed.  
+Drift in Home setting when 
+User Units are used. 
+When User Units were used by the host (UU), the position 
+calculated during the homing was not accurate .This was fixed. 
+The improved calculations prevent possible drifts. 
+Halls only feedback,  
+commutation angle 
+calculations 
+In cases that the sensor was Halls Only the commutation angle 
+calculation was wrong when rolling from Hall state 4 to 5. This 
+could cause a wrong current output. This was fixed.  
+LD during Recorder upload 
+caused a communication 
+timeout  
+When an LD command (load data from flash) was sent during 
+the upload of the recorder data (BH command) the drive 
+stopped responding to the communication causing a 
+communication timeout. This was fixed. Now during BH the LD 
+request returns an error, EC=67 “Recorder Is Busy or Data is 
+uploaded”. 
+
+===== PAGE 71 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.05 B04|www.elmomc.com 
+71 
+Table of Contents 
+Bug 
+Details 
+Homing acceleration limit 
+The homing procedure was not limited by the SD (Stop 
+deceleration) causing am ambiguity in the deceleration 
+trajectory. This was fixed. 
+Emulating the speed via PWM 
+emulation. 
+When speed is emulated via PWM, negative speed values 
+were limited to -32000 cnt/sec. This limitation caused 
+incorrect PWM signals when velocities higher than -32000 
+were required.  
+ 
+ 
+
+===== PAGE 72 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.00 B00|www.elmomc.com 
+72 
+Table of Contents 
+Chapter 30. 01.01.10.00 B00 
+Component 
+Version 
+Firmware Version 
+01.01.10.00 31Dec2014B00 
+Communication Server 
+AA[5]: 1.1.7.69 
+PAL 
+85 
+ESI 
+0x0010400 V07 
+ 
+30.1 
+Details 
+Subject  
+Details 
+Includes the following internal 
+releases 
+01.01.09.11 B07 (Absolute Gantry) 
+Ignoring software position 
+limit via XA[4] 
+When in Cyclic Position Mode, Bit 2 of XA[4] is used to ignore the 
+FLS/RLS (forward and backwards limit switches). From this 
+version, Bit 2 is also used to ignore the Software Position limits 
+(VL[3]/VH[3]).  
+Incorrect ECAM setting new 
+indications 
+When ECAM mode is initiated via EM[1], the complete set of 
+ECAM parameters are checked and processed. If a failure occurs 
+due to a parameters mismatch, the EM[1] command fails (EC=27) 
+and the reason for the failure is retrieved via EE[6].  
+Starting from this version, the following parameters are alos 
+prevented from mismatching by the conditions: 
+if EM[7] (last segment shorten size) > EM[4] (ECAM master gap), 
+then EE[6] indicates 9. 
+If EM[5] (ECAM starting index) > EM[2] (ECAM last index), 
+then EE[6] indicates 10.  
+OS interpreter reply 
+When the OS interpreter is used, the command is sent via object 
+0x1023 SI 1 and the reply is performed via object 0x1023 SI 3. If 
+after the request a SDO is sent to the drive, the OS reply will be 
+0. This happens when the SDO is of VISIBLE STRING type such as 
+0x1009, or 0x100A objects.  
+New mapping option to 
+object 0x2203 
+The 0x2203 object namely, Application Object, can be directed to 
+inform regarding different types of data. By default the object is 
+used for Elmo’s proprietary data. Via object 0x2F41 bits 16 to 19, 
+namely Config Bits, the user can select the following: 
+0x20F41 bits 16-19 is 1: This object 0x2203 informs the analog 
+sensor sine cosine amplitude (Sine2 + cosine2) in internal units. 
+The expected range for 1Vp-p sensor is ~2,380,000 to 2,750,000. 
+
+===== PAGE 73 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.00 B00|www.elmomc.com 
+73 
+Table of Contents 
+Subject  
+Details 
+0x2F41 bits 16 to 19 is 2: This object 0x2203 informs the analog 
+sine & analog cosine signals as follows:  
+(cosine<<16 | sine) 
+To convert the internal values to Volts, divide the value by 3085.  
+ 
+
+===== PAGE 74 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.00 B00|www.elmomc.com 
+74 
+Table of Contents 
+30.2 
+Bug fixes 1.1.10.00B00 
+Bug 
+Details 
+ESI 
+Some bugs related to wrong variables size, wrong defaults 
+values, and bit offset, were fixed. These modifications will not 
+affect any functionality or integration between EtherCAT host 
+and the Gold drive from a previous version. 
+Modulo default value 
+modified 
+The default value of the position limit (VL[3]\VH[3]) and the 
+modulo (XM[1]/XM[2]) is now set to 0. Therefore, the drive 
+will be in 32 bits modulo and the motion behavior (RADO) is 
+“normal” similar to linear motor behavior. The default is set 
+via the RS command. 
+Ignore Hardware limit 
+switches 
+XA[4] sets the behavior of the limits during motion modes. 
+The default value of XA[4] is now set to 4 and therefore the 
+hardware limit switches (FLS, RLS & STOP) will be ignored 
+when the drive is either in the CANopen Interpolated Position 
+mode (IP mode), or any of the Cyclic Synchronous modes (CSP, 
+CSV & CST). 
+New power rates for Gold 
+Twitter, and Whistle 
+The following power rates were added to the Gold Twitter: 
+6/100, 1/200, 3/200, 6/200, 9/200 & 12/200 
+The following power rates were added to the Gold Whistle: 
+1/200 
+Homing Gantry absolute 
+sensor 
+A procedure that homes the Gantry with absolute sensor was 
+not operating properly. As part of the correction CA[110] was 
+added. The CA[110] is an alias to OV[54] which determines 
+the socket which is used for the DS-402 homing.  
+Now, wherever Gantry is defined, the homing works properly 
+and updates the relevant socket as required.  
+NOTE: Further steps are required to perform the Gantry 
+Absolute Homing procedure.  
+Transition 10 of the DS402 
+state machine 
+Commanding Quick Stop via object 0x6040 when the drive 
+was in “Switched On” state (0x33) was ignored by the drive. 
+This was fixed. Setting Quick Stop in this situation will set the 
+state machine (object 0x6041) to the “Switched-on Disable” 
+state (0x250). 
+CANopen LSS, ignored serial 
+number (DS305) 
+LSS did not respond to the “Selected Switch” command. This 
+occurred since the serial number of the identification was not 
+handled properly. 
+Speed command exceeded 
+VH[2] settings 
+Speed limit, defined by VH[2], limited only the speed which 
+was derived from the profiler output. This caused a higher 
+speed than expected. From this version the VH[2] limits the 
+total speed command to the controller which includes the 
+profiler output of the speed derived from the external 
+
+===== PAGE 75 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.00 B00|www.elmomc.com 
+75 
+Table of Contents 
+Bug 
+Details 
+reference (follower, ECAM, socket), and the position 
+controller.  
+PR command causing an 
+undesired modulo roll over.  
+When the actual position was close to the modulo limit 
+(XM[1]/XM[2]), the next PR command caused the motor to 
+inadvertently run to the other side of the modulo. This 
+situation happened when a Homing (HM[1]=1) with "stop 
+after home" (HM[4]=0) was commanded prior to the PR 
+command. This was fixed. 
+Motion roll over rapidly when 
+profile velocity is set to 0. 
+If the Profile Velocity (Object 0x6081) is mapped to PDO and 
+set to 0, the profile position motion rolls over. This was fixed. 
+Setting 0 to 0x6081 via PDO is now saturated to 1 preventing 
+this roll over.  
+EA[7] to EA[14] in EAS 
+parameter file 
+When uploading the parameter file via EASII, EA[7] to EA[14] 
+were not uploaded. This was fixed. 
+Jog motion near the software 
+limits 
+When commanding a jog motion via the JP command and the 
+actual position was near the software position limits 
+(VH[3]/VL[3]), in some situations (i.e. position arrived to the 
+limit before the acceleration completed), the motor could not 
+return to the limit as expected.  
+Profile Position with End 
+Velocity near Position Limit 
+When a Profile Position motion was used with End Velocity 
+and the actual position was near the Position Limits 
+(VH[3]/VL[3]), the motion moved inside the limit. This was 
+fixed. The motion ends at the defined limit. 
+Jog motion when modulo 
+mode is active, reaches 
+software limit  
+When commanding jog motion (JP) and the drive is defined as 
+Modulo (XM[1]>VL[3] & XM[2]<VH[3]), the drive motion was 
+limited due to the software limits (VL[3]/VH[3]). This is fixed. 
+Now the drive ignores the software limits in such situations. 
+Jog when AC == SD 
+When commanding Jog motion (JP), if the Acceleration (AC) 
+equals to the Stop Deceleration (SD), the motion incorporated 
+disturbances along the trajectory.  
+Jog motion with various 
+Acceleration & Deceleration 
+When commanding jog motion (JP) and the acceleration (AC) 
+differed from the deceleration (DC), in some instances, the 
+direction was incorrectly calculated causing the drive to jog in 
+the other direction.  
+Incorrect Current Saturation 
+when switching from brush to 
+brushless motor 
+When switching from a Brushless to Brush motor via CA[28], 
+the Current Saturation (I2T) was not calculated correctly 
+causing a lengthier peak current period than requested. 
+Bit 7 in DS-402 Control Word 
+(fault reset) is Ignored 
+Bit 7 in the Control Word resets the drive from a Fault state 
+according to the DS-402 State Machine (transition 15). The bit 
+was ignored in all other States (e.g. Ready to Switch On, 
+Switch On, Operation Enabled) causing non-requested state 
+transitions. The bug is fixed. When bit 7 is set and the state is 
+
+===== PAGE 76 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.00 B00|www.elmomc.com 
+76 
+Table of Contents 
+Bug 
+Details 
+not a Fault State, the transition is ignored and the drive 
+remains in the current state. 
+EtherCAT Sync Manager (SM) 
+counter modified 
+The SM counter is used to determine retransmission of 
+messages. In some rare occasions if the master started the 
+counter from 0 (for example after network reconnection), the 
+drive lost a message.  
+This was fixed according to ETG 1000-4 table 29. The SM 
+handler now also responds to 0 counter value. 
+PWM emulation did not 
+include Current Command  
+The PWM emulation (refer to explanation on PWM Emulation 
+in the section PWM Emulation below) mode via EM[] did not 
+include the option to emulate the Current Command 
+(EM[9]=4) . This was fixed. 
+UI[] \ UF[] update via Binary 
+Download 
+When uploading a parameters file using EASII via the Binary 
+upload procedure, and then downloading the same file, the 
+UI[] & UF[] arrays were not updated as expected. Values for 
+all UI[] & UF[] were reset to 0.  
+This was fixed. The values which are uploaded are now 
+updated properly.  
+Switching between RM=1 and 
+RM=0 several times caused a 
+wrong set point  
+The RM command sets and resets the auxiliary reference 
+mode. When switching between RM=0 to RM=1 several times, 
+the profiler did not process the next set point properly.  
+This situation is only relevant when the main profiler (DS-402 
+profiler) was the ECAM master via EM[11] bit 3 is set to 1.  
+This did not occur when the ECAM master reference was from 
+a socket (feedback follower). 
+PA & JP with smooth factor 
+(SF) 
+When commanding Point-to-Point motion (PA) with Final 
+Speed (FS) and smoothing factor SF, sometimes the motion 
+moved in an unexpected direction. This occurred when the 
+distance required for the smoothing was more than the set 
+point calculated distance.  
+From this version, in these situations, the motion will not 
+move in other directions. Instead the requested Final Speed 
+will be attained long after the target position is accomplished. 
+In rare situations the same occurs when commanding JP (Jog 
+Position) motion with Smooth Factor. This was fixed. The 
+motion trajectory is always performed to the expected 
+direction. 
+Motion starts when BG failed 
+The BG command starts a pending motion (e.g. PA, JV etc) and 
+can be used to activate the “Begin” trigger for the recorder. 
+Sometimes the motion starts even when the command has 
+failed (returning error). This was fixed. 
+
+===== PAGE 77 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.10.00 B00|www.elmomc.com 
+77 
+Table of Contents 
+Bug 
+Details 
+PWM emulation values 
+The EM[14] & EM[15] parameters set the Current boundaries 
+when PWM emulation (refer to explanation on PWM 
+Emulation in the section PWM Emulation below) on Current is 
+performed (EM[9]).  
+The EA[14] & EM[15] were always loaded to Peak Current 
+(PL[1]) value regardless of the request from the host. This was 
+fixed.  
+Any value can be requested and the only limit applies is: 
+EM[14] < EM[15]  
+OS interpreter did not reply 
+an error 
+The CANopen SO interpreter permits addressing to the Elmo 
+interpreter via the 0x1023 SI 1 object. If the command 
+returned an error, the user did not receieve any notification. 
+This was fixed.  
+When a command is sent via the OS interpreter return error 
+(EC), Object 0x1023 SI 3 reports this error. 
+ 
+
+===== PAGE 78 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.12 B00|www.elmomc.com 
+78 
+Table of Contents 
+Chapter 31. 01.01.09.12 B00 
+Component 
+Version 
+Firmware Version 
+01.01.09.12 01Nov2014B00 
+Communication Server 
+AA[5]: 1.1.7.68 
+PAL 
+85 
+ESI 
+0x0010400 V03 
+31.1 
+Details 
+Subject  
+Details 
+ESI new version 
+• 
+Home Method modified to Read Only.  
+• 
+Removing irrelevant parts from the new revision 
+ 
+
+===== PAGE 79 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.12 B00|www.elmomc.com 
+79 
+Table of Contents 
+31.2 
+Bug fixes 1.1.9.12B00 
+Bug 
+Details 
+Homing attained with Modulo 
+roll over 
+If during a Homing procedure the Home Attain was performed 
+near the modulo (XM[1], XM[2]) and the Home Offset caused 
+the final position to roll over the modulo range, an incorrect 
+calculation will be performed, resulting in an incorrect profiler 
+output. This was fixed 
+Wrong Position (0x6064) 
+calculation with Dual Loop 
+The object 0x6064 is the Actual Position value in User Units. 
+For dual loop and when the speed sensor is more sensitive 
+than the position sensor, the final position is calculated 
+incorrectly. 
+This causes an incorrect 0x6064 report to the host even if the 
+position sensor is not actually moving. This was fixed.  
+Handling of Ethernet ARP 
+message 
+The handling of ARP messages was performed incorrectly 
+causing messages to be lost. This was fixed. 
+ 
+
+===== PAGE 80 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.11 B07|www.elmomc.com 
+80 
+Table of Contents 
+Chapter 32. 01.01.09.11 B07 
+Component 
+Version 
+Firmware Version 
+01.01.09.11 27Oct2014B07 
+Communication Server 
+AA[5]: 1.1.7.67 
+PAL 
+85 
+ESI 
+0x0010400 V02 
+ 
+32.1 
+Details 
+Subject  
+Details 
+Includes the following internal 
+releases 
+01.01.09.11 B00 
+01.01.09.11 B01 
+32 bit checksum for 
+parameters integrity 
+The Checksum of the parameter’s database integrity was 
+calculated in 16 bits. From this version the checksum was 
+changed to 32 bits.  
+OV[52] (object 0x2060) includes the checksum value.  
+NOTE: This is compatible to previous checksum calculations. 
+The new calculation is for presentation purposes only. All 
+internal decisions about database integrity were not modified.  
+Objects 0x2110 to 0x211E 
+KG[] command includes 15 filters. Each filter includes 63 
+parameters. These filter parameters are indicated by 945 
+sub-indices.  
+Objects 0x2110 to 0x211E are used as alias to the KG[] where 
+each filter is represented by a different object. 
+For example: Object 0x2110 includes 63 parameters of the 
+Speed KI filter entries and 0x2111 includes 63 parameters of 
+the Speed KP filter.  
+This allows a CANopen or EtherCAT host to address all the 
+filters via an SDO (CoE) interface. 
+EtherCAT stack revision 
+number (ESI) 
+The EtherCAT revision number was modified to 0x0010400. 
+Position Error indication for 
+Gantry Yaw & Stepper Closed 
+loop  
+The Position Error of gantry Yaw controller or Stepper 
+controller is determined via ER[5]. If the position error is 
+violated, MF will be set to 0x400 (1024) and an EMCY message 
+is transmitted. Previously when the fault occurred, MF was set 
+to 0x100. 
+Auto Focus error bit 
+indication  
+The Auto Focus is Elmo's proprietary additional sensor that 
+can be read via the drive inputs. Bits 8 & 10 of object 0x2085 
+are reserved for this special mode. 
+
+===== PAGE 81 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.11 B07|www.elmomc.com 
+81 
+Table of Contents 
+Subject  
+Details 
+US[1] modified in motor 
+enable 
+The US[1] sets the saturation for the PWM (voltage command 
+of the current controller). The value can now be modified 
+even when the motor is enabled. 
+Dynamic brake enhancement 
+The Dynamic Brake (DB) reduces the coasting time of the 
+motor after it was disabled. By shortening the lower phases 
+when the free-wheeling speed is lower than VH[1], the 
+coasting time is reduced.  
+Previously this speed was checked only during the motor off 
+interval.  
+From this version, the threshold speed is checked always and 
+not only during the procedure of the motor off. This means 
+that even if the motor is not enabled, the DB will be activated 
+when actual speed <= VH[1]. 
+Dynamic brake with no sensor 
+Where there is no speed sensor, e.g. UM=1 with Brush Motor 
+and the VH[1]>0, the motor enable request (MO=1) will return 
+the Error Code 80.  
+Adding new power rated for 
+Twitter (GTWI) 
+Following power rates are added to the GTWI: 
+6/100 
+1/200, 3/200, 6/200, 9/200, 12/200 
+Adding new power rate for 
+Whistle (GWHI) 
+1/200 module is added. 
+ 
+
+===== PAGE 82 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.11 B07|www.elmomc.com 
+82 
+Table of Contents 
+32.2 
+Bug fixes 1.1.9.11B07 
+Bug 
+Details 
+Reset the PAL during RS 
+command 
+The PAL was not reset to its default after the RS command. 
+In rare occasions this caused an absolute sensor initialization 
+issue if no power up cycles were performed after the RS. 
+Motor off when changing 
+motor type via CA[28] 
+CA[28] determines the motor type. This cannot be modified 
+during motor enable. This restriction and bug correction is 
+applicable also for the stepper mode.  
+Position behavior on Stepper 
+Closed loop (UM=6) 
+In stepper closed loop, the profiler output was not 
+synchronized to the sensor at motor on and the position limits 
+were not set correctly. The user units were also not calculated 
+correctly. This was fixed. 
+Inhibit/Enable wrong 
+operation 
+When a digital input was modified from Inhibit/Enable 
+function (via IL[]) switches to any other function (e.g. general 
+purpose) the motor was incorrectly enabled. This caused an 
+unexpected behavior since the function was not defined as 
+Enabled any more. This was fixed.  
+Phase D lost synchronization 
+with Gantry 
+When using Gantry with Stepper 2-Phases motor, the current 
+of phase D was losing synchronization. This was fixed. 
+Object 0x2020.1 out of range 
+The 0x2020.1 is used during the home on block settings. If a 
+32 bit long value (e.g. 0x2F00.1) was sent to the drive prior to 
+the 0x2020.1, the drive sometimes replied with an “Out of 
+range” abort message. This was fixed. 
+Home attained jump while 
+using position FIR filter 
+The position FIR filter is set via CA[88]. When the filter was 
+activated (i.e. CA[88]>0), the position jumped during Homing. 
+This was fixed. 
+Absolute offset when analog 
+sensor is used (CA[91] to 
+CA[94]) 
+The CA[9x] is used for absolute sensors offset. An analog 
+sensor is also defined as an Absolute sensor within the single 
+Analog cycle. When an analog sensor is used, the offset during 
+the Homing procedure was calculated from the absolute 
+position (PX) instead from the analog signal. This caused, in 
+some occasions, a wrong offset calculation and as a result a 
+wrong homing position. This was fixed. 
+Wrong default value for 
+0x606A 
+Object 0x606A is the sensor selection object that determines 
+from where the velocity is read. The user can select between 
+the speed of the position sensor and the speed of the velocity 
+sensor. The default was set to 0, meaning the position sensor 
+was read. This was fixed. The default is now set to 1, which 
+indicates that the velocity sensor is read. 
+ 
+
+===== PAGE 83 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.10 B03|www.elmomc.com 
+83 
+Table of Contents 
+Chapter 33. 01.01.09.10 B03 
+Component 
+Version 
+Firmware Version 
+01.01.09.10 12Aug2014B03 
+Communication Server 
+AA[5]: 1.1.7.61 
+PAL 
+85 
+ESI 
+0x000103F6 V07 
+ 
+33.1 
+Details 
+Subject  
+Details 
+Allowing parameters reset 
+while features are active  
+The RS command resets the drive parameters to their factory 
+default. The RS is now available when the following features 
+are active: 
+• 
+Output Compare (OC command),  
+• 
+Position Error (PC command) 
+• 
+Emulation (EM command) 
+NOTE: The feature will be disabled when RS is activated. 
+Emulation Saturation works as 
+gain as well  
+EA[16] & EA[17] are used to saturate the PWM emulation 
+signals. From this version it can be used additionally as gain. 
+Therefore when the PWM emulation exceeds EA[12], then 
+EA[16] is used. When the PWM exceeds EA[13], EA[17] is 
+used. When the PWM emulates the Velocity then EA[16] and 
+EA[17] are used instead of EA[14] and EA[15]. 
+Gold Clarinet Drive 
+Introduces the Gold Clarinet drive which is similar to the Gold 
+Bell stepper drive. The Power rates are similar to the Gold Bell. 
+Disabling the Profile 
+Acceleration limiter (XA[4]) 
+The acceleration (and deceleration) limiter denoted by the 
+SD command, prevents rapid speed changes. In time 
+depended modes, for example Cyclic Position, Interpolated 
+Position and when using object 0x2005 where the set-point 
+reference is controlled by the network master, the 
+acceleration limiter is automatically ignored allowing the host 
+to set any required acceleration. In other modes which are not 
+time depended such as Profile Position mode, the acceleration 
+limiter can be override by setting bit 1 of XA[4] command. 
+Ignoring Hardware limits (FLS, 
+RLS & hardware Stop) 
+When the motion mode is time dependant, the hardware 
+limits can be ignored by setting bit 2 of XA[4]. The hardware 
+limit override is relevant when 0x6060 is set to modes 7, 8, 9 
+and 10. In all other modes the hardware limits cannot be 
+ignored. 
+
+===== PAGE 84 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.10 B03|www.elmomc.com 
+84 
+Table of Contents 
+Subject  
+Details 
+Absolute sensor CRC error 
+If a serial sensor is used and a CRC error is reported, the 
+remaining status data is ignored. This modification prevents 
+extraneous status info, because the sensor data is no longer 
+valid. 
+Specific serial and incremental 
+sensor errors must be 
+manually cleared 
+If a Serial Sensor reports an error, the motor is automatically 
+disabled. The next motor on will not be allowed until the error 
+is cleared via the TW[20] command (Object 0x20FC sub index 
+2). The value must be set to the relevant sensor socket e.g. 
+TW[20]=1, resets the errors of sensor in socket 1. 
+The relevant sensors are: 
+EnDat 2.2, Panasonic Absolute, Panasonic Incremental, 
+Tamagawa, Sanyo/Nikon 
+Battery warning indication via 
+0x2085 
+Object 0x2085 bit 6 will be set if the sensor reported a battery 
+warning alert.  
+Masking errors indications of 
+specific serial and incremental 
+sensors 
+CA[8] can be used to mask status bits of the following sensors: 
+Panasonic Absolute, Panasonic Incremental, Tamagawa, 
+Sanyo. 
+Setting CA[8] to -1 masks all the errors 
+Gurley sensor validation bit 
+The Gurley sensor must be moved before the position data is 
+validated. When Bit 9 of object 0x2085 (OV[61]) is set to 1, it 
+indicates that the Gurley sensor data is valid.  
+Warning bit of DS-402 Status 
+word indicates threshold 
+exceeded 
+Extra Status register (0bject 0x2085 or OV[61]) indicates when 
+these thresholds of selected data were violated. The threshold 
+are set via the XT[] command. If bit 2 to 5 or bit 6 in 0x2085 is 
+set, than bit 7 (“Warning”) of the DS-402 status register 
+(0x6041) is automatically set. 
+PWM Follower new indication 
+WS[39] indicates the PWM follower Duty Cycle /150 in MHz 
+WS[40] indicates the PWM follower Period Time /150 in MHz 
+WS[41] indicates the Duty Cycle in % 
+PWM Follower value when 
+signal is faulty. 
+When the PWM follower signal is out of range and considered 
+as “cable disconnected” (Duty Cycle 0% or 100%), the actual 
+PWM by default will be set to 0. This can be modified via 
+CA[109]. 
+CA[109] is defined in units of mili ampere, or cnt/sec 
+depending on the CA[101] index that selects the PWM type. 
+G-TWI & G-BEE increased 
+threshold temperature 
+The threshold temperature for G-TWI & G-BEE products with 
+max current (MC) <=6 was increased from 85° to 92°.  
+Current Step shaping 
+Enhanced current step shaping was added to improve the 
+current control step response. 
+ 
+
+===== PAGE 85 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.10 B03|www.elmomc.com 
+85 
+Table of Contents 
+33.2 
+Bug fixes 1.1.9.10B03 
+Bug 
+Details 
+0x30xx objects with extended 
+indices  
+The 0x30xx objects are aliases to the Elmo’s legacy 
+Commands. For these objects, sub-indices which were 
+higher than 254 could not be addressed. This was fixed. All 
+the indice range are applicable to the host. 
+Sine\Cosine synchronization  
+In Port-B when the sine / cosine sensor is used, the drive 
+rolls over at very high speeds (>3e6 cnt/sec). This was fixed. 
+Peak Continuance current 
+limit at motor off do not 
+reset the filter 
+At motor off (MO=0) the filter of the current limit 
+saturation (CL[]\PL[]) was reset. In this situation, the 
+current limit protection (I2C) did not work properly. This 
+was fixed. The filter of the current protection is now active 
+regardless whether the motor is enabled or not. 
+Start Position of Output 
+compare function is not 
+detected (first pulse) 
+The monitoring of the first pulse for the Output Compare 
+mode is not detected, if the difference between the 
+hardware counter (Quadrature module) and the user 
+position (PX) is larger than 231.  
+Limited acceleration for the 
+field angle  
+When the difference between two commutation cycles was 
+greater than 60 electrical degrees (Rate limiter), the field 
+angle was saturated. This limit was removed, allowing a 
+faster commutation response. 
+Note: When Hall sensors are used for commutation, an 
+error is produced when the difference between two 
+commutation cycles was greater than 60 electrical degrees. 
+JP[4] was not allowed if 
+motor is disabled 
+JP[4] sets the jog reference to the socket profiler. During 
+motor off (MO=0) this setting was rejected. This was fixed. 
+The socket profiler can be activated regardless of the MO 
+status. 
+FLS/RLS limits the wrong 
+speed command 
+FLS & RLS limited the speed derived from the software 
+command. The speed derived from the external reference 
+was not limited. This is now fixed. 
+FLS & RLS limits are now working on the superimposed 
+values of the software and external speeds. 
+RM=0 causing wrong set-
+point calculations 
+When switching from RM=1 to RM=0, the external 
+command was ignored, causing the reference signal to skip. 
+This was fixed.  
+Jog Position in negative 
+direction 
+JP[2], JP[3] and JP[4] are used to set a jog reference to the 
+superimpose, phasing and socket profilers. In these modes, 
+when the command was negative, the profiler ignored the 
+value. This was fixed. A negative value can now be set. 
+
+===== PAGE 86 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.10 B03|www.elmomc.com 
+86 
+Table of Contents 
+Bug 
+Details 
+Long motion with low 
+acceleration using simple 
+profiler 
+When using superimpose, phasing or socket profiler with a 
+lengthy motion (> 231 bits) and low acceleration, the 
+position calculation lost counts. This was fixed. 
+Interpolation Profiler 
+vibrations 
+In rare situations the Interpolated Position mode vibrates 
+causing small inerruptions in the motion. This was fixed. 
+This did not affect any other motion modes. 
+Speed residue when FIR filter 
+used 
+When a Velocity FIR filter was used, the speed residue was 
+not correctly cleared causing continuation of slow 
+movement regardless of the set-point. This was fixed.  
+Wrong state indication in 
+DS-402 status word  
+Object 0x6041 indicates the Status of the DS-402 state 
+machine. In some occasions when transitions 3 and 4 were 
+used at the same cycle (switching from “Ready-to-Switch-
+On” to “Operational Enable”), the Status word indicated 
+0x235 which is an illegal state. This was fixed. 
+OV[61] wrong indication 
+The OV[61] indicates the Extra Threshold register (object 
+0x2085). In rare situations, a negative value was displayed. 
+This was fixed.  
+0x30xx objects with extended 
+indices  
+The 0x30xx objects are alias to the Elmo’s legacy 
+Commands. In these objects, sub-indices which were higher 
+than 254 could not be addressed. This was fixed. All indices 
+ranges are applicable to the host. 
+Hiperface sensor was not 
+read correctly 
+This was fixed with PAL 85. 
+
+===== PAGE 87 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.08 B08|www.elmomc.com 
+87 
+Table of Contents 
+Chapter 34. 01.01.09.08 B08 
+Component 
+Version 
+Firmware Version 
+01.01.09.08 12Jun2014B08 
+Communication Server 
+AA[5]: 1.1.7.57 
+PAL 
+82 
+ESI 
+0x00103F6 V07 
+34.1 
+Details 
+Subject  
+Details 
+Absolute sensor daisy chain 
+If GO[14] to GO[16] are set to 8, then the absolute sensor is 
+buffered to PORT C (daisy chain) as follows: 
+Port C ‘A’: Buffer clock out of the sensor 
+Port C ‘B’: Buffer Data input of the sensor 
+Port C ‘Index’: Buffer Data output of the sensor 
+Extended frequency for SSI 
+sensors 
+CA[36] in addition to the present clock frequencies for the 
+Absolute Sensor, now allows the frequency of the SSI sensor to 
+be set to 312KHz 
+Polarity bit modified (object 
+0x607E) 
+Previously, the polarity bit of the DS-402 (object 0x607E) 
+modified the direction of the velocity or position commands to 
+the relevant controller. Now, due to an expected change in the 
+DS-402 standard, and in order to allow modifying the polarity 
+value while motor is enabled, the polarity affects the set-point 
+instead of the command.  
+Stepper Commutation for 
+unbalanced system with and 
+without mechanical brake. 
+The stepper commutation is now also capable of commutating 
+in unbalanced systems where for example the gravitation 
+affects the load.  
+The total time allowed for the commutation process is now set 
+to 20 seconds.  
+New variables were added to the SC[] command for this 
+purpose.  
+Note that SC[4] and SC[9] are now reserved. Any setting to 
+SC[4] will result in 0 and any setting to SC[9] will result 1. This 
+is for compatibility reasons. The new commutation procedure 
+is also possible in commutating against a block where 
+movement is limited or not permitted at all.  
+Commutation verification for 
+Binary search 
+The user can now request to run verification after Binary 
+Commutation. This is done via the SC[12] command. 
+
+===== PAGE 88 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.08 B08|www.elmomc.com 
+88 
+Table of Contents 
+Subject  
+Details 
+During Stepper commutation 
+drive returns to the initial 
+position. 
+When drive is in Position Mode after the Stepper commutation 
+is complete, it returns to the initial position. Note that in 
+Velocity and in Current modes the drive remains in the final 
+position after the commutation and does not return to the 
+initial position.  
+Stepper Closed Loop  
+Stepper closed loop mode via UM=6. The sensor ID is 34. This 
+includes the following: 
+• 
+The Position command source is now set via CA[98] 
+• 
+Feedback socket is set via CA[99] 
+• 
+The relevant controllers are KP[4,5], KI[4], KV[81..90] and 
+FF[2] 
+• 
+KP[6] converts from encoder counts to stepper angle 
+units (512 per period) 
+• 
+CA[53] determines the source of stepper angle to this 
+socket. 
+The Stepper closed loop can also be used to close any sensor 
+for emulation purposes. 
+XP[8]: Improved Gantry 
+Master Slave synchronization 
+The XP[8] command has been introduced for the Phase Offset 
+to improve the synchronization in gantry systems between the 
+master and slave.  
+PWM reference as input to 
+the drive 
+A PWM reference can be used via socket. The sensor ID is 35.  
+CA[100] to CA[108] are used to determine the Duty Cycle 
+factors and relevant parameters for this mode.  
+The mode includes protection for slow amplitude and 
+protection from cable disconnection (0% or 100% duty). 
+PWM Emulation 
+The Emulation function that emulates signals to an external 
+host via PORT C can now be used with PWM duty cycle.  
+Pulse & Direction or +/-50% modes can be used.  
+The PWM can be set with a Gain & Offset. 
+New EA[] command entries are used to program the desired 
+functions of this feature.  
+WS[11] informs the duty cycle. TW[70] can be used to 
+manually set the PWM value mainly for debug purposes. 
+Sanyo & Nikon feedback 
+reset 
+Single-turn & Multi-turn position resets are now available with 
+these sensors via the commands TW[18] and TW[19] (Objects 
+0x20FC SI 1, and 0x20FC SI 2) respectively.  
+
+===== PAGE 89 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.08 B08|www.elmomc.com 
+89 
+Table of Contents 
+Subject  
+Details 
+“Motor failed to start” error 
+is reported via EC command 
+When the motor is enabled via MO=1 or DS-402 and failed to 
+start, the abort code is reported as: “Motor failed to start” via 
+MF command (0x20000000).  
+The reason for the failure is now reported via EC command. 
+The EE[5] and Object 0x2081.5 reporting this abort previously, 
+are not in use and always reports 0. 
+Inhibit Function and RM 
+command 
+The Inhibit function is not dependent on setting the RM 
+anymore. Previously RM=1 was required. 
+From this version when the Input is defined as “Inhibit/Enable” 
+it will enable and disable the motor regardless of the RM 
+value.  
+DD command reports the 
+drive CAN controller status 
+The DD command reports the drive CAN controller state 
+indication; BUS off, Errors counter, error type and more.  
+This can be used to monitor the state of the CAN bus.  
+Object 0x2082 can also be used for this purpose. 
+NOTE: In a situation of BUS off the CAN Bus is no longer active, 
+and can only be monitored via the DD command. 
+Jump in motion In Cyclic 
+Position mode (CSP) 
+If the communication was interrupted during Cyclic Position 
+Mode the drive extrapolates the motion, when communication 
+is returned (host sent new set point) and reconnected, the 
+position was calculated wrongly. This occurred when, in the 
+course of the disconnection, the extrapolated position passed 
+the modulo point. 
+Homing direction for Home 
+On Block modified 
+The homing direction for home on block is modified: 
+-1 positive direction 
+-2 negative direction 
+Adding Serial number to the 
+USB 3 
+For USB 3 compliant tests, a serial number was set during the 
+enumeration stage. Note that this is causing the Windows 
+System manager to allocate a different COM port than was 
+used previously. 
+BOOT Strap LED indications 
+Adding a green blinking LED when the EtherCAT BOOT strap 
+state is requested. LED is toggled in 200Hz (50mSec). 
+EtherCAT switches lo added 
+for Gold TWI/BEE 
+EtherCAT switches is allowed with Gold TWI\BEE drives in all 
+hardware configurations of the drives. 
+ 
+
+===== PAGE 90 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.08 B08|www.elmomc.com 
+90 
+Table of Contents 
+34.2 
+Bug fixes 1.1.9.8B08 
+Bug 
+Details 
+Motor Enabled when 
+EtherCAT state is in SafeOP 
+The motor can be enabled by various methods. When in 
+EtherCAT field bus, the servo is enabled via the DS-402 Control 
+Word (0x6040). This typically occurs when the EtherCAT state 
+is in OP (Operational) mode. If in these situations, MO=1 
+command is sent via other communication channels (e.g. USB 
+or RS232), the command will be overridden by the object 
+0x6040. 
+When the EtherCAT state is in SafeOP, the MO=1 command 
+was ignored. This was fixed.  
+Final Speed (FS) negative 
+value 
+The FS command accepted negative values. This was fixed. 
+Positive values are only permitted. 
+CAN baud of 1M – sampling 
+method 
+The SAM bit of the CAN network was modified from 3 sampling 
+points to 1 as requested by the CANopen standard. 
+XA[2] was wrongly calculated  In a high resolution sensor the hot-plug speed threshold 
+(XA[2]) allowed enabling of the motor where it should be 
+prevented. This was fixed. 
+UM=3 user unit 
+In Unit mode 3, the reference command (e.g. PA) was 
+calculated with User units. This was fixed, and User units are 
+ignored when UM=3. 
+Sine amplitude 0 allowed 
+movement 
+When the Sine amplitude was set to 0, the profiler ignored any 
+other requested movement. This was fixed. 
+JP command not working 
+when switching modes 
+When switching from Torque or Velocity mode to JP mode (Jog 
+under position mode), the mode switch did not operate 
+correctly, resulting in no jog movement. This was fixed.  
+Wrong Position presented 
+after PX exceeds 31 bits 
+In some situations, when the PX exceeds 31 bits the calculation 
+of the presented position (PU) was wrong. This effected only 
+the representation via the recorder but not the motion. This 
+was fixed. 
+Use CA[80] & CA[81] only if 
+not 0 
+CA[80] defines the socket for the Gantry slave and CA[81] for 
+the Gantry master. The use of these parameters is only valid, if 
+the value is not set to 0.  
+Profile Torque switch – 
+torque drop to 0 
+When switching to the profile torque mode the first torque 
+command dropped to 0. This was fixed. The first torque 
+command is now derived from the user set-point via object 
+0x6071. 
+
+===== PAGE 91 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.08 B08|www.elmomc.com 
+91 
+Table of Contents 
+Bug 
+Details 
+Cyclic Position Mode 
+recovery  
+Wherever the set-point in CPS mode was not received, the 
+drive extrapolated the last command according to the speed 
+and acceleration. If the extrapolated position switched 32 bits, 
+the next target position was not calculated correctly, causing a 
+jump in the motion. 
+Hall commutation in 1:1:1 
+mode 
+When Hall commutation was used with Halls only feedback 
+and the control mode (XA[5]) was set to 1:1:1, an incorrect 
+commutation was calculated.  
+OS interpreter  
+When the OS interpreter produced an error which resulted in 
+an EC, the '?;' were set to the SDO data segment causing a 
+redundant byte in the OS response.  
+Stop By Switch with wrong 
+deceleration 
+In Cyclic Sync Position mode (CSP) and Interpolated Position 
+modes the Stop-by-Switch caused a deceleration according to 
+Quick Stop without taking into account the SD. This was fixed. 
+The deceleration is now calculated by the lower value between 
+Quick Stop and SD. 
+Objects 0x22A2 & 0x22A3 
+sub 1 mapping  
+These objects, indicate the temperature of the drive, are only 
+map-able to a tPDO via CAN.  
+Digital input auto routine 
+event are missed 
+Digital Inputs can be read via the AUTO routine programmed 
+by using the User Program. The AUTO routine is programmed 
+to react when the desired DIN is set to ‘1’ (e.g. AUTO_I1 for 
+digital input 1). Occasionally the AUTO routine missed an Input 
+event. This was fixed.  
+EC command missed from 
+EAS report 
+The EC reports errors that occur during command 
+interpretation. Some of the EC were missed from the EAS 
+personality which resulted in an “unknown error” report. This 
+was fixed. 
+PC[3] default value modified 
+PC[3] determines the table which will be used for the Position 
+Error correction. The default value was set to the NF table, is 
+now switched to ET[] allowing 2046 entries. 
+CANopen Heartbeat 
+correction 
+When the Node ID for the Heartbeat consumer is set to 0, the 
+function is no longer activated. Previously, the heartbeat 
+consumer was still reacting to messages causing a wrong EMCY 
+messages if heartbeat was activated. The heartbeat starts only 
+if the time is defined via 0x1016 is > 0 and the node ID is a legal 
+node address (1 to 127). Otherwise the mode is not active. 
+IP mode caused a crash 
+When switching to Interpolated Position mode the drive may 
+crash. This was fixed. 
+Wrong mapping causing a 
+crash 
+In rare situations when an object was wrongly mapped to a 
+PDO, the drive may crash. This was fixed. In such cases an 
+Abort message will be transmitted and the EC will be set to 31. 
+
+===== PAGE 92 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.08 B08|www.elmomc.com 
+92 
+Table of Contents 
+Bug 
+Details 
+Undesired movement in 
+Stepper modes (UM=3) 
+In stepper mode, the profiler did not start from 0 causing an 
+undesired movement. This was fixed. The profiler sets 0 at the 
+first cycle.  
+ECAM output jumps 
+If the ECAM output passed the 32 bits. A jump occurred. 
+EtherCAT ID switches after 
+firmware update 
+After firmware update via FoE the ID switches were not read 
+correctly. This was fixed. 
+Hot plug speed calculation for 
+serial sensors 
+The speed for the hot-plug (XA[2]) was wrongly calculated, 
+preventing the drive to servo enable even at low speed. 
+Wrong checksum calculations 
+for the non-volatile 
+parameters 
+Object 0x2060 reports the checksum of the non-volatile 
+parameters. In some occasions the calculated checksum 
+included variables which were not part of the non-volatile 
+parameters. This resulted in an incorrect checksum. This was 
+fixed.  
+FoE firmware downloading 
+failure 
+In rare situations the FoE procedure caused an internal loss of 
+synchronization which resulted in a timeout. This was fixed. 
+Wrong WS[30] reported  
+In some situations WS[30] which reports the drive type was 
+wrong. This affected mainly the Gold TWI drive. 
+ 
+
+===== PAGE 93 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.04 B01|www.elmomc.com 
+93 
+Table of Contents 
+Chapter 35. 01.01.09.04 B01 
+Component 
+Version 
+Firmware Version 
+01.01.09.04 07May2014B01 
+Communication Server 
+AA[5]: 1.1.7.53 
+PAL 
+81 
+ESI 
+0x00103F6 V07 
+ 
+35.1 
+Details 
+ 
+Subject  
+Details 
+Adding Gold TIGER to the 
+Gold family 
+The Gold Tiger was added to the Gold family. 
+USB 3 ACK 
+Acknowledging the end-point is required by the USB 3 (was not 
+required by USB 2). 
+KL[2] to terminate user 
+program  
+KL command (or KL[1]) terminates the User Program and 
+disables the motor. KL[2] terminates the User Program while 
+leaving the motor enabled (if enabled before the command) 
+ 
+35.2 
+Bug fixes 1.1.9.4B01 
+Bug 
+Details 
+EMCY was transmitted once  
+After a failure, an emergency message via CANopen or 
+EtherCAT was transmitted only once. This was fixed. If the 
+event occurred again the EMCY will be retransmitted. 
+EMCY was not sent during 
+motor on failure 
+The EMCY message is also sent when the motor enabled failed. 
+If during motor enabling a fault is detected, the expected 
+EMCY message was not transmitted. This was fixed. 
+Wrong asynchronous PDO 
+event reaction 
+CANopen PDO can be transmitted in various events as defined 
+by object 0x2F20. 
+The “Home Attained” event was wrongly switched with the 
+"Auxiliary Home" event and the “Motion Complete” was 
+wrongly switched with the “Motion Started” event.  
+
+===== PAGE 94 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.00 B00|www.elmomc.com 
+94 
+Table of Contents 
+Chapter 36. 01.01.09.00 B00 
+Component 
+Version 
+Firmware Version 
+01.01.09.00 09Mar2014B00 
+Communication Server 
+AA[5]: 1.1.7.51 
+PAL 
+81 
+ESI 
+0x00103F6 V07 
+36.1 
+Details 
+Subject  
+Details 
+Includes the following 
+internal release 
+01.01.08.02 B00 
+Fault reaction for feedback 
+faults 
+The Fault reaction option code (0x605E) allows the user to 
+determine the behavior of the motion when a fault occurs. If 
+the fault is related to feedback (e.g. Digital hall sensor, 
+commutation) the drive aborts immediately regardless of the 
+selected option code in Object 0x605E. 
+XA[3] default value 
+modification 
+The Default value of XA[3] was modified to 600 µSec.  
+For firmware compatibility reasons setting the XA[3] to 0 will 
+automatically be modified to 600. 
+STO version change 
+Working with Dynamic brake caused the STO diagnostic to fail. 
+This was fixed. Starting from this version the VS is modified to: 
+1.0.12.0 
+ 
+
+===== PAGE 95 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.09.00 B00|www.elmomc.com 
+95 
+Table of Contents 
+36.2 
+Bug fixes 1.1.9.0B00 
+Bug 
+Details 
+Position indication jumped 
+around hardware modulo 
+When the PX exceeds 31 bits, the calculation of Absolute 
+Position PU or Object 0x6064, and the Position Demand 
+(0x6062) was incorrect. This was fixed 
+Calculation of the Position in 
+non-position modes 
+A wrong position calculation in Profile Velocity and Profile 
+Torque caused a jump when switching between these modes 
+to profile Position. This was fixed. 
+Modulo when setting PX 
+When the user sets the PX value, the actual value is calculated 
+with modulo. These calculations were sometimes wrong. This 
+was fixed. PU (0x6064) and PX are now reported correctly. 
+Communication lost during 
+upload personality with CAN 
+When uploading personality with CAN drives and TS > 60, the 
+communication was sometimes interrupted. This was fixed.  
+Output compare undesired 
+pulse 
+When setting OC[1]=1 and OC[1]=0 sequentially, sometimes a 
+pulse was generated by the drive. This was fixed. 
+Control Word recording delay 
+The DS-402 Control Word (0x6060) arriving from the host can 
+be recorded by EASII. The recorded signals represent a delayed 
+value from the value that is handled by the drive. This was 
+fixed. The actual Control word handled is now also recorded.  
+Jump in speed when 
+switching modes 
+When switching to Profile Position mode, the previous velocity 
+is used instead of the Profile Velocity. This caused a jump in 
+speed after a few servo cycles. This was fixed. 
+
+===== PAGE 96 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.08.00 B00|www.elmomc.com 
+96 
+Table of Contents 
+Chapter 37. 01.01.08.00 B00 
+Component 
+Version 
+Firmware Version 
+01.01.08.00 13Feb2014B00 
+Communication Server 
+AA[5]: 1.1.7.8 
+PAL 
+81 
+ESI 
+0x00103F6 V07 
+ 
+37.1 
+Details 
+Subject  
+Details 
+Includes the following 
+internal release 
+01.01.07.20B01 
+01.01.07.19B01 
+01.01.07.19B00 
+01.01.07.17B00 
+01.01.07.16B08 
+Differences between SR 
+register and CAN status 
+register (0x1002) 
+The SR is reflected in object 0x1002 and should provide the 
+same value at the same cycle. The bug was that the 0x1002 
+was updated a cycle after the SR. This was fixed. Values are 
+updated at the same cycle.  
+Motion continues when 
+switching from profile 
+velocity or profile torque to 
+profile position 
+When switching motion modes (0x6060) from profile velocity 
+(or profile torque) to profile position, the drive continues to 
+coast according to the last Velocity set-point. This was fixed. 
+The drive now decelerates when switching modes, using Quick 
+Stop Deceleration. 
+AN[2] read wrongly via 
+EtherCAT 
+The object 0x2205.2 which reflects AN[2] reported wrong 
+value. This was fixed. The value of AN[1] & 0x2205 SI 2 are 
+similar. 
+AN[2]: Analog input 2 
+indication 
+The analog input 2 can be retrieved via the AN[2] command. 
+The expected values are from 0 to 4095 which are correlated 
+to 0 to 3V. An offset can be used via AS[2]. This Offset has a 
+range from -4096 to + 4095. 
+XA[3]: Current exceeded time 
+protection 
+This variable sets the protection where the current exceeds the 
+peak limit range but has not reached the “short” threshold. 
+When the current is within this range for XA[3] time, the 
+motor will be disabled.  
+For compatibility reason setting XA[3] to 0 will automatically 
+be changed to the default 600 µSec. 
+XA[2]: Hot plug In protection 
+When the motor is freewheeling at high speed, enabling the 
+motor (namely hot-plug) may damage the drive. 
+
+===== PAGE 97 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.08.00 B00|www.elmomc.com 
+97 
+Table of Contents 
+Subject  
+Details 
+XA[2] limits the freewheeling speed which is allowed when 
+enabled.  
+By default the value is set to 5, indicating that when the servo 
+is enabled, the motor speed must be lower than 5 electrical 
+angles/sec, for the servo to be enabled.  
+Gold Tuba drive 
+The Gold Tuba drive was added 
+Includes the following 
+internal release 
+01.01.07.16B08 
+Gold Bassoon new power 
+rated version 
+Bassoon 3/200 was added 
+Elmo commands via SDO 
+interface (CoE) 
+The 0x30xx object allows addressing of Elmo Legacy 
+Commands. This interface is now open for all Elmo users. 
+This is done by using the two letters legacy method to 
+determine the command offset starting from object 0x3000. 
+Asymmetric current limits via 
+0x2005  
+Object 0x2005 can be used to address various functionalities of 
+the drive.  
+By setting GS[12]=3, the host can set asymmetric torque limits 
+to the current controller. The low 16 bits are used for the low 
+limits and the high 16 bits to the high limit. The limits affect 
+the current command derived from the velocity controllers to 
+the current controller.  
+Units are 1/1000 of rated torque.  
+Changing default of IL[6] & 
+IL[7]  
+Digital Inputs default was modified to “Ignore” instead of 
+General purpose.  
+ 
+
+===== PAGE 98 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.08.00 B00|www.elmomc.com 
+98 
+Table of Contents 
+37.2 
+Bug fixes 1.1.8.0B00 
+Bug 
+Details 
+EMCY messages are not 
+transmitted 
+The Object 0x2F21 is used for the EMCY mask when CANopen 
+is employed. The Object was initialized properly causing the 
+EtherCAT interface to block all EMCY. This was fixed. 
+Wrong “In Torque” 
+calculation  
+The “target reached” and the MS command value in Profile 
+Torque mode were calculated based on an incorrect variable. 
+This was fixed. The calculation is now based on the current 
+feedback.  
+Target Torque missed 
+resolution 
+The integer calculations of the Target Torque were truncated 
+to the lower value, sometimes causing a wrong set-point to the 
+Current profiler.  
+FF[4]: phase advance in 1:1:1 
+mode 
+The phase advance was not working properly when switching 
+to 1:1:1 mode (XA[5]). This was fixed. 
+Touch Probe position  
+When using touch probe the reported position did not 
+consider the User Unit factor (e.g. FC[]). This was fixed. 
+Halls indication in EASII do 
+not match the recorder 
+indication 
+The Halls are indicated via the SR command. The EASII 
+recordings of the Halls differ from the SR indication. This bug 
+was fixed. The indications are now identical.  
+Motion did not fault when 
+serial feedback disconnected  
+When absolute feedback was disconnected from the drive, an 
+incorrect reading of velocity caused a very high speed 
+indication which was not correlated to the actual speed. This 
+was fixed by ignoring the reading in cases of CRC and by 
+reading the filtered speed. This behavior is only relevant when 
+the Fault Option Code object 0x605E is set to 1 or 2 (Stop to 0 
+speed and then disable).  
+Position Offset in Homing 
+During Home Attain, the final Homing position differed from 
+the desired position offset.  
+Quick Stop command wrongly 
+handled 
+During the Quick Stop request the initial position for the 
+profiler stop is calculated. This calculation is sometimes 
+incorrect causing undesired motor movement. This was fixed. 
+STO error during drive power 
+up 
+After powering up the drive, when the Dynamic Brake is used 
+(VH[1]>0), the STO diagnostic procedure indicates a failure in 
+the STO mechanism.  
+ 
+
+===== PAGE 99 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.07.15 B00|www.elmomc.com 
+99 
+Table of Contents 
+Chapter 38. 01.01.07.15 B00 
+Component 
+Version 
+Firmware Version 
+01.01.07.15 01Jan2014B00 
+Communication Server 
+AA[5]: 1.1.7.5 
+PAL 
+80 
+ESI 
+Elmo ECAT DriveGcon_v70 
+38.1 
+Details 
+Subject  
+Details 
+ 
+01.01.07.14B14 
+01.01.07.14B08 
+01.01.07.14B00 
+EMCY mask object 
+modification 
+Object 0x2F20 is used to mask unrequired EMCY messages for 
+the CANopen. 
+Bit 1: is now defined as “mask motor on EMCY” and will 
+prevent the EMCY when the Motor On fails.  
+Bit 2: is now defined as “mask un-configured PDO EMCY” and 
+will prevent EMCY messages when the drive receives rPDO 
+which are not mapped. 
+Phase advance to stepper 
+closed loop 
+Phase advance (FF[4]) allows increasing the speed by advancing 
+the stepper angle relative to the motor speed. This mode is 
+now applicable to UM=6 open loop as well. The phase is 
+advanced relative to the velocity command. 
+Improving the speed 
+response in Stepper Modes 
+The speed modification of the stepper mode was limited to 30 
+electrical degrees in a single cycle. This was now improved to 
+60 electrical degrees, allowing faster response. 
+Resetting absolute position  
+TW[18] command is used in the Absolute Sensor to reset the 
+single turn absolute position reading to a desired value. 
+For: 
+• 
+Tamagawa & Panasonic sensors only 0 is permitted 
+• 
+EnDAT2.2 any value is permitted 
+• 
+Setting others sensors will result in an error code (EC=99) 
+SSI 2 via digital output 3, 4 
+SSI sensor can be read via digital inputs 3 and 4 as single ended 
+sensor (sensor ID: 33). This configuration allowed the handling 
+of 3 sensors in parallel. Note that a single absolute sensor can 
+be read by the drive 
+
+===== PAGE 100 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.07.15 B00|www.elmomc.com 
+100 
+Table of Contents 
+Subject  
+Details 
+Auto Focus mode 
+The Auto Focus is an Elmo proprietary additional sensor that 
+can be read via the drive digital inputs  
+If error occurs when using this special mode, then bit 8 in 
+object 0x2085 will be set. 
+JP[4] is enabled at Motor Off 
+JP[4] sets a jogging trajectory to the socket profiler. The socket 
+profiler can be activated regardless whether the motor is 
+enabled or disabled. Setting JP[4]=x; BG[4] causes the socket 
+profiler to jog. Note: more variables are required for socket 
+profiler activation. 
+Addition of Gold Falcon drive 
+The Gold Falcon drive was added to the Gold line. 
+Nikon sensor support 20 bits 
+The Nikon sensor single turn now supports 20 bits. This was 
+added to the 16 bits multi turn resulting in a 36 bits sensor  
+(20 + 16)  
+38.2 
+Bug fixes 1.1.7.15B00 
+Bug 
+Details 
+Floating point resolution 
+Some fractional values were not calculated 
+correctly, e.g. 0.99999 resulted in 0.1 instead 
+of 1. Now the fractional values has been 
+improved to correct the results. 
+Quick stop transition from Fault state 
+When the drive is in fault state and a Quick 
+Stop is requested, the state indication was 
+wrong. This was fixed. The drive ignores 
+requests to Quick Stop when in Fault state. 
+Target reached (MS=0) after mode of 
+operation switch 
+When switching from any mode to cyclic 
+mode, the target reached indicated a wrong 
+value. MS reported 0 where 2 is expected. 
+This was fixed. 
+User Program size limited to 16K 
+The user program size is now enabled to 32K. 
+Set BG in motor off modified the Motion 
+Status 
+Setting BG command when the motor is 
+disabled modified the MS from 3 to another 
+value. The MS value must remain 3, when the 
+motor is disabled. This was fixed. 
+NOTE: When motor is disabled, the Begin 
+Motion trigger in EASII can be activated via 
+the BG. 
+Double Torque in CST mode 
+In Cyclic Torque Mode (CST) the torque 
+command is doubled relative to the Torque 
+set point. The torque is now corrected. 
+
+===== PAGE 101 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.07.15 B00|www.elmomc.com 
+101 
+Table of Contents 
+Bug 
+Details 
+Object 0x6074 (Torque Demand value) returns 
+wrong value 
+The Torque Demand reported a value to the 
+Current Controller derived only from the 
+profiler output. This was fixed. The Torque 
+Demand now reports the summation of all the 
+Torque inputs e.g. Torque external reference.  
+DV[2] reported wrong speed command 
+DV[2] reported a value to the Velocity 
+Controller derived only from the profiler 
+output. This was fixed. DV[2] now reports the 
+summation of all the Velocity inputs e.g. 
+Velocity external reference. 
+Interpolated Position Mode 
+When the IP active bit was set to 0 by the host 
+the motion continued. This was fixed. Drive 
+now stops the motion. 
+Motion persisted when switching Profile 
+Velocity to Position mode  
+When switching from Profile Velocity to 
+Profile Position mode, the motion continued 
+with the Profile set point.  
+NRZ sensors do not transmit EMCY when in 
+error 
+If an NRZ sensor e.g. Panasonic sensor, is in 
+error state, the motor enable command fails 
+without a proper emergency message. This 
+was fixed. A message is now transmitted in 
+such occasions. 
+In Cyclic Torque Mode first torque is always 0 
+When switching to Cyclic Torque mode the 
+initial cycle uses zero torque set point, causing 
+the torque command to drop its value 
+regardless of the set point (object 0x6071). 
+This was fixed and the initial cycle now uses 
+the desired set point. 
+In 1:1:1 mode (XA[5]) calculates the incorrect 
+speed 
+When using the 1:1:1 control mode the 
+velocity is calculated incorrectly. This was 
+fixed.  
+Default IP address 
+The IP address default values were reported 
+incorrectly This was fixed. The default values 
+are now shown as follows: 
+IP: 192.168.1.49 (AA[10]) 
+Subnet mask: 255.255.255.0 (AA[11]) 
+Default GW: 192.168.1.1 0 (AA[12]) 
+0x1003 sub index 0 is static 
+Object 0x1003 reports up to the last 16 EMCY 
+messages. Sub index 0 of this object is used to 
+indicate the number of EMCY that were 
+reported. The value was set to 16 regardless 
+of the actual number. This was fixed. 
+
+===== PAGE 102 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.07.15 B00|www.elmomc.com 
+102 
+Table of Contents 
+Bug 
+Details 
+0x603F was not updated via ECAT interfaces 
+Object 0x603F reports the last EMCY. The 
+object was not updated correctly nor 
+transmitted to the host. This was fixed. 
+Current continued when the torque command 
+is 0 
+When using acceleration feed forward (FF[1]), 
+sometimes the control loop received a torque 
+command without having any target torque. 
+This was fixed. 
+Sine signal launching (TW[80]) 
+When sine movement is initialized, and both 
+signals of the sine are 0, the profiler continues 
+the motion at constant speed. This was fixed.   
+Change SD during MO=1 double caused a 
+jump 
+When SD is changed during Motor On, an 
+incorrect deceleration is calculated, causing a 
+jump in motion. This was fixed.  
+Analog sensor jumped when LD is requested 
+After the LD command is requested, if the 
+sensor is analog sine/cosine sensor or 
+Hiperface sensor, the following motor enable 
+request will cause the motor to jump. This 
+was fixed. 
+Hiperface position reading after LD is 
+requested 
+When the Hiperface sensor is used, and the 
+LD command is requested, the position 
+reported is incorrect. This was fixed. 
+HL[2] negative values 
+HL[2] parameter sets the threshold to the 
+velocity feedback. Negative values were 
+permitted. This was fixed. 
+ST[N] did not work properly 
+The ST[N] is use to stop the N profiler. The N 
+refers to the Main, Superimpose, and phasing 
+or socket profilers (1 to 4 respectively). 
+Previously ST stopped all four profilers. This 
+was corrected so that ST[4] stops the socket 
+profiler and ST[1] or ST stops the other 
+profilers. 
+Wrong behavior at Low speed and High 
+acceleration. 
+Excluding the main profiler, the other 
+profilers; Superimpose, Phasing and socket 
+profilers behave erratically when at low speed 
+and high acceleration. This was fixed. 
+ 
+ 
+
+===== PAGE 103 =====
+Firmware Release Notes 
+ 
+MAN-FirmwareRNElmo (Ver. 1.019) 
+ 
+ 
+|01.01.07.15 B00|www.elmomc.com 
+103 
+Table of Contents 
+ 
+ 
+ 

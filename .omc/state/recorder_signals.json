@@ -1,0 +1,1776 @@
+{
+ "count": 253,
+ "signals": [
+  {
+   "index": 1,
+   "signal_index": 1,
+   "name": "Velocity",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 2,
+   "signal_index": 2,
+   "name": "Position",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 3,
+   "signal_index": 3,
+   "name": "Position Command",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 4,
+   "signal_index": 4,
+   "name": "Digital Input",
+   "category": "Inputs",
+   "classification": "User"
+  },
+  {
+   "index": 5,
+   "signal_index": 5,
+   "name": "Position Error",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 6,
+   "signal_index": 6,
+   "name": "Current Command [A]",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 7,
+   "signal_index": 7,
+   "name": "DC Bus Voltage",
+   "category": "Voltage",
+   "classification": "User"
+  },
+  {
+   "index": 8,
+   "signal_index": 8,
+   "name": "Velocity Command",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 9,
+   "signal_index": 9,
+   "name": "Field Angle",
+   "category": "Control",
+   "classification": "User"
+  },
+  {
+   "index": 10,
+   "signal_index": 10,
+   "name": "Active Current [A]",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 11,
+   "signal_index": 11,
+   "name": "Reactive Current [A]",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 12,
+   "signal_index": 12,
+   "name": "Analog Input 1",
+   "category": "Inputs",
+   "classification": "User"
+  },
+  {
+   "index": 13,
+   "signal_index": 13,
+   "name": "Analog Input 2",
+   "category": "Inputs",
+   "classification": "User"
+  },
+  {
+   "index": 14,
+   "signal_index": 14,
+   "name": "Current - Phase A",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 15,
+   "signal_index": 15,
+   "name": "Current - Phase B",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 16,
+   "signal_index": 16,
+   "name": "Current - Phase C",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 17,
+   "signal_index": 17,
+   "name": "Identification Experiment",
+   "category": "Control",
+   "classification": "Developer"
+  },
+  {
+   "index": 18,
+   "signal_index": 18,
+   "name": "Commutation Sensor",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 19,
+   "signal_index": 19,
+   "name": "A Voltage",
+   "category": "Voltage",
+   "classification": "Expert"
+  },
+  {
+   "index": 20,
+   "signal_index": 20,
+   "name": "B Voltage",
+   "category": "Voltage",
+   "classification": "Expert"
+  },
+  {
+   "index": 21,
+   "signal_index": 21,
+   "name": "C Voltage",
+   "category": "Voltage",
+   "classification": "Expert"
+  },
+  {
+   "index": 22,
+   "signal_index": 22,
+   "name": "Filtered Trq Cmd",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 23,
+   "signal_index": 23,
+   "name": "I_QIntL",
+   "category": "Current",
+   "classification": "Developer"
+  },
+  {
+   "index": 24,
+   "signal_index": 24,
+   "name": "Exception",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 25,
+   "signal_index": 25,
+   "name": "Q Controller Out",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 26,
+   "signal_index": 26,
+   "name": "D Controller Out",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 27,
+   "signal_index": 27,
+   "name": "Hall Sensor",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 28,
+   "signal_index": 28,
+   "name": "EQep2 Free timer",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 29,
+   "signal_index": 29,
+   "name": "SYNC0 latch time",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 30,
+   "signal_index": 30,
+   "name": "Timer1 Global time",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 31,
+   "signal_index": 31,
+   "name": "Unused",
+   "category": "None",
+   "classification": "User"
+  },
+  {
+   "index": 32,
+   "signal_index": 32,
+   "name": "Unused",
+   "category": "None",
+   "classification": "User"
+  },
+  {
+   "index": 33,
+   "signal_index": 33,
+   "name": "MatlabTestLong",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 34,
+   "signal_index": 34,
+   "name": "MatlabTestShort",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 35,
+   "signal_index": 35,
+   "name": "MatlabTestFloat",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 36,
+   "signal_index": 36,
+   "name": "MatlabTestDouble",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 37,
+   "signal_index": 37,
+   "name": "ADC IA",
+   "category": "Current",
+   "classification": "Developer"
+  },
+  {
+   "index": 38,
+   "signal_index": 38,
+   "name": "ADC IB",
+   "category": "Current",
+   "classification": "Developer"
+  },
+  {
+   "index": 39,
+   "signal_index": 39,
+   "name": "ADC IC",
+   "category": "Current",
+   "classification": "Developer"
+  },
+  {
+   "index": 40,
+   "signal_index": 40,
+   "name": "ADC ID",
+   "category": "Current",
+   "classification": "Developer"
+  },
+  {
+   "index": 41,
+   "signal_index": 41,
+   "name": "ADC ENC 2 or EAG:ADC IN0",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 42,
+   "signal_index": 42,
+   "name": "ADC VBUS  or EAG:ADC IN1",
+   "category": "Voltage",
+   "classification": "Developer"
+  },
+  {
+   "index": 43,
+   "signal_index": 43,
+   "name": "ADC ENC 0",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 44,
+   "signal_index": 44,
+   "name": "ADC ENC 1",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 45,
+   "signal_index": 45,
+   "name": "ADC INPUT 0 or EAG:ADC Enc2",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 46,
+   "signal_index": 46,
+   "name": "ADC INPUT 1 or EAG:ADC VBUS",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 47,
+   "signal_index": 47,
+   "name": "ADC ENC 0_2",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 48,
+   "signal_index": 48,
+   "name": "ADC ENC 1_2",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 49,
+   "signal_index": 49,
+   "name": "ADC REF",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 50,
+   "signal_index": 50,
+   "name": "ADC TMP",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 51,
+   "signal_index": 51,
+   "name": "ADC GND",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 52,
+   "signal_index": 52,
+   "name": "ADC 5V",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 53,
+   "signal_index": 53,
+   "name": "Filtered Vbus",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 54,
+   "signal_index": 54,
+   "name": "Profiler process absolute time",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 55,
+   "signal_index": 55,
+   "name": "Unused",
+   "category": "None",
+   "classification": "Developer"
+  },
+  {
+   "index": 56,
+   "signal_index": 56,
+   "name": "Profiler Acceleration Out",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 57,
+   "signal_index": 57,
+   "name": "Control process absolute time",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 58,
+   "signal_index": 58,
+   "name": "RtInterpRho",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 59,
+   "signal_index": 59,
+   "name": "PiSpeedCmd",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 60,
+   "signal_index": 60,
+   "name": "VelAdvFilterOutput",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 61,
+   "signal_index": 61,
+   "name": "VelAdvFilterInput",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 62,
+   "signal_index": 62,
+   "name": "SpeedError",
+   "category": "Control",
+   "classification": "Developer"
+  },
+  {
+   "index": 63,
+   "signal_index": 63,
+   "name": "SpeedPiOut",
+   "category": "Control",
+   "classification": "Developer"
+  },
+  {
+   "index": 64,
+   "signal_index": 64,
+   "name": "SpeedIntegral",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 65,
+   "signal_index": 65,
+   "name": "fDebug1",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 66,
+   "signal_index": 66,
+   "name": "fDebug2",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 67,
+   "signal_index": 67,
+   "name": "fDebug3",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 68,
+   "signal_index": 68,
+   "name": "fDebug4",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 69,
+   "signal_index": 69,
+   "name": "fDebug5",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 70,
+   "signal_index": 70,
+   "name": "Socket 1 Position",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 71,
+   "signal_index": 71,
+   "name": "Socket 2 Position",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 72,
+   "signal_index": 72,
+   "name": "Socket 3 Position",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 73,
+   "signal_index": 73,
+   "name": "Socket 4 Position",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 74,
+   "signal_index": 74,
+   "name": "Socket 1 Velocity",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 75,
+   "signal_index": 75,
+   "name": "Socket 2 Velocity",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 76,
+   "signal_index": 76,
+   "name": "Socket 3 Velocity",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 77,
+   "signal_index": 77,
+   "name": "Socket 4 Velocity",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 78,
+   "signal_index": 78,
+   "name": "Unused",
+   "category": "None",
+   "classification": "Expert"
+  },
+  {
+   "index": 79,
+   "signal_index": 79,
+   "name": "SinCos Atan2",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 80,
+   "signal_index": 80,
+   "name": "Program Var1",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 81,
+   "signal_index": 81,
+   "name": "Program Var2",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 82,
+   "signal_index": 82,
+   "name": "Program Var3",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 83,
+   "signal_index": 83,
+   "name": "Program Var4",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 84,
+   "signal_index": 84,
+   "name": "Program Var5",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 85,
+   "signal_index": 85,
+   "name": "Program Var6",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 86,
+   "signal_index": 86,
+   "name": "Program Var7",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 87,
+   "signal_index": 87,
+   "name": "Program Var8",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 88,
+   "signal_index": 88,
+   "name": "Closed Loop Current Identificatio",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 89,
+   "signal_index": 89,
+   "name": "Sin Encoder",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 90,
+   "signal_index": 90,
+   "name": "Cos Encoder",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 91,
+   "signal_index": 91,
+   "name": "Speed Ident Flag",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 92,
+   "signal_index": 92,
+   "name": "GS Index",
+   "category": "Control",
+   "classification": "User"
+  },
+  {
+   "index": 93,
+   "signal_index": 93,
+   "name": "Acceleration Command",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 94,
+   "signal_index": 94,
+   "name": "Absolute Serial Position",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 95,
+   "signal_index": 95,
+   "name": "Debug03",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 96,
+   "signal_index": 96,
+   "name": "Debug04",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 97,
+   "signal_index": 97,
+   "name": "Debug05",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 98,
+   "signal_index": 98,
+   "name": "Debug06",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 99,
+   "signal_index": 99,
+   "name": "Debug07",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 100,
+   "signal_index": 100,
+   "name": "Debug08",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 101,
+   "signal_index": 101,
+   "name": "Debug09",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 102,
+   "signal_index": 102,
+   "name": "Target Position 0x607A",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 103,
+   "signal_index": 103,
+   "name": "Target Velocity 0x60FF",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 104,
+   "signal_index": 104,
+   "name": "Target Torque 0x6071",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 105,
+   "signal_index": 105,
+   "name": "Speed Error [cnt/sec]",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 106,
+   "signal_index": 106,
+   "name": "Sine Cycles Counter",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 107,
+   "signal_index": 107,
+   "name": "Socket 1 Current",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 108,
+   "signal_index": 108,
+   "name": "Socket 2 Current",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 109,
+   "signal_index": 109,
+   "name": "Socket 3 Current",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 110,
+   "signal_index": 110,
+   "name": "Socket 4 Current",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 111,
+   "signal_index": 111,
+   "name": "Total Current Command [A]",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 112,
+   "signal_index": 112,
+   "name": "Total Velocity Command",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 113,
+   "signal_index": 113,
+   "name": "Total Position Command",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 114,
+   "signal_index": 114,
+   "name": "Ds402WaitMo0",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 115,
+   "signal_index": 115,
+   "name": "Ds402WaitMo1",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 116,
+   "signal_index": 116,
+   "name": "Ds402WaitTransition",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 117,
+   "signal_index": 117,
+   "name": "Ds402FsaState",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 118,
+   "signal_index": 118,
+   "name": "Actual Position 0x6064",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 119,
+   "signal_index": 119,
+   "name": "Position Demand 0x6062",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 120,
+   "signal_index": 120,
+   "name": "Control Word 0x6040",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 121,
+   "signal_index": 121,
+   "name": "Status Word 0x6041",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 122,
+   "signal_index": 122,
+   "name": "MO Proc",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 123,
+   "signal_index": 123,
+   "name": "Profiler Speed Out Internal",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 124,
+   "signal_index": 124,
+   "name": "Smoothed Profiler Speed Out",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 125,
+   "signal_index": 125,
+   "name": "Profiler Torque Out",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 126,
+   "signal_index": 126,
+   "name": "Smoothed Profiler Acceleration Ou",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 127,
+   "signal_index": 127,
+   "name": "Profiler Position Out internal",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 128,
+   "signal_index": 128,
+   "name": "Smoothed Position Out Internal",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 129,
+   "signal_index": 129,
+   "name": "Stop Manager Speed Out",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 130,
+   "signal_index": 130,
+   "name": "Stop Manager Position Out",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 131,
+   "signal_index": 131,
+   "name": "Socket 1 HwPosition",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 132,
+   "signal_index": 132,
+   "name": "Socket 2 HwPosition",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 133,
+   "signal_index": 133,
+   "name": "Socket 3 HwPosition",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 134,
+   "signal_index": 134,
+   "name": "Socket 4 HwPosition",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 135,
+   "signal_index": 135,
+   "name": "Unused",
+   "category": "None",
+   "classification": "Expert"
+  },
+  {
+   "index": 136,
+   "signal_index": 136,
+   "name": "Profile Torque RT",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 137,
+   "signal_index": 137,
+   "name": "Motion Status Main",
+   "category": "General",
+   "classification": "User"
+  },
+  {
+   "index": 138,
+   "signal_index": 138,
+   "name": "Idle Loop time",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 139,
+   "signal_index": 139,
+   "name": "Control Loop",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 140,
+   "signal_index": 140,
+   "name": "GS Index by Speed",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 141,
+   "signal_index": 141,
+   "name": "GS Index by Position",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 142,
+   "signal_index": 142,
+   "name": "GS Index by CRS",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 143,
+   "signal_index": 143,
+   "name": "Position RT Reference Command",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 144,
+   "signal_index": 144,
+   "name": "Velocity RT Reference Command",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 145,
+   "signal_index": 145,
+   "name": "Cyclic Ref Is Active",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 146,
+   "signal_index": 146,
+   "name": "Absolute Gurley Cycles Count",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 147,
+   "signal_index": 147,
+   "name": "Gurley Position Valid",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 148,
+   "signal_index": 148,
+   "name": "Profile Position Queue Head",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 149,
+   "signal_index": 149,
+   "name": "Profile Position Queue Tail",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 150,
+   "signal_index": 150,
+   "name": "Switch\\Halt\\QS\\Fault Active Flags",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 151,
+   "signal_index": 151,
+   "name": "TimeOfSync",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 152,
+   "signal_index": 152,
+   "name": "Digital Output OP value (SCORE)",
+   "category": "Inputs",
+   "classification": "Expert"
+  },
+  {
+   "index": 153,
+   "signal_index": 153,
+   "name": "Digital Output 0x60FE (GCON)",
+   "category": "Inputs",
+   "classification": "Expert"
+  },
+  {
+   "index": 154,
+   "signal_index": 154,
+   "name": "Tamagawa FS",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 155,
+   "signal_index": 155,
+   "name": "Resolver Signal Offset",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 156,
+   "signal_index": 156,
+   "name": "Resolver ADC ENC 0 Sync",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 157,
+   "signal_index": 157,
+   "name": "Resolver ADC ENC 1 Sync",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 158,
+   "signal_index": 158,
+   "name": "Resolver top reading flag",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 159,
+   "signal_index": 159,
+   "name": "OC1 pulses generated (OC[12])",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 160,
+   "signal_index": 160,
+   "name": "OC2 pulses generated (OC[32])",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 161,
+   "signal_index": 161,
+   "name": "Gantry Differential Position",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 162,
+   "signal_index": 162,
+   "name": "Gantry Velocity before filter",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 163,
+   "signal_index": 163,
+   "name": "Gantry Velocity after filter",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 164,
+   "signal_index": 164,
+   "name": "Next Gantry Current",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 165,
+   "signal_index": 165,
+   "name": "Gantry Current",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 166,
+   "signal_index": 166,
+   "name": "Velocity Offset 0x60B1",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 167,
+   "signal_index": 167,
+   "name": "Additional Speed [cnt/sec]",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 168,
+   "signal_index": 168,
+   "name": "Additional Position 0x20A0",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 169,
+   "signal_index": 169,
+   "name": "Additional Position [cnt]",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 170,
+   "signal_index": 170,
+   "name": "Current - Phase D",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 171,
+   "signal_index": 171,
+   "name": "D Voltage",
+   "category": "Voltage",
+   "classification": "Expert"
+  },
+  {
+   "index": 172,
+   "signal_index": 172,
+   "name": "Drive Temperature [C]",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 173,
+   "signal_index": 173,
+   "name": "SR - Status Register",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 174,
+   "signal_index": 174,
+   "name": "Torque Offset 0x60B2",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 175,
+   "signal_index": 175,
+   "name": "Gantry Sync and CRC Error",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 176,
+   "signal_index": 176,
+   "name": "PvtUsecCounter",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 177,
+   "signal_index": 177,
+   "name": "Profiler Position Out UU",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 178,
+   "signal_index": 178,
+   "name": "Speed Out Internal",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 179,
+   "signal_index": 179,
+   "name": "Interpolation Active",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 180,
+   "signal_index": 180,
+   "name": "Mode Of Operation Display 0x6061",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 181,
+   "signal_index": 181,
+   "name": "Actual Velocity 0x606C",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 182,
+   "signal_index": 182,
+   "name": "5V Digital Supply",
+   "category": "Voltage",
+   "classification": "User"
+  },
+  {
+   "index": 183,
+   "signal_index": 183,
+   "name": "Phasing Profiler Position Out",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 184,
+   "signal_index": 184,
+   "name": "Phasing Profiler Speed Out",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 185,
+   "signal_index": 185,
+   "name": "Phasing Profiler Acceleration Out",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 186,
+   "signal_index": 186,
+   "name": "Superimposed Profiler Pos Out",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 187,
+   "signal_index": 187,
+   "name": "Superimposed Profiler Speed Out",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 188,
+   "signal_index": 188,
+   "name": "Superimposed Profiler Acc Out",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 189,
+   "signal_index": 189,
+   "name": "ECAM Position In",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 190,
+   "signal_index": 190,
+   "name": "ECAM Position Out",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 191,
+   "signal_index": 191,
+   "name": "ECAM Slave Segment Index",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 192,
+   "signal_index": 192,
+   "name": "ECAM Speed Out",
+   "category": "Velocity",
+   "classification": "User"
+  },
+  {
+   "index": 193,
+   "signal_index": 193,
+   "name": "ECAM Acceleration Out",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 194,
+   "signal_index": 194,
+   "name": "SinCos amplitude",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 195,
+   "signal_index": 195,
+   "name": "Brake output Active",
+   "category": "Inputs",
+   "classification": "User"
+  },
+  {
+   "index": 196,
+   "signal_index": 196,
+   "name": "IP extrapolation",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 197,
+   "signal_index": 197,
+   "name": "First Record Loaded",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 198,
+   "signal_index": 198,
+   "name": "Interpolated Data 0x60C1.1",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 199,
+   "signal_index": 199,
+   "name": "Interpolated Data 0x60C1.2",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 200,
+   "signal_index": 200,
+   "name": "Hw Limits Flag",
+   "category": "Inputs",
+   "classification": "Expert"
+  },
+  {
+   "index": 201,
+   "signal_index": 201,
+   "name": "CAN IP mode SyncMboxTime",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 202,
+   "signal_index": 202,
+   "name": "Interpolation Buf[0]",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 203,
+   "signal_index": 203,
+   "name": "Reference mode (RM)",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 204,
+   "signal_index": 204,
+   "name": "Cogging Current [A]",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 205,
+   "signal_index": 205,
+   "name": "ADC STO1",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 206,
+   "signal_index": 206,
+   "name": "ADC STO2",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 207,
+   "signal_index": 207,
+   "name": "Fast Reference 0x2005",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 208,
+   "signal_index": 208,
+   "name": "None-DC Counter",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 209,
+   "signal_index": 209,
+   "name": "None-DC Correction",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 210,
+   "signal_index": 210,
+   "name": "SysTiming Flags",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 211,
+   "signal_index": 211,
+   "name": "Actual Torque 0x6077",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 212,
+   "signal_index": 212,
+   "name": "Cyclic Extrapolation",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 213,
+   "signal_index": 213,
+   "name": "Filtered RMS current",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 214,
+   "signal_index": 214,
+   "name": "Extended in 0x2202",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 215,
+   "signal_index": 215,
+   "name": "CCD indication",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 216,
+   "signal_index": 216,
+   "name": "PVT New Target",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 217,
+   "signal_index": 217,
+   "name": "Temperature Threshold High",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 218,
+   "signal_index": 218,
+   "name": "Motion Status Superimposed",
+   "category": "General",
+   "classification": "Expert"
+  },
+  {
+   "index": 219,
+   "signal_index": 219,
+   "name": "Motion Status Simple Socket",
+   "category": "General",
+   "classification": "Expert"
+  },
+  {
+   "index": 220,
+   "signal_index": 220,
+   "name": "Motion Status Phasing",
+   "category": "General",
+   "classification": "Expert"
+  },
+  {
+   "index": 221,
+   "signal_index": 221,
+   "name": "GS Index by 0x2E00 low bits",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 222,
+   "signal_index": 222,
+   "name": "GS Index by 0x2E00 high bits",
+   "category": "Control",
+   "classification": "Expert"
+  },
+  {
+   "index": 223,
+   "signal_index": 223,
+   "name": "Unused",
+   "category": "None",
+   "classification": "Expert"
+  },
+  {
+   "index": 224,
+   "signal_index": 224,
+   "name": "Unused",
+   "category": "None",
+   "classification": "Expert"
+  },
+  {
+   "index": 225,
+   "signal_index": 225,
+   "name": "Step Block Detect Time",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 226,
+   "signal_index": 226,
+   "name": "Velocity Demand 0x606B",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 227,
+   "signal_index": 227,
+   "name": "Torque Demand 0x6074",
+   "category": "Current",
+   "classification": "User"
+  },
+  {
+   "index": 228,
+   "signal_index": 228,
+   "name": "PWM Sensor - On Time",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 229,
+   "signal_index": 229,
+   "name": "PWM Sensor - Cycle Time",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 230,
+   "signal_index": 230,
+   "name": "PWM Sensor - Duty Cycle",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 231,
+   "signal_index": 231,
+   "name": "PWM Emul - Full Range (PWM cnt)",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 232,
+   "signal_index": 232,
+   "name": "PWM Emul - Actual Value (PWM cnt)",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 233,
+   "signal_index": 233,
+   "name": "Pos Err of Additional Controller",
+   "category": "Position",
+   "classification": "User"
+  },
+  {
+   "index": 234,
+   "signal_index": 234,
+   "name": "STO Diag PWM Not Active",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 235,
+   "signal_index": 235,
+   "name": "Dynamic Brake Engaged",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 236,
+   "signal_index": 236,
+   "name": "Motor temperature [C]",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 237,
+   "signal_index": 237,
+   "name": "CAN IP SubMode0BufNotEmpty",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 238,
+   "signal_index": 238,
+   "name": "CAN IP SyncOverHs",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 239,
+   "signal_index": 239,
+   "name": "Trapeze Current Flag",
+   "category": "Current",
+   "classification": "Expert"
+  },
+  {
+   "index": 240,
+   "signal_index": 240,
+   "name": "External A2D CHA",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 241,
+   "signal_index": 241,
+   "name": "External A2D CHB",
+   "category": "System",
+   "classification": "User"
+  },
+  {
+   "index": 242,
+   "signal_index": 242,
+   "name": "External A2D Status",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 243,
+   "signal_index": 243,
+   "name": "External A2D CHA [+/-V]",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 244,
+   "signal_index": 244,
+   "name": "ShuntCnt",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 245,
+   "signal_index": 245,
+   "name": "IsShuntOn",
+   "category": "System",
+   "classification": "Developer"
+  },
+  {
+   "index": 246,
+   "signal_index": 246,
+   "name": "AIN1 [mV]",
+   "category": "Inputs",
+   "classification": "Expert"
+  },
+  {
+   "index": 247,
+   "signal_index": 247,
+   "name": "AIN2 [mV]",
+   "category": "Inputs",
+   "classification": "Expert"
+  },
+  {
+   "index": 248,
+   "signal_index": 248,
+   "name": "Estimated BEMF (alpha)",
+   "category": "Voltage",
+   "classification": "Expert"
+  },
+  {
+   "index": 249,
+   "signal_index": 249,
+   "name": "Estimated BEMF (beta)",
+   "category": "Voltage",
+   "classification": "Expert"
+  },
+  {
+   "index": 250,
+   "signal_index": 250,
+   "name": "Estimated position (by BEMF)",
+   "category": "Position",
+   "classification": "Expert"
+  },
+  {
+   "index": 251,
+   "signal_index": 251,
+   "name": "Estimated velocity (by BEMF)",
+   "category": "Velocity",
+   "classification": "Expert"
+  },
+  {
+   "index": 252,
+   "signal_index": 252,
+   "name": "BEMF estimator Ksw",
+   "category": "System",
+   "classification": "Expert"
+  },
+  {
+   "index": 253,
+   "signal_index": 253,
+   "name": "Exclusive Signal",
+   "category": "Position",
+   "classification": "Expert"
+  }
+ ]
+}

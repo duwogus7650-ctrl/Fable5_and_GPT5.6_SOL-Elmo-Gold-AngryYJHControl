@@ -1,0 +1,1007 @@
+# -*- coding: utf-8 -*-
+"""Headless tests for autotune_current.py (SPEC docs/autotune-current-spec.md §9).
+
+T3: a simulated Elmo drive answers the real command sequence through a mock
+ElmoLink.  The plant (pp basis, fable-physics live run #5) runs at TS/2
+half-steps with CENTER-ALIGNED current sampling (real PWM center sampling);
+Elmo PI u=KP(e+2*pi*KI*TS*sum(e)); 1-period command delay; 0.24 V dead-time in
+the plant; recorded voltages are PER-LEG PWM DUTY COUNTS (mid 3750, SVM min-max
+common mode -> single leg = 3/4 phase voltage, counts = volts*7500/Vbus) with
+an in-phase dead-time-like contamination (~0.06 V @ 3 A) that the retired |Z|
+magnitude method misattributes to L.  The corrected pipeline (neutral
+subtraction + in-situ/Vbus scale + complex Im(Z)) must recover the frozen
+oracles: R_pp 0.119 ohm (<=1%), L_pp 35.7 uH (<=3%), KP 0.07177 (<=3%,
+TS=100us pp), plus the naive-V/I regression.
+No hardware is touched anywhere in this file.
+"""
+import math
+import os
+import sys
+
+import numpy as np
+import pytest
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+
+import autotune_current as at
+from autotune_current import (AutotuneParams, AutotuneResult, run_current_autotune,
+                              apply_gains, verify_run, loop_margins, design_gains,
+                              demod, GREEN, YELLOW, RED)
+
+# ---- frozen oracles (SPEC §9 — never re-baseline here) -------------------------------
+# Basis (fable-physics, live runs #5/#6): drive gain system is PHASE-TO-PHASE,
+# real TS=100us -> KP = wc*L_pp reproduces EAS 0.07177 (-0.018%) and
+# KI = 2*alpha*wc/2pi reproduces EAS 812.939 (~0%).  Measured R is the
+# TERMINAL resistance (motor 0.119 + parasitics ~23 mOhm pp = 0.1421).
+R_PP_ORACLE = 0.119          # ohm, phase-to-phase (motor nameplate)
+R_TERM_PP = 0.1421           # ohm, terminal = motor + cable/FET parasitics (run #6)
+L_PP_ORACLE = 0.0357e-3      # H,   phase-to-phase
+KP_ORACLE = 0.07177          # V/A  (EAS, TS=100us, pp basis)
+KI_ORACLE = 812.94           # Hz   (EAS — matched by 2*alpha*wc/2pi, run #6)
+R_PH_TRUTH = R_PP_ORACLE / 2.0
+L_PH_TRUTH = L_PP_ORACLE / 2.0
+TS_US = 100                  # real drive sampling time
+VBUS_TRUTH = 48.46           # live bus voltage read-back (run #6) [V]
+
+
+# ======================================================================================
+# simulated drive (T3 plant per SPEC §9)
+# ======================================================================================
+class SimDrive:
+    """Mock ElmoLink: command()-compatible, with the T3 discrete plant inside.
+    Time advances ONLY via advance(dt) — inject it as AutotuneParams.sleep_fn."""
+
+    _MOTION_PREFIXES = ("MO=1", "BG", "JV", "PA", "PR", "PT", "PVT", "TC", "MI")
+
+    def __init__(self, kp=KP_ORACLE, ki=812.939, r_pp=R_TERM_PP, l_pp=L_PP_ORACLE,
+                 ts_us=TS_US, vdt=0.24, noise_a=0.02, vbus=VBUS_TRUTH,
+                 r_dt_ac=0.0025, g1_illcond_a200=1.2, se_injects=True,
+                 with_voltage_signal=True, px_jump_at_s=None, mo0=0, mf=0, seed=1):
+        # PHASE-TO-PHASE plant with TERMINAL resistance (run #6).  r_dt_ac =
+        # small sample-aligned dead-time-like contamination on the RECORDED
+        # legs (~0.008 V @ 3 A).  Larger values (run-#5's 0.02 ohm) are
+        # counterfactual: the live post-rotation data shows clean Im
+        # (L spread 0.6%), which a big sample-aligned injection would violate.
+        self.r, self.l, self.vdt, self.noise_a = r_pp, l_pp, vdt, noise_a
+        self.vbus, self.r_dt_ac = float(vbus), float(r_dt_ac)
+        # run-#7 realism: the RECORDED Current Command channel carries a small
+        # spurious in-band component with ~1/f^2 amplitude (record-only, NOT
+        # in the loop) — models why the in-situ magnitude is ill-conditioned
+        # at LOW f (small |I_cmd-I| denominator amplifies channel
+        # imperfections; live: 200 Hz ratio 1.85, mid f healthy).
+        self.g1_illcond_a200 = float(g1_illcond_a200)
+        self.ts_s = ts_us * 1e-6
+        self.a = math.exp(-r_pp * self.ts_s / l_pp)      # full-period plant step
+        self.b = (1.0 - self.a) / r_pp
+        self.rng = np.random.default_rng(seed)
+        self.se_injects = se_injects
+        self.px_jump_at_s = px_jump_at_s
+        self.t = 0.0
+        self.i = 0.0
+        self.integ = 0.0
+        self.u_prev = 0.0
+        self.iq_now = 0.0
+        self.last_ref = 0.0
+        self.t0 = 0.0
+        self.ws = 0
+        self.regs = {"TS": ts_us, "MC": 100, "PL[1]": 70.71, "CL[1]": 21.21,
+                     "CL[2]": 1, "CL[3]": 42.42, "CL[4]": 3000, "UM": 5,
+                     "KP[1]": kp, "KI[1]": ki,
+                     "CA[17]": 2, "CA[18]": 524288, "CA[19]": 16,
+                     "CA[41]": 30, "CA[42]": 0, "CA[43]": 0, "CA[44]": 0,
+                     "CA[45]": 1, "CA[46]": 1, "CA[47]": 1, "CA[70]": 0,
+                     "SC[8]": 0, "SR": 0, "MF": mf, "BV": 48.1, "XP[2]": 0,
+                     "MO": mo0, "TW[80]": 0, "LC": 0,
+                     "RC": 0, "RG": 1, "RL": 4096, "RP[0]": 0, "RP[3]": 0}
+        for n in range(1, 8):
+            self.regs["SE[%d]" % n] = 0
+        # live-grounded personality names (2026-07-13, 254-signal dump) with the
+        # decoys that the precision mapping must reject or deprioritize
+        self.signals = ["Position Feedback", "DC Bus Voltage",
+                        "Current Command [A]", "Total Current Command [A]",
+                        "Active Current [A]", "Reactive Current [A]"]
+        if with_voltage_signal:
+            self.signals += ["A Voltage", "B Voltage", "C Voltage", "D Voltage"]
+        self.leg_counts = (at.DUTY_MID, at.DUTY_MID, at.DUTY_MID)
+        self.record_calls = 0            # .NET-wrapper record() usage counter
+        self.log = []
+
+    is_connected = True
+
+    def recorder_signals(self):
+        """Mock of ElmoLink.recorder_signals() (personality SignalsMetaData names)."""
+        return list(self.signals)
+
+    def _chan_value(self, name):
+        """Signal name -> instantaneous recorded value.  'A/B/C Voltage' are
+        per-leg PWM DUTY COUNTS built in _step() (mid 3750, SVM common mode,
+        counts=volts*7500/Vbus); 'D Voltage' is the idle constant leg."""
+        if name == "Position Feedback":
+            return self.px()
+        if name == "DC Bus Voltage":
+            return self.vbus
+        if name in ("Current Command [A]", "Total Current Command [A]"):
+            val = self.last_ref
+            f_se = self.regs.get("SE[3]", 0)
+            if self.regs.get("TW[80]") == 1 and f_se and self.g1_illcond_a200:
+                # record-only channel imperfection (~1/f^2): ill-conditions the
+                # in-situ magnitude at LOW f only (measurement V/I untouched)
+                val += (self.g1_illcond_a200 * (200.0 / f_se) ** 2
+                        * math.cos(2 * math.pi * f_se * (self.t - self.t0)))
+            return val
+        if name == "Active Current [A]":
+            return self.iq_now
+        if name == "Reactive Current [A]":
+            return 0.0
+        if name == "A Voltage":
+            return self.leg_counts[0]
+        if name == "B Voltage":
+            return self.leg_counts[1]
+        if name == "C Voltage":
+            return self.leg_counts[2]
+        if name == "D Voltage":
+            return at.DUTY_MID                       # idle leg (live: constant 3750)
+        raise KeyError(name)
+
+    def record(self, signals, length, time_resolution=1):
+        """Mock of ElmoLink.record(): advances the SAME discrete plant for
+        length*time_resolution steps.  Mimics the REAL .NET upload behavior —
+        Data keys are POSITIONAL 0..N-1 (live-confirmed run #4, NOT
+        SignalIndex) — and routes through the production remap
+        (elmo_link._map_upload_data), so SignalIndex-style regressions are
+        caught by every sim run."""
+        import elmo_link
+        self.record_calls += 1
+        tr = max(1, int(time_resolution))
+        for s in signals:
+            if s not in self.signals:
+                raise KeyError("signals not in personality: %r" % s)
+        bufs = {s: [] for s in signals}
+        steps = int(length) * tr
+        noise = self.rng.standard_normal(steps) * self.noise_a
+        for k in range(steps):
+            self._step(noise[k])
+            if k % tr == 0:
+                for s in signals:
+                    bufs[s].append(self._chan_value(s))
+        raw = {i: np.asarray(bufs[s], dtype=float)   # positional Dict<int,double[]>
+               for i, s in enumerate(signals)}
+        out = elmo_link._map_upload_data(list(signals), raw)
+        out["dt"] = self.ts_s * tr
+        return out
+
+    # ---- physics ---------------------------------------------------------------------
+    def px(self):
+        base = 1000.0
+        if self.px_jump_at_s is not None and self.t >= self.px_jump_at_s:
+            base += 50000.0
+        return base
+
+    def advance(self, dur_s):
+        n = int(round(dur_s / self.ts_s))
+        if n <= 0:
+            return
+        noise = self.rng.standard_normal(n) * self.noise_a
+        for k in range(n):
+            self._step(noise[k])
+
+    def _step(self, nk):
+        """One PWM period (run-#6 timing): current sampled at period START;
+        the controller output u[k] is RECORDED as this row's leg duty counts
+        but APPLIED next period (1 TS compute delay + PWM ZOH/2) -> the
+        recorded V leads the motor voltage by ~1.5*TS.  The pipeline's
+        rotation correction exp(-j*w*1.5*TS) must remove exactly this skew
+        (probe-verified: corrected L residual ~1%, uncorrected +26..+59%)."""
+        regs = self.regs
+        mo = regs["MO"]
+        im = self.i + nk                             # sample at period start (+noise)
+        ref = 0.0
+        if mo == 1:
+            ref = regs.get("TC", 0.0)
+            if regs["TW[80]"] == 1 and self.se_injects:
+                ref += (regs["SE[2]"] *
+                        math.sin(2 * math.pi * regs["SE[3]"] * (self.t - self.t0))
+                        + regs["SE[6]"])
+            e = ref - im
+            self.integ += 2 * math.pi * regs["KI[1]"] * self.ts_s * e
+            u = regs["KP[1]"] * (e + self.integ)
+            v_eff = self.u_prev - self.vdt * (1.0 if self.i >= 0 else -1.0)
+        else:
+            u, v_eff = 0.0, 0.0
+            self.integ = 0.0
+        self.i = self.a * self.i + self.b * v_eff    # plant sees LAST cycle's duty
+        # recorded legs from THIS cycle's u (live-confirmed skew source) plus a
+        # small sample-aligned contamination
+        i_ac = (im - regs.get("TC", 0.0)) if mo == 1 else 0.0
+        vph = u / 2.0 + self.r_dt_ac * i_ac          # phase-neutral volts
+        ph = (vph, -vph / 2.0, -vph / 2.0)
+        cm = -(max(ph) + min(ph)) / 2.0              # SVM min-max injection
+        kv = at.DUTY_FS / self.vbus                  # counts per volt
+        self.leg_counts = tuple(at.DUTY_MID + (pv + cm) * kv for pv in ph)
+        self.u_prev = u
+        self.iq_now, self.last_ref = im, ref
+        self.t += self.ts_s
+
+    # ---- transport -------------------------------------------------------------------
+    def command(self, cmd, timeout_ms=1000, allow_motion=False):
+        self.log.append((cmd, allow_motion))
+        u = cmd.replace(" ", "").upper()
+        if not allow_motion and any(u.startswith(p) for p in self._MOTION_PREFIXES):
+            raise PermissionError("refused motion command without allow_motion: %r" % cmd)
+        if "=" in cmd:
+            name, val = cmd.split("=", 1)
+            return self._write(name.strip(), float(val))
+        return self._query(cmd.strip())
+
+    def _write(self, name, v):
+        regs = self.regs
+        if name == "MO":
+            if v == 1:
+                if regs["MF"] != 0:
+                    raise IOError("cannot enable: fault present")
+                regs["MO"] = 1
+                regs["TC"] = 0.0
+                self.integ = 0.0
+                self.u_prev = 0.0
+            else:
+                regs["MO"] = 0
+            return ""
+        if name == "UM":
+            if regs["MO"] == 1:
+                raise IOError("UM change requires MO=0")
+            regs["UM"] = int(v)
+            return ""
+        if name == "TC":
+            if abs(v) > regs["PL[1]"]:
+                raise IOError("TC exceeds PL[1]")
+            regs["TC"] = v
+            return ""
+        if name == "TW[80]":
+            regs["TW[80]"] = int(v)
+            if int(v) == 1:
+                self.t0 = self.t
+                self.ws = 2
+            else:
+                self.ws = 0
+            return ""
+        if name == "RR":
+            # RR=0 (abort A5 kill) is accepted; RR=2 legacy arming is RETIRED —
+            # any attempt means the .NET record path regressed: fail loudly.
+            if int(v) == 2:
+                raise IOError("legacy RR=2 recording path retired (use link.record)")
+            return ""
+        if name == "BH":
+            raise IOError("legacy BH upload retired (use link.record)")
+        regs[name] = v
+        return ""
+
+    def _query(self, name):
+        if name == "PX":
+            return "%.6f" % self.px()
+        if name == "IQ":
+            return "%.6f" % self.iq_now
+        if name == "SO":
+            return "1" if self.regs["MO"] == 1 else "0"
+        if name == "WS[75]":
+            return str(self.ws)
+        if name == "RR":
+            return "0"
+        if name == "SV":
+            return ""
+        if name in self.regs:
+            return str(self.regs[name])
+        raise IOError("unknown query %r" % name)
+
+
+def _params(drive, tmpdir, **kw):
+    return AutotuneParams(sleep_fn=drive.advance, snapshot_dir=str(tmpdir), **kw)
+
+
+# ======================================================================================
+# T3: full-pipeline oracle test (the core acceptance)
+# ======================================================================================
+@pytest.fixture(scope="module")
+def green_run(tmp_path_factory):
+    drive = SimDrive()
+    params = _params(drive, tmp_path_factory.mktemp("snap"))
+    res = run_current_autotune(drive, params)
+    return drive, params, res
+
+
+def test_t3_pipeline_completes_green_via_gates(green_run):
+    """Run #6 final: gates G1..G4 all pass on the nominal mock -> honest GREEN
+    (the old blanket scale-pending YELLOW is retired)."""
+    _, _, res = green_run
+    assert res.status == GREEN, "status=%s reason=%s warn=%s" % (
+        res.status, res.reason, res.warnings)
+    assert res.warnings == []
+    gates = res.evidence["gates"]
+    assert set(gates) == {"G1_insitu_vs_vbus", "G2_rac_band",
+                          "G3_l_spread", "G4_plaus_pm"}
+    assert all(g["pass"] for g in gates.values()), gates
+    assert res.ts_us == TS_US
+
+
+def test_t3_resistance_terminal_oracle(green_run):
+    """R is the TERMINAL resistance (motor + parasitics) — reported honestly,
+    NOT corrected to nameplate (run #6; R does not enter the gain formula)."""
+    _, _, res = green_run
+    err = res.r_pp_ohm / R_TERM_PP - 1.0
+    assert abs(err) <= 0.01, "R_pp=%.6f ohm err=%+.2f%%" % (res.r_pp_ohm, 100 * err)
+    assert "터미널" in res.evidence["dc"]["r_basis"]
+
+
+def test_t3_inductance_oracle(green_run):
+    _, _, res = green_run
+    err = res.l_pp_h / L_PP_ORACLE - 1.0
+    assert abs(err) <= 0.03, "L_pp=%.4g H err=%+.2f%%" % (res.l_pp_h, 100 * err)
+
+
+def test_t3_kp_oracle(green_run):
+    _, _, res = green_run
+    err = res.kp_v_per_a / KP_ORACLE - 1.0
+    assert abs(err) <= 0.03, "KP=%.5f err=%+.2f%%" % (res.kp_v_per_a, 100 * err)
+
+
+def test_t3_ki_oracle_restored(green_run):
+    """KI = 2*alpha*wc/(2*pi) — the pp-basis 2x confirmed on live run #6
+    reproduces the EAS oracle 812.94 Hz (closes the previous open finding)."""
+    _, _, res = green_run
+    err = res.ki_hz / KI_ORACLE - 1.0
+    assert abs(err) <= 0.005, "KI=%.3f err=%+.3f%%" % (res.ki_hz, 100 * err)
+    ki_formula = (at.KI_PP_FACTOR * at.ALPHA_EAS
+                  * (at.WC_TS_CAL / (TS_US * 1e-6)) / (2 * math.pi))
+    assert res.ki_hz == pytest.approx(ki_formula, rel=1e-9)
+
+
+def test_t3_naive_vi_regression(green_run):
+    """SPEC §3.2/§9: naive V/I MUST be badly wrong (>= +30% at the I1 level,
+    where the dead-time voltage weighs most) — proves the two-point method is
+    load-bearing, not decorative."""
+    _, _, res = green_run
+    dc = res.evidence["dc"]
+    naive_err = dc["r_naive_pp_i1_ohm"] / R_TERM_PP - 1.0
+    assert naive_err >= 0.30, "naive err %+.1f%% (deadtime should inflate it)" \
+        % (100 * naive_err)
+    two_pt_err = dc["r_pp_ohm"] / R_TERM_PP - 1.0
+    assert abs(two_pt_err) <= 0.01
+
+
+def test_t2_v1_range_and_gate(green_run):
+    """T2 mid-oracle: scaled v_phN at I1 in [0.15, 1.2] V; PM gate satisfied."""
+    _, _, res = green_run
+    s = res.evidence["scale"]["s_v_per_count"]
+    v1_volts = s * res.evidence["dc"]["v1_counts"]
+    assert 0.15 <= v1_volts <= 1.2, "v1=%.3f V" % v1_volts
+    assert res.pm_deg >= 45.0
+    assert res.wc_rad_s * TS_US * 1e-6 <= 0.25
+
+
+def test_t3_snapshot_written_before_writes(green_run):
+    _, _, res = green_run
+    path = res.evidence["snapshot_path"]
+    assert os.path.isfile(path)
+    import json
+    snap = json.load(open(path, encoding="utf-8"))
+    assert snap["readings"]["KP[1]"] == pytest.approx(KP_ORACLE)
+    assert snap["readings"]["UM"] == 5
+
+
+def test_t3_drive_restored_after_run(green_run):
+    """E1: UM/sockets/SE restored, motor off, drive gains untouched (E3 is separate)."""
+    drive, _, res = green_run
+    r = drive.regs
+    assert r["MO"] == 0
+    assert r["UM"] == 5
+    assert r["CA[44]"] == 0 and r["CA[70]"] == 0        # socket 4 released
+    assert all(r["SE[%d]" % n] == 0 for n in range(1, 8))
+    assert r["KP[1]"] == pytest.approx(KP_ORACLE)       # not applied in Phase 1
+    assert r["KI[1]"] == pytest.approx(812.939)
+
+
+def test_t3_motion_commands_used_allow_motion_gate(green_run):
+    """Every MO=1/TC send must have carried allow_motion=True (link contract)."""
+    drive, _, _ = green_run
+    sent = [(c, am) for c, am in drive.log
+            if c.replace(" ", "").upper().startswith(("MO=1", "TC"))]
+    assert sent and all(am for _, am in sent)
+
+
+# ======================================================================================
+# bootstrap path (P5/B3) — KP[1]==0 drive + nameplate
+# ======================================================================================
+def test_bootstrap_from_nameplate(tmp_path):
+    drive = SimDrive(kp=0.0, ki=0.0)
+    params = _params(drive, tmp_path, nameplate_r_pp=R_PP_ORACLE,
+                     nameplate_l_pp_h=L_PP_ORACLE)
+    res = run_current_autotune(drive, params)
+    assert res.status in (GREEN, YELLOW), res.reason
+    assert abs(res.r_pp_ohm / R_TERM_PP - 1.0) <= 0.02   # terminal R
+    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.05
+    assert "bootstrap" in res.evidence
+    # original (unconfigured) gains restored — apply is a separate operator action
+    assert drive.regs["KP[1]"] == 0.0 and drive.regs["KI[1]"] == 0.0
+
+
+def test_kp_zero_without_nameplate_is_red(tmp_path):
+    drive = SimDrive(kp=0.0, ki=0.0)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "부트스트랩" in res.reason or "명판" in res.reason
+
+
+# ======================================================================================
+# RED / abort paths (SPEC §6/§8)
+# ======================================================================================
+def test_mo1_at_start_red_without_auto_disable(tmp_path):
+    drive = SimDrive(mo0=1)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "STOP" in res.reason
+    assert not any(c.replace(" ", "").startswith("MO=0") for c, _ in drive.log), \
+        "must NOT auto-disable an enabled motor"
+
+
+def test_motor_fault_red_before_any_write(tmp_path):
+    drive = SimDrive(mf=0x10)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "폴트" in res.reason
+    assert all("=" not in c for c, _ in drive.log), "P0..P2 must be read-only"
+
+
+def test_missing_voltage_signal_red_with_dump(tmp_path):
+    drive = SimDrive(with_voltage_signal=False)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "전압" in res.reason
+    assert "recorder_signals" in res.evidence
+    assert "Active Current [A]" in res.evidence["recorder_signals"]
+
+
+def test_se_injection_failure_red_u1_and_abort_order(tmp_path):
+    """U1 edge: WS reports running but no current appears -> RED after retries,
+    abort chain order MO=0 -> TW[80]=0 -> TC=0 (SPEC §6, fixed)."""
+    drive = SimDrive(se_injects=False)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "U1" in res.reason
+    cmds = [c.replace(" ", "") for c, _ in drive.log]
+    i_mo = cmds.index("MO=0")                       # first MO=0 == abort A1
+    i_tw = next(i for i, c in enumerate(cmds) if i > i_mo and c == "TW[80]=0")
+    i_tc = next(i for i, c in enumerate(cmds) if i > i_tw and c == "TC=0")
+    assert i_mo < i_tw < i_tc
+    # restore still happened
+    assert drive.regs["UM"] == 5 and drive.regs["CA[44]"] == 0
+
+
+def test_px_motion_guard_aborts(tmp_path):
+    drive = SimDrive(px_jump_at_s=3.0)              # jump mid C-phase
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "모션" in res.reason or "dPX" in res.reason
+    assert drive.regs["MO"] == 0
+
+
+def test_nan_response_aborts(tmp_path):
+    drive = SimDrive()
+    drive.regs["BV"] = float("nan")
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "NaN" in res.reason
+
+
+def test_stability_gate_red_on_absurd_override(tmp_path):
+    """wc_override 4 kHz -> wc*TS>0.25 even after 3 reductions -> honest RED,
+    with measured R/L still reported and the drive safed+restored first."""
+    drive = SimDrive()
+    params = _params(drive, tmp_path, wc_override_hz=4000.0)
+    res = run_current_autotune(drive, params)
+    assert res.status == RED and "게이트" in res.reason
+    assert res.r_pp_ohm is not None and res.l_pp_h is not None
+    assert drive.regs["MO"] == 0 and drive.regs["UM"] == 5
+
+
+# ======================================================================================
+# T4 + pure-function units
+# ======================================================================================
+def test_t4_gate_model_regression_point():
+    """Pure-math regression of loop_margins at the prototype-verified point
+    (0 dB @ 767 Hz, PM = 57.3 deg).  The point's ORIGINAL physical label
+    ('EAS @ TS=50us, ph basis') was superseded by the pp/TS=100us re-grounding;
+    the numbers stay valid as a function regression."""
+    wx, pm = loop_margins(KP_ORACLE, 812.939, R_PH_TRUTH, L_PH_TRUTH, 50e-6)
+    assert abs(pm - 57.3) <= 1.0, "PM=%.2f" % pm
+    assert abs(wx / (2 * math.pi) - 767.0) <= 10.0, "fx=%.1f Hz" % (wx / (2 * math.pi))
+
+
+def test_design_gains_eas_ratio_deterministic():
+    """pp basis (fable-physics, runs #5/#6): KP = wc*L_pp reproduces the live
+    EAS KP at TS=100us; KI = 2*alpha*wc/2pi reproduces the live EAS KI."""
+    ok, kp, ki, wc, pm, wx, iters = design_gains(
+        L_PP_ORACLE, R_PP_ORACLE, TS_US * 1e-6, AutotuneParams())
+    assert ok
+    assert abs(kp / KP_ORACLE - 1.0) <= 0.005        # -0.018% at exact L_pp
+    assert abs(ki / KI_ORACLE - 1.0) <= 0.005        # 2x pp factor (run #6)
+    assert pm >= 45.0
+
+
+def test_design_gains_pole_zero_rule():
+    ok, kp, ki, *_ = design_gains(L_PP_ORACLE, R_PP_ORACLE, TS_US * 1e-6,
+                                  AutotuneParams(ki_rule="pole_zero"))
+    assert ok
+    assert ki == pytest.approx(R_PP_ORACLE / (2 * math.pi * L_PP_ORACLE), rel=1e-6)
+    assert ki == pytest.approx(530.5, rel=0.01)      # same ratio on either basis
+
+
+def test_demod_amplitude_exact():
+    f, dt, amp, n = 800.0, 50e-6, 2.5, 4000          # integer cycles
+    t = np.arange(n) * dt
+    x = amp * np.sin(2 * np.pi * f * t + 0.7) + 1.23  # +DC offset must not leak
+    assert abs(demod(x, f, dt)) == pytest.approx(amp, rel=1e-6)
+
+
+def test_record_path_uses_net_wrapper_not_legacy(green_run):
+    """Recorder access must go through link.record() (.NET wrapper); the retired
+    RC/RG/RL/RP/RR=2/BH command path must never be emitted (SimDrive raises on
+    RR=2/BH, so any regression would also RED the pipeline)."""
+    drive, _, res = green_run
+    assert res.status == GREEN
+    assert drive.record_calls >= 7          # probe + 2 DC + 4 sine segments
+    legacy = [c for c, _ in drive.log
+              if c.replace(" ", "").upper().startswith(("RC=", "RG=", "RL=",
+                                                        "RP[", "BH", "RR=2"))]
+    assert legacy == [], "legacy recorder commands emitted: %s" % legacy
+    assert not hasattr(at, "_parse_bh"), "_parse_bh must be retired"
+
+
+def test_record_missing_dt_falls_back_with_warning(tmp_path):
+    """dt semantics are live-unknown (U3): when record() reports no dt, the
+    pipeline must fall back to TimeResolution*TS, warn once, and still measure
+    correctly (in the sim the fallback equals the true dt)."""
+    class NoDtDrive(SimDrive):
+        def record(self, signals, length, time_resolution=1):
+            out = SimDrive.record(self, signals, length, time_resolution)
+            del out["dt"]
+            return out
+
+    drive = NoDtDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert sum("dt" in w for w in res.warnings) == 1
+    assert abs(res.r_pp_ohm / R_TERM_PP - 1.0) <= 0.01
+    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.03
+
+
+def test_signal_mapping_precision(green_run):
+    """Live-grounded mapping: legs A/B/C (duty counts), D idle excluded,
+    'Active Current [A]' (never Reactive), 'Current Command [A]' over Total,
+    'DC Bus Voltage' as the scale cross-check channel."""
+    _, _, res = green_run
+    sm = res.evidence["signal_map"]
+    assert sm["legs"] == ["A Voltage", "B Voltage", "C Voltage"]
+    assert sm["bus"] == "DC Bus Voltage"
+    assert sm["current_name"] == "Active Current [A]"
+    assert sm["ref_name"] == "Current Command [A]"
+
+
+def test_neutral_subtraction_removes_offset_cm_and_bias():
+    """v_phN = A - (A+B+C)/3 must remove the 3750 offset, the SVM min-max
+    common mode, and the 3/4 single-leg bias EXACTLY (pure function)."""
+    rng = np.random.default_rng(7)
+    vph_true = rng.uniform(-2.0, 2.0, 64)            # phase-neutral volts
+    kv = at.DUTY_FS / VBUS_TRUTH
+    legs = []
+    for v in vph_true:
+        ph = (v, -v / 2.0, -v / 2.0)
+        cm = -(max(ph) + min(ph)) / 2.0
+        legs.append([at.DUTY_MID + (p + cm) * kv for p in ph])
+    legs = np.array(legs)
+    # single raw leg (mid-removed) equals 3/4 of the phase voltage — the bias
+    raw_leg = (legs[:, 0] - at.DUTY_MID) / kv
+    assert np.allclose(raw_leg, 0.75 * vph_true)
+    v_rec = at.neutral_subtract(legs[:, 0], legs[:, 1], legs[:, 2]) / kv
+    assert np.allclose(v_rec, vph_true, atol=1e-12)
+
+
+def test_skew_rotation_correction_recovers_l(green_run):
+    """Run #6 core fix: the recorded duty leads the motor voltage by 1.5*TS.
+    The rotation correction exp(-j*w*1.5*TS) must recover L (<=3% each f);
+    WITHOUT it the apparent L stays badly inflated (>+10%, +26..59% here).
+    R_ac(f)=Re(Z) must sit in the physical G2 band around the DC value."""
+    _, _, res = green_run
+    r_pp = res.evidence["dc"]["r_pp_ohm"]
+    for e in res.evidence["sine"]:
+        assert abs(e["l_pp_h"] / L_PP_ORACLE - 1.0) <= 0.03, \
+            "f=%.0f corrected L err %+.1f%%" % (
+                e["f_hz"], 100 * (e["l_pp_h"] / L_PP_ORACLE - 1))
+        assert e["l_pp_uncorrected_h"] / L_PP_ORACLE - 1.0 > 0.10, \
+            "f=%.0f uncorrected L should stay skew-inflated" % e["f_hz"]
+        assert 0.8 * r_pp <= e["r_ac_pp_ohm"] <= 2.5 * r_pp
+
+
+def test_vbus_primary_scale_exact(green_run):
+    """PRIMARY scale = Vbus_rec/7500 (run #6); tau and Vbus land in evidence."""
+    _, _, res = green_run
+    sc = res.evidence["scale"]
+    assert sc["vbus_v"] == pytest.approx(VBUS_TRUTH, rel=1e-6)
+    assert sc["s_v_per_count"] == pytest.approx(VBUS_TRUTH / at.DUTY_FS, rel=1e-9)
+    assert sc["tau_skew_s"] == pytest.approx(1.5 * TS_US * 1e-6, rel=1e-9)
+
+
+def test_g1_picks_max_error_frequency_not_lowest(green_run):
+    """Run #7 fix: G1 must cross-check where the in-situ estimator is
+    well-conditioned = the excitation with the LARGEST |I_cmd - I|.  The mock
+    reproduces the live failure shape (200 Hz ratio ~1.7-1.85, mid/high f
+    healthy): a lowest-f hard pick would FAIL while the max-error pick passes
+    — proving this is an estimator-validity fix, not a gate relaxation."""
+    _, _, res = green_run
+    s = res.evidence["scale"]["s_v_per_count"]
+    sine = res.evidence["sine"]
+    g1 = res.evidence["gates"]["G1_insitu_vs_vbus"]
+    # picked frequency == argmax |I_cmd - I|
+    best = max(sine, key=lambda e: e["err_phasor_a"])
+    assert g1["f_hz"] == best["f_hz"]
+    assert g1["err_phasor_a"] == pytest.approx(best["err_phasor_a"])
+    assert g1["pass"] and abs(g1["ratio"] - 1.0) <= at.G1_TOL
+    # the OLD lowest-f hard pick would have failed (live run #7: 200 Hz 1.85)
+    lowest = min(sine, key=lambda e: e["f_hz"])
+    low_ratio = lowest["s_insitu_mag_v_per_count"] / s
+    assert abs(low_ratio - 1.0) > at.G1_TOL, \
+        "lowest-f ratio %.3f should be ill-conditioned" % low_ratio
+    # tolerance is UNCHANGED (no gate relaxation)
+    assert g1["tol"] == 0.10
+
+
+def test_g1_fails_yellow_on_vbus_misreport(tmp_path):
+    """G1 teeth: a bus channel misreporting Vbus (40 V while the duty counts
+    were built with 48.46 V) skews the primary scale; the in-situ magnitude
+    check at the lowest f must catch it -> YELLOW with G1 named."""
+    class BadBusDrive(SimDrive):
+        def _chan_value(self, name):
+            if name == "DC Bus Voltage":
+                return 40.0
+            return SimDrive._chan_value(self, name)
+
+    drive = BadBusDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert not res.evidence["gates"]["G1_insitu_vs_vbus"]["pass"]
+    assert any("G1" in w for w in res.warnings)
+
+
+def test_missing_bus_signal_is_red(tmp_path):
+    """DC Bus Voltage is the PRIMARY scale source now: absent -> pre-power RED."""
+    drive = SimDrive()
+    drive.signals.remove("DC Bus Voltage")
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "Bus" in res.reason or "주 스케일" in res.reason
+    assert all("=" not in c for c, _ in drive.log), "must stay read-only"
+
+
+# ======================================================================================
+# personality upload ladder (elmo_link) — headless via fake .NET comm objects
+# ======================================================================================
+class _FakeEvent:
+    def __iadd__(self, _h):
+        return self
+
+
+class _FakeErr:
+    def __init__(self, lib_ec, lib_desc):
+        self.ErrorCode = 0
+        self.LibraryErrorCode = lib_ec
+        self.ErrorDescription = ""
+        self.LibraryErrorDescription = lib_desc
+
+
+class _FakeUploadModel:
+    def __init__(self, path, ok):
+        self._path, self._ok = path, ok
+        self.OnStart = _FakeEvent()
+        self.OnProgress = _FakeEvent()
+        self.OnFinish = _FakeEvent()
+        self.OnFailed = _FakeEvent()
+        self.OnCancel = _FakeEvent()
+        self.OperationStatus = "UNDEFINED"
+
+    def Start(self):
+        if not self._ok:
+            self.OperationStatus = "FAILED"
+            return (False, _FakeErr(9, "No Callbacks Registered"))
+        with open(self._path, "w", encoding="utf-8") as f:
+            f.write("<personality/>")
+        self.OperationStatus = "FINISHED"
+        return (True, None)
+
+
+class _FakeKV:
+    def __init__(self, k, v):
+        self.Key, self.Value = k, v
+
+
+class _FakeSig:
+    def __init__(self, i, name):
+        self.SignalIndex = i
+        self.Name = name
+        self.CategoryName = "Cat"
+        self.Classification = "Cls"
+
+
+class _FakeMeta(list):
+    @property
+    def Count(self):
+        return len(self)
+
+
+class _FakeComm:
+    """Pure-python stand-in for the .NET comm exposing the live-confirmed
+    personality surface (UploadPersonality / CreatePersonalityModel /
+    PersonalityModel)."""
+    def __init__(self, upload_ok=True):
+        self.PersonalityModel = None
+        self.upload_calls = 0
+        self._upload_ok = upload_ok
+
+    def UploadPersonality(self, path):
+        self.upload_calls += 1
+        return (_FakeUploadModel(path, self._upload_ok), None)
+
+    def CreatePersonalityModel(self, path):
+        if not os.path.isfile(path):
+            return (False, _FakeErr(8, "Cannot parse personality file"))
+        meta = _FakeMeta(_FakeKV(i, _FakeSig(i, n)) for i, n in enumerate(
+            ["A Voltage", "Active Current [A]", "Current Command [A]"]))
+
+        class _Model:
+            pass
+        m = _Model()
+        m.SignalsMetaData = meta
+        self.PersonalityModel = m
+        return (True, None)
+
+
+def _fresh_link(tmp_path, monkeypatch, upload_ok=True):
+    import elmo_link
+    monkeypatch.setattr(elmo_link, "_LIBDIR", str(tmp_path / "lib"))
+    monkeypatch.setattr(elmo_link, "_STATE_DIR", str(tmp_path / "state"))
+    link = elmo_link.ElmoLink()
+    link._comm = _FakeComm(upload_ok=upload_ok)
+    return elmo_link, link
+
+
+def test_personality_ladder_upload_then_parse(tmp_path, monkeypatch):
+    """Cache miss -> UploadPersonality(+5 events)+Start+FINISHED -> parse ->
+    signal names + durability dump written (live-confirmed flow, headless)."""
+    import json
+    _el, link = _fresh_link(tmp_path, monkeypatch)
+    names = link.recorder_signals()
+    assert names == ["A Voltage", "Active Current [A]", "Current Command [A]"]
+    assert link._comm.upload_calls == 1
+    assert (tmp_path / "lib" / "personality_model.xml").is_file()   # cached XML
+    dump = tmp_path / "state" / "recorder_signals.json"
+    assert dump.is_file()
+    data = json.loads(dump.read_text(encoding="utf-8"))
+    assert data["count"] == 3
+    assert data["signals"][1]["name"] == "Active Current [A]"
+    assert {"index", "signal_index", "name", "category",
+            "classification"} <= set(data["signals"][0])
+
+
+def test_personality_cache_first_skips_upload(tmp_path, monkeypatch):
+    """Existing XML -> CreatePersonalityModel parses the cache; NO re-upload."""
+    _el, link = _fresh_link(tmp_path, monkeypatch)
+    (tmp_path / "lib").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "lib" / "personality_model.xml").write_text(
+        "<personality/>", encoding="utf-8")
+    names = link.recorder_signals()
+    assert names is not None and len(names) == 3
+    assert link._comm.upload_calls == 0
+
+
+def test_personality_failure_returns_none_with_reason(tmp_path, monkeypatch):
+    """Upload Start failure -> recorder_signals()==None + _last_recorder_error
+    carries the drive's LibraryErrorDescription (LibEC=9 pattern)."""
+    _el, link = _fresh_link(tmp_path, monkeypatch, upload_ok=False)
+    assert link.recorder_signals() is None
+    assert "No Callbacks Registered" in (link._last_recorder_error or "")
+    assert "LibraryErrorCode=9" in link._last_recorder_error
+
+
+def test_upload_data_positional_mapping_regression():
+    """Live run #4 bug class: UploadRecordingData().Data keys are POSITIONAL
+    0..N-1 in request order (NOT SignalIndex).  The remap must unpack
+    positionally and fail LOUDLY on any unexpected key set."""
+    import elmo_link
+    sigs = ["A Voltage", "Active Current [A]", "Current Command [A]"]
+    raw = {0: np.array([1.0, 1.5]), 1: np.array([2.0, 2.5]), 2: np.array([3.0, 3.5])}
+    out = elmo_link._map_upload_data(sigs, raw)
+    assert out["A Voltage"][0] == 1.0
+    assert out["Active Current [A]"][1] == 2.5
+    assert out["Current Command [A]"][0] == 3.0
+    # SignalIndex-style keys (the exact live failure: 'A Voltage'=19) -> IOError
+    with pytest.raises(IOError):
+        elmo_link._map_upload_data(sigs, {19: raw[0], 20: raw[1], 21: raw[2]})
+    with pytest.raises(IOError):                     # missing a channel
+        elmo_link._map_upload_data(sigs, {0: raw[0], 1: raw[1]})
+    with pytest.raises(IOError):                     # extra unexpected channel
+        elmo_link._map_upload_data(sigs, {0: raw[0], 1: raw[1], 2: raw[2],
+                                          3: raw[0]})
+
+
+def test_dotnet_recorder_structural_offline():
+    """Offline structural check of the real .NET recording surface used by
+    elmo_link.record(): types constructible, Immediate enum, interface members.
+    Skips (honestly) when pythonnet/CLR is unavailable on the machine."""
+    try:
+        import elmo_link
+        checks = elmo_link._reflect_recorder()
+    except Exception as e:
+        pytest.skip("CLR/DLL unavailable offline: %r" % (e,))
+    bad = [k for k, v in checks.items() if not v]
+    assert not bad, "structural checks failed: %s" % bad
+    assert len(checks) >= 10
+
+
+def test_l_from_z_roundtrip():
+    f = 800.0
+    z = math.hypot(R_PH_TRUTH, 2 * math.pi * f * L_PH_TRUTH)
+    assert at.l_from_z(z, R_PH_TRUTH, f) == pytest.approx(L_PH_TRUTH, rel=1e-9)
+
+
+# ======================================================================================
+# TS-derived excitation frequencies (live TS=100us regression, 2026-07-12 field RED)
+# ======================================================================================
+def test_derive_freqs_values():
+    """Run #6: 3-4 excitation points (firmer L median; future (L,tau) fit)."""
+    assert at.derive_freqs(50e-6) == (400.0, 800.0, 1200.0, 1600.0)
+    assert at.derive_freqs(100e-6) == (200.0, 400.0, 600.0, 800.0)   # live drive
+    for ts_us in (40, 100, 120):
+        fs = at.derive_freqs(ts_us * 1e-6)
+        assert 3 <= len(fs) <= 4
+        f_max = 0.125 / (ts_us * 1e-6)
+        assert all(150.0 <= f < f_max for f in fs)
+        assert list(fs) == sorted(fs) and len(set(fs)) == len(fs)
+    # L-observability: hugely resistive motor -> all candidates dropped ->
+    # top two grid points below f_max (contract: push toward f_max)
+    assert at.derive_freqs(100e-6, r_ph=0.5, l_ph=17.85e-6) == (1150.0, 1200.0)
+    # THIS motor (terminal R, pp L): all four points stay observable
+    assert at.derive_freqs(100e-6, r_ph=R_TERM_PP, l_ph=L_PP_ORACLE) == \
+        (200.0, 400.0, 600.0, 800.0)
+    assert 2 * math.pi * 200.0 * L_PP_ORACLE >= 0.25 * R_TERM_PP
+
+
+def test_ts100_default_freqs_full_pipeline(tmp_path):
+    """Live-RED regression: TS=100us drive + DEFAULT params (freqs None) must
+    pass P2, derive (400, 800) < 1250 Hz, and still recover R/L."""
+    drive = SimDrive(ts_us=100)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, "%s / %s / %s" % (res.status, res.reason,
+                                                  res.warnings)
+    fr = res.evidence["freqs"]
+    assert fr["mode"] == "derived"
+    assert fr["freqs_hz"] == [200.0, 400.0, 600.0, 800.0]
+    assert all(f < 1250.0 for f in fr["freqs_hz"])
+    assert res.ts_us == 100
+    r_err = res.r_pp_ohm / R_TERM_PP - 1.0
+    l_err = res.l_pp_h / L_PP_ORACLE - 1.0
+    assert abs(r_err) <= 0.01, "R err %+.2f%%" % (100 * r_err)
+    assert abs(l_err) <= 0.03, "L err %+.2f%%" % (100 * l_err)
+
+
+def test_ts100_explicit_over_limit_keeps_strict_red(tmp_path):
+    """Explicit tuple keeps the old strict P2 gate (the honest live RED path)."""
+    drive = SimDrive(ts_us=100)
+    res = run_current_autotune(drive,
+                               _params(drive, tmp_path, freqs_hz=(800.0, 1600.0)))
+    assert res.status == RED
+    assert "1600" in res.reason and "한계" in res.reason
+    assert all("=" not in c for c, _ in drive.log), "P2 RED must stay read-only"
+
+
+# ======================================================================================
+# GUI hooks: progress_fn / cancel_fn (non-invasive contract)
+# ======================================================================================
+PROGRESS_ORDER = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE",
+                  "MEASURE_R", "MEASURE_L", "DESIGN", "DONE"]
+
+
+def test_progress_fn_emits_all_phases_in_order(tmp_path):
+    drive = SimDrive()
+    events = []
+    params = _params(drive, tmp_path,
+                     progress_fn=lambda code, detail: events.append((code, detail)))
+    res = run_current_autotune(drive, params)
+    assert res.status == GREEN, res.reason
+    codes = [c for c, _ in events]
+    firsts = [codes.index(c) for c in PROGRESS_ORDER]   # each appears >= once
+    assert firsts == sorted(firsts), "out of order: %s" % codes
+    assert all(codes.count(c) >= 1 for c in PROGRESS_ORDER)
+    details = dict(events)
+    assert "mΩ" in details["MEASURE_R"]                 # human-readable payloads
+    assert "µH" in details["MEASURE_L"]
+    assert "KP" in details["DESIGN"] and "PM" in details["DESIGN"]
+
+
+def test_cancel_fn_triggers_spec6_abort_and_restore(tmp_path):
+    """Cancel armed right after ENABLE: the first _sleep chunk while energized
+    must raise the operator-stop AbortError and run the fixed §6 chain."""
+    drive = SimDrive()
+    state = {"armed": False}
+
+    def on_progress(code, _detail):
+        if code == "ENABLE":
+            state["armed"] = True
+
+    params = _params(drive, tmp_path, progress_fn=on_progress,
+                     cancel_fn=lambda: state["armed"])
+    res = run_current_autotune(drive, params)
+    assert res.status == RED and "중단" in res.reason
+    cmds = [c.replace(" ", "") for c, _ in drive.log]
+    i_mo = cmds.index("MO=0")                           # abort A1 (first MO=0 ever)
+    i_tw = next(i for i, c in enumerate(cmds) if i > i_mo and c == "TW[80]=0")
+    i_tc = next(i for i, c in enumerate(cmds) if i > i_tw and c == "TC=0")
+    assert i_mo < i_tw < i_tc, "abort order broken: %d/%d/%d" % (i_mo, i_tw, i_tc)
+    # drive fully restored: UM / claimed socket / SE / gains / motor off
+    r = drive.regs
+    assert r["MO"] == 0 and r["UM"] == 5
+    assert r["CA[44]"] == 0 and r["CA[70]"] == 0
+    assert all(r["SE[%d]" % n] == 0 for n in range(1, 8))
+    assert r["KP[1]"] == pytest.approx(KP_ORACLE)
+    # RR=0 (A5) present after the abort chain started
+    assert any(c == "RR=0" for c in cmds[i_tc:])
+
+
+def test_progress_fn_exception_does_not_kill_run(tmp_path):
+    def bomb(code, detail):
+        raise RuntimeError("GUI hook crashed at %s" % code)
+
+    drive = SimDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path, progress_fn=bomb))
+    # hook exception must not degrade the verdict: still GREEN, no warnings
+    assert res.status == GREEN, "hook exception degraded the run: %s / %s" % (
+        res.status, res.reason)
+    assert res.warnings == []
+    assert abs(res.kp_v_per_a / KP_ORACLE - 1.0) <= 0.03
+    assert res.evidence.get("progress_errors"), "hook errors must be logged"
+
+
+def test_cancel_fn_exception_is_not_a_cancel(tmp_path):
+    def bad_cancel():
+        raise RuntimeError("flaky GUI poll")
+
+    drive = SimDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path, cancel_fn=bad_cancel))
+    # run completes (YELLOW; the ignored exception is noted exactly once)
+    assert res.status == YELLOW
+    assert res.kp_v_per_a is not None
+    assert abs(res.kp_v_per_a / KP_ORACLE - 1.0) <= 0.03
+    cancel_warns = [w for w in res.warnings if "cancel_fn" in w]
+    assert len(cancel_warns) == 1                       # noted exactly once
+
+
+# ======================================================================================
+# E3/E4 separate operator actions
+# ======================================================================================
+def test_apply_gains_writes_when_motor_off(tmp_path):
+    drive = SimDrive()
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg = apply_gains(drive, res)
+    assert ok, msg
+    assert drive.regs["KP[1]"] == pytest.approx(0.0712)
+    assert drive.regs["KI[1]"] == pytest.approx(812.9)
+    assert not any(c == "SV" for c, _ in drive.log)   # I4: no SV unless persist
+
+
+def test_apply_gains_refuses_motor_on():
+    drive = SimDrive(mo0=1)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.07, ki_hz=800.0)
+    ok, msg = apply_gains(drive, res)
+    assert not ok and "MO=1" in msg
+
+
+def test_apply_gains_refuses_red_result():
+    drive = SimDrive()
+    ok, _ = apply_gains(drive, AutotuneResult(status=RED, reason="x"))
+    assert not ok
+
+
+def test_verify_run_is_honest_stub():
+    res = verify_run(SimDrive())
+    assert res.status == RED and "실기" in res.reason

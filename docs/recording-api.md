@@ -1,0 +1,97 @@
+# Elmo Drive Recording — grounded API (for autotune R/L capture)
+
+Purpose: the current-loop autotune must capture voltage & current at 400–800 Hz during
+sinusoidal excitation. Serial polling is too slow → use the drive's high-speed recorder.
+
+Two paths were grounded. **Use the .NET path (primary).** The 2-letter path is documented
+here only for context / fallback.
+
+Provenance: `.NET reflection` = live offline reflection of `ElmoMotionControlComponents.Drive.EASComponents.dll`
+(no hardware). `CR` = Gold Line Command Reference MAN-G-CR 1.406 (`docs/command-reference.txt`).
+`RN` = Drive .NET Library 1.0.0.8 Release Notes PDF (fitz). `FW` = firmware-release-notes.txt.
+
+---
+
+## PRIMARY — .NET Drive Recording API (returns physical doubles; no hex/BH parsing)
+
+**Namespaces (reflection-confirmed — get these wrong and it AttributeErrors live):**
+`…EASComponents.Recording.{RecordingSetup, TriggerSetup, TriggerSetupType, TriggerSlope,
+TriggerMode, RecordingStatus, RecordingData, DriveRecording}` ·
+`…EASComponents.Personality.{RecordingSignalSetup, DrivePersonalityModel}` ·
+`…EASComponents.{IDriveRecording, IDriveCommunication}` (root).
+
+Flow (from RN Chapter 4 + reflection):
+
+1. **Personality (signal list source).** `IDriveCommunication.CreatePersonalityModel(string personalityPath, out IDriveErrorObject err)`.
+   Populates `comm.PersonalityModel` (`DrivePersonalityModel`). RN: "the library can upload the
+   personality data from the drive and save it into an XML file … obtaining the list of recording
+   signals." **LIVE-UNKNOWN**: whether CreatePersonalityModel uploads from the connected drive when
+   given a fresh path, or needs a prior "Upload personality" (IUploadDownloadModel) step. Confirm live.
+
+2. **Signal list.** `comm.PersonalityModel.SignalsMetaData` : `Dictionary<Int32, RecordingSignalSetup>`.
+   - `RecordingSignalSetup` props (reflection): `Int32 SignalIndex`, `Int32 SignalType`,
+     `Int32 SignalSize`, `String Name`, `String CategoryName`, `String Classification`. (ctor()).
+   - Key = signal index. **This is what `elmo_link.recorder_signals()` returns** (list of Names, or the
+     RecordingSignalSetup objects). Autotune `_resolve_signals` regex-matches Name for
+     voltage(not bus)/`IQ|active current`/`current command`.
+   - Expected names (FW/CR): "Active Current" (A), "Bus Voltage" (excluded), "Total Current Command".
+     **LIVE-UNKNOWN (U3 core)**: whether a non-bus **voltage-command** signal (Vq/Vd) exists in the list —
+     there is NO 2-letter command for it, so the recorder personality is the only source. Dump live.
+
+3. **Record.** `IDriveRecording rec = comm.GetRecordingObject()` then:
+   - `RecordingSetup setup = new RecordingSetup()` (reflection props):
+     `TriggerSetup TriggerSetup`, `Int32 TimeResolution`, `Double SamplingTime`,
+     `Double RecordingDuration`, `Int32 RecordingLength`, `List<RecordingSignalSetup> SignalData`.
+   - `TriggerSetup` props: `RecordingSignalSetup TriggerSignal`, `TriggerSetupType SetupType`,
+     `TriggerSlope SlopeType`, `Double Low`, `Double High`, `Int32 Delay`, `TriggerMode TriggerMode`.
+   - Enums: `TriggerSetupType = {Immediate, Begin, Digital, Analog, Combination}`,
+     `TriggerSlope = {Positive, Negative, Window}`, `TriggerMode = {Manual, Normal}`.
+     → **immediate capture: SetupType = Immediate**.
+   - `SignalData` = the RecordingSignalSetup instances (from SignalsMetaData) for the signals to record.
+   - `bool ConfigureRecording(RecordingSetup)`, `bool StartRecording()`.
+4. **Monitor.** poll `RecordingStatus GetRecordingStatus()` : enum `{ROff, RWait, REnd, RProgress}`.
+   ROff=error/cancel, RWait=awaiting trigger, REnd=done, RProgress=running. `void StopRecorder()` aborts.
+5. **Upload.** `RecordingData UploadRecordingData()` → `RecordingData.Data` : `Dictionary<Int32, Double[]>`
+   (value = physical double array). **No factor/offset/hex — already physical.**
+   - **LIVE-CONFIRMED (2026-07-13, autotune run #4): Data keys are POSITIONAL 0..N-1 in
+     SignalData request order — NOT SignalIndex.** (6-signal request returned keys [0..5];
+     'A Voltage' has SignalIndex 19 → SignalIndex lookup fails. `elmo_link._map_upload_data`
+     maps positionally and raises IOError when the key set ≠ {0..N-1}.)
+   - **LIVE-UNKNOWN**: dt derivation (SamplingTime vs TimeResolution×TS).
+
+Interface: `IDriveCommunication.GetRecordingObject() -> IDriveRecording`,
+`CreatePersonalityModel(String, IDriveErrorObject&) -> Boolean`, `PersonalityModel {get;set;}`.
+
+---
+
+## FALLBACK — 2-letter recording (RC/RG/RL/RP/RR + BH). Do NOT parse BH unless forced.
+
+From CR (fable-reader). Recording itself works via ASCII; **but the signal name↔index list is NOT in
+CR** (personality only; the `LS` command is undocumented). And our provisional `_parse_bh` was WRONG:
+
+- `RC=<bitfield>` bit N-1 = signal mapped by `RV[N]` (max 16). RC/RG/RL/RP writes invalidate prior data.
+- `RG=<1..65535>` sampling divisor (RG=1 → sample time = WS[29], default 2×TS).
+- `RL=<1..16384>` length; per-signal = 16384/nsignals (4 signals → 4096, matches RECORDER_MAX_RL).
+- `RP[0]` time quantum: **0=2×TS, 1=TS**. `RP[3]` trigger: **0=Immediate**. RP[8]/[9]=upload window (0,0=all).
+- `RR=2` immediate start; read `RR`: −1=no data, **0=done/ready**, 1..3=awaiting trigger. `RR=0` kills.
+- `RV[N]=X` maps static var X → RC bit N-1 (non-volatile; EAS may have reprogrammed → read RV[1..16] live).
+- **BH=<bitfield>** (NOT an index — `BH=(1<<bit)`; `BH=idx` is a bug). Upload = **hex-binary** text
+  (2 hex chars/byte): 20-byte header [type(0-1) 0=int/1=float, size(2-3) 2/4/8, len(4-7),
+  sampling(8-11), **factor float(12-19)**], then data; physical = raw × factor (**no offset**). Endian/float
+  format/framing = live-unknown. `BS[N]` = documented per-sample fallback (slow).
+
+Confirmed bugs in current `autotune_current.py` (superseded by using the .NET path):
+- B1: `BH=%d % idx` → must be bitfield. B2: `_parse_bh` text format wrong. R2: add `RR=0` kill before setup.
+
+---
+
+## Implementation decision
+
+Wrap the .NET recorder in `elmo_link`:
+- `recorder_signals()` → names from `PersonalityModel.SignalsMetaData` (build model once on connect).
+- `record(signal_indices, length, time_resolution) -> {index_or_name: np.ndarray, "dt": float}` via
+  GetRecordingObject→Configure→Start→poll REnd→UploadRecordingData.
+
+Then autotune `_record`/`_list_recorder_signals` call these link methods (drop the raw RC/RG/BH path
+and its B1/B2 bugs). Sim tests mock `record()` with the same dict shape. Live bring-up confirms the
+LIVE-UNKNOWNs (CreatePersonalityModel behavior, voltage signal existence, dt).
