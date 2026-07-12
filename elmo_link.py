@@ -178,6 +178,27 @@ class ElmoLink:
                 out[key] = None
         return out
 
+    def read_platform_clock(self) -> dict:
+        """Read-only platform grounding for the duty-count full scale (autotune
+        G0).  CR grounding: XP[2] sets TS*f_pwm = XP[2]/2 (default 2, p.325
+        table); WS[54]/WS[56]/WS[57] = max/min/range PWM command in 150 MHz
+        clock counts (p.291); WS[53] converts internal units to bus voltage
+        (float).  FS_counts = 150e6*TS_s/XP[2] (fable-physics run #8 — live
+        mid=3750 at TS=100us, XP[2]=2).  Missing values come back as None."""
+        g = lambda c: _to_num(self.command(c))
+        out = {}
+        for key, cmd in (("ts_us", "TS"), ("xp2", "XP[2]"), ("ws53", "WS[53]"),
+                         ("ws54", "WS[54]"), ("ws56", "WS[56]"), ("ws57", "WS[57]")):
+            try:
+                out[key] = g(cmd)
+            except Exception:
+                out[key] = None
+        try:
+            out["fs_counts"] = 150e6 * (out["ts_us"] * 1e-6) / out["xp2"]
+        except Exception:
+            out["fs_counts"] = None
+        return out
+
     def write_motor_params(self, writes: dict, persist: bool = True):
         """Write Motor Settings params, then persist with SV.
 

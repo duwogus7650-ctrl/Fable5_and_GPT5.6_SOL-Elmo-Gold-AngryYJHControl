@@ -32,13 +32,24 @@ Method (SPEC §0/§3, voltage path re-grounded by fable-physics after live run #
     vs live 0.07177, -0.018%).  Gains: wc = 0.2010/TS_s, KP = wc*L_pp,
     KI = 2 * 1.2705 * wc/(2*pi)  — the 2x is the pp-basis factor CONFIRMED on
     live run #6 (reproduces EAS KI=812.939 at TS=100 us to ~0%).
-  - GREEN gates G1..G4 (replace the old scale-pending blanket YELLOW):
-    G1 in-situ magnitude (lowest f) vs Vbus scale within +-10%;
+  - GREEN gates (run #8 final — the in-situ SCALE gate G1 is ABOLISHED: the
+    in-situ ratio measures the OPEN-LOOP GAIN |C(jw)G(jw)|, not the scale;
+    live 4-point rms 0.3%, rho=1 crossing = 372 Hz = gain crossover):
+    G0 platform grounding (pre-power, once): FS = 150e6*TS_s/XP[2]
+       (document-confirmed; XP[2]!=2 recomputes; WS[57]~FS is a LIMIT note);
+    G1' per run: idle leg ('D Voltage') mean == FS/2 +-1 count AND
+       Vbus in [20,60] V  — these two now OWN the scale validity;
     G2 R_ac(f) in [0.8, 2.5]*R_dc at every f;
     G3 post-rotation L spread across f <= 10%;
     G4 plausibility ranges + stability gate (PM>=45 deg AND wc*TS<=0.25 AND
-    0<KP<=100 AND 0<KI<=5000 on G(s)=KP(s+2*pi*KI)/s * 1/(L_pp s+R_pp)
-    * exp(-1.5*TS*s)).  All pass -> GREEN; else YELLOW with named failures.
+       0<KP<=100 AND 0<KI<=5000 on G(s)=KP(s+2*pi*KI)/s * 1/(L_pp s+R_pp)
+       * exp(-1.5*TS*s));
+    G5 loop-gain consistency: rho_meas(f)=|C·(Icmd-I)|/(|V_counts|*s) must
+       match |C|/|R+jwL| within +-15% (validates channel combination, skew
+       rotation, gain read-back and injection node — NOT s itself, which
+       cancels between both sides).  All pass -> GREEN, else YELLOW.
+    R nameplate band (nameplate+[5,40] mOhm) is an ADVISORY only — never
+    blocks GREEN (parasitic allocation is a live question).
 
 Recorder access (reworked 2026-07-13, docs/recording-api.md): the legacy
 2-letter RC/RG/RR + BH path is RETIRED (BH takes a bitfield and returns a
@@ -77,6 +88,7 @@ import numpy as np
 __all__ = ["AutotuneParams", "AutotuneResult", "run_current_autotune",
            "apply_gains", "verify_run", "loop_margins", "design_gains",
            "demod", "derive_freqs", "neutral_subtract", "pi_discrete",
+           "pi_continuous", "loopgain_crossover_hz",
            "GREEN", "YELLOW", "RED"]
 
 GREEN, YELLOW, RED = "GREEN", "YELLOW", "RED"
@@ -86,9 +98,14 @@ WC_TS_CAL = 0.2010        # wc*TS single-point calibration (EAS: KP/L_np*TS)
 ALPHA_EAS = 1.2705        # base ratio; design KI = KI_PP_FACTOR*ALPHA_EAS*wc/(2*pi)
 KI_PP_FACTOR = 2.0        # pp-basis 2x — live run #6 확정 (2*1.2705*wc/2pi = 812.9 = EAS)
 SKEW_TAU_TS = 1.5         # recorded duty leads motor voltage by 1.5*TS (compute + ZOH/2)
-G1_TOL = 0.10             # G1: in-situ magnitude (lowest f) vs Vbus scale
+PWM_CLOCK_HZ = 150e6      # G0: PWM command counter clock (CR p.291: WS[54..57] units)
+G0_FS_RANGE = (500.0, 1e6)          # plausible duty full-scale counts
+G1P_MID_TOL_COUNTS = 1.0  # G1': idle leg mean == FS/2 within +-1 count
+G1P_VBUS_RANGE = (20.0, 60.0)       # G1': recorded bus voltage sanity [V]
 G2_BAND = (0.8, 2.5)      # G2: R_ac(f)/R_dc band
 G3_SPREAD = 0.10          # G3: post-rotation L spread across f
+G5_TOL = 0.15             # G5: measured vs predicted LOOP GAIN per f (run #8: 2.6~4.1%)
+R_ADVISORY_BAND = (0.005, 0.040)    # nameplate + [5,40] mOhm parasitic advisory (pp)
 DELAY_MULT = 1.5          # loop dead time = 1.5*TS (command applied next cycle + ZOH/2)
 PM_MIN_DEG = 45.0
 WCTS_MAX = 0.25
@@ -108,8 +125,11 @@ ALIGN_STEPS = 10          # B4: 10 steps x 100 ms
 ALIGN_STEP_S = 0.10
 GUARD_PERIOD_S = 0.5      # I3: MF/LC/PX poll period while MO=1
 RECORDER_MAX_RL = 4096    # per-signal sample cap (CR: 16384/4 signals); longer -> TimeResolution up
-DUTY_MID = 3750.0         # leg duty count at 50% duty = 0 V (fable-physics, live run #5)
-DUTY_FS = 7500.0          # duty full scale hypothesis: counts <-> Vbus (cross-check path)
+# Reference values for THIS drive at TS=100us, XP[2]=2 (tests/mock use these).
+# The PIPELINE never hardcodes them: G0 derives FS = PWM_CLOCK_HZ*TS_s/XP[2]
+# (document-CONFIRMED, CR p.290/325: TS*f_pwm = XP[2]/2, default 2; live mid=3750).
+DUTY_MID = 3750.0
+DUTY_FS = 7500.0
 
 _MOTION_TRUE = dict(allow_motion=True)
 
@@ -268,6 +288,32 @@ def neutral_subtract(leg_a, leg_b, leg_c) -> np.ndarray:
     return a - (a + b + c) / 3.0
 
 
+def pi_continuous(f_hz: float, kp: float, ki_hz: float) -> complex:
+    """Continuous drive PI  C(jw) = KP*(jw + 2*pi*KI)/(jw)  — the G5 loop-gain
+    prediction basis (run #9 fix: mixing the DISCRETE C into rho_pred made it
+    look like a wrong inductance, L~34.5uH instead of the reported L-hat)."""
+    w = 2 * math.pi * f_hz
+    return kp * (1j * w + 2 * math.pi * ki_hz) / (1j * w)
+
+
+def loopgain_crossover_hz(kp: float, ki_hz: float, r_pp: float, l_pp: float,
+                          f_lo: float = 10.0, f_hi: float = 20000.0) -> Optional[float]:
+    """Numeric solve of |C(jw)|/|R+jwL| = 1 (continuous C, log-grid + log-log
+    interpolation) — replaces the retired KP/L asymptotic crossover formula."""
+    fs = np.logspace(math.log10(f_lo), math.log10(f_hi), 4000)
+    rho = np.array([abs(pi_continuous(f, kp, ki_hz))
+                    / abs(complex(r_pp, 2 * math.pi * f * l_pp)) for f in fs])
+    lr = np.log(rho)
+    for i in range(len(fs) - 1):
+        if lr[i] == 0:
+            return float(fs[i])
+        if lr[i] * lr[i + 1] < 0:
+            t = lr[i] / (lr[i] - lr[i + 1])
+            return float(math.exp(math.log(fs[i])
+                                  + t * (math.log(fs[i + 1]) - math.log(fs[i]))))
+    return None
+
+
 def pi_discrete(f_hz: float, ts_s: float, kp: float, ki_hz: float) -> complex:
     """Drive PI frequency response C_d(e^{jwTS}) for the Elmo law
     u = KP*(e + 2*pi*KI*TS*sum(e))  (backward-sum integrator, SPEC §9).
@@ -349,6 +395,9 @@ class _Ctx:
         self.freqs: tuple = ()          # excitation frequencies resolved at P2
         self.dt_warned = False          # first-only warning for provisional dt fallback
         self.vbus_samples: list = []    # per-record Vbus means (primary scale source)
+        self.duty_fs: float = DUTY_FS   # G0-derived duty full scale (never hardcoded)
+        self.g0: dict = {}              # G0 platform-grounding gate record
+        self.g1p: dict = {}             # G1' idle-leg/Vbus gate record
 
 
 def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
@@ -498,9 +547,12 @@ def _resolve_signals(ctx: _Ctx):
            or [n for n in names
                if re.search(r"bus", n, re.I) and re.search(r"voltage", n, re.I)])
     if not bus:                                     # PRIMARY scale needs Vbus (run #6)
-        raise PreflightError("DC Bus Voltage 신호 없음 — 주 스케일(Vbus/7500) 불가,"
+        raise PreflightError("DC Bus Voltage 신호 없음 — 주 스케일(Vbus/FS) 불가,"
                              " 신호목록 덤프 참조")
     bus_name = bus[0]
+    # idle leg (G1': its mean must sit at FS/2) — absence fails G1', not RED
+    idle = [n for n in names if re.fullmatch(r"D\s+Voltage", n, re.I)]
+    idle_name = idle[0] if idle else None
     cur = ([n for n in names if n == "Active Current [A]"]
            or [n for n in names if re.search(r"active\s*current|\bIQ\b", n, re.I)
                and not re.search(r"reactive", n, re.I)])
@@ -511,11 +563,12 @@ def _resolve_signals(ctx: _Ctx):
     if not cur or not ref:
         raise PreflightError("전류(Active)/전류지령 레코더 신호 없음 — 신호목록 덤프 참조")
     ctx.evidence["signal_map"] = {
-        "legs": list(legs), "bus": bus_name,
+        "legs": list(legs), "bus": bus_name, "idle": idle_name,
         "current_name": cur[0], "ref_name": ref[0],
-        "note": "레그신호=PWM 듀티카운트(mid 3750); 'D Voltage'=유휴 제외;"
-                " v_phN=중성점차감으로 재구성(스케일은 in-situ+Vbus 2경로)"}
-    return {"legs": legs, "bus": bus_name, "i": cur[0], "ref": ref[0]}
+        "note": "레그신호=PWM 듀티카운트(mid=FS/2, FS=G0 산출); 'D Voltage'=유휴 레그"
+                " (G1' 중점검증용 기록); v_phN=중성점차감 재구성, 스케일=Vbus/FS"}
+    return {"legs": legs, "bus": bus_name, "idle": idle_name,
+            "i": cur[0], "ref": ref[0]}
 
 
 def _record(ctx: _Ctx, duration_s: float) -> dict:
@@ -531,14 +584,15 @@ def _record(ctx: _Ctx, duration_s: float) -> dict:
                             (duration_s, cap))
         duration_s = cap
     ts = ctx.ts_s
-    tr = max(1, int(math.ceil(duration_s / (RECORDER_MAX_RL * ts))))
+    sig = ctx.sig
+    names = list(sig["legs"]) + ([sig["bus"]] if sig["bus"] else []) \
+        + ([sig["idle"]] if sig.get("idle") else []) + [sig["i"], sig["ref"]]
+    per_sig_cap = max(256, 16384 // max(1, len(names)))   # CR: 16384 total samples
+    tr = max(1, int(math.ceil(duration_s / (per_sig_cap * ts))))
     n = int(math.ceil(duration_s / (ts * tr)))
     rec_fn = getattr(ctx.link, "record", None)
     if not callable(rec_fn):
         raise AbortError("링크에 record() 없음 — .NET Drive Recording 래퍼 필요")
-    sig = ctx.sig
-    names = list(sig["legs"]) + ([sig["bus"]] if sig["bus"] else []) \
-        + [sig["i"], sig["ref"]]
     try:
         out = rec_fn(names, n, time_resolution=tr)
     except Exception as e:
@@ -548,6 +602,7 @@ def _record(ctx: _Ctx, duration_s: float) -> dict:
         ref_arr = np.asarray(out[sig["ref"]], dtype=float)
         legs = {nm: np.asarray(out[nm], dtype=float) for nm in sig["legs"]}
         vbus = np.asarray(out[sig["bus"]], dtype=float) if sig["bus"] else None
+        idle = np.asarray(out[sig["idle"]], dtype=float) if sig.get("idle") else None
     except KeyError as e:
         raise AbortError("레코딩 채널 누락: %s" % e)
     v_counts = neutral_subtract(legs[sig["legs"][0]], legs[sig["legs"][1]],
@@ -568,18 +623,32 @@ def _record(ctx: _Ctx, duration_s: float) -> dict:
     if vbus is not None:
         ctx.vbus_samples.append(float(np.mean(vbus)))   # primary-scale source
     return {"i": i_arr, "ref": ref_arr, "v_counts": v_counts, "legs": legs,
-            "vbus": vbus, "dt": float(dt)}
+            "vbus": vbus, "idle": idle, "dt": float(dt)}
 
 
 def _dc_selfcheck(ctx: _Ctx, rec: dict, label: str):
-    """T2/§3.4 self-check on DC segments: recorded IQ mean vs polled IQ <=5%."""
-    mean_i = float(np.mean(rec["i"]))
+    """T2/§3.4 self-check on DC segments — RIPPLE-AWARE (run #10 fix).
+
+    Compares a SINGLE instantaneous IQ poll against the recorder WINDOW MEAN.
+    A hard 5% limit is wrong for that pair: with ~4% current ripple the poll
+    can legitimately land on a ripple peak (live run #10: poll 2.236 A vs mean
+    2.121 A = 5.1%, yet inside the recorded band [mean±2σ]) while the
+    MEASUREMENT only ever uses the window mean.  PASS when the polled value
+    lies inside the recorded [min, max] band, OR within max(5%*|mean|, 3*std)
+    of the mean.  This is ripple-tolerant judgement, not threshold inflation:
+    a true scale error (e.g. poll = 1.2x mean) stays outside both criteria."""
+    arr = np.asarray(rec["i"], dtype=float)
+    mean_i = float(np.mean(arr))
     iq = _cmd(ctx, "IQ")
-    if isinstance(iq, (int, float)):
-        denom = max(abs(mean_i), 0.1)
-        if abs(mean_i - iq) / denom > 0.05:
-            ctx.warnings.append("%s: 기록IQ평균 %.3fA vs 폴링IQ %.3fA 편차>5%%"
-                                % (label, mean_i, iq))
+    if not isinstance(iq, (int, float)):
+        return
+    lo, hi = float(np.min(arr)), float(np.max(arr))
+    std_i = float(np.std(arr))
+    tol = max(0.05 * max(abs(mean_i), 0.1), 3.0 * std_i)
+    if not (lo <= iq <= hi) and abs(mean_i - iq) > tol:
+        ctx.warnings.append(
+            "%s: 폴링IQ %.3fA가 기록범위[%.3f, %.3f] 밖이고 평균 %.3fA 대비 허용"
+            "(max(5%%, 3σ)=%.3fA)도 초과" % (label, iq, lo, hi, mean_i, tol))
 
 
 def _max_segment_s(ctx: _Ctx) -> float:
@@ -656,7 +725,7 @@ _P1_READS = (["TS", "MC", "PL[1]", "CL[1]", "CL[2]", "CL[3]", "CL[4]", "UM",
              ["SE[%d]" % i for i in range(1, 8)] +
              ["CA[17]", "CA[18]", "CA[19]", "CA[41]", "CA[42]", "CA[43]", "CA[44]",
               "CA[45]", "CA[46]", "CA[47]", "CA[70]", "SC[8]", "SR", "MF", "BV",
-              "XP[2]"])
+              "XP[2]", "WS[53]", "WS[54]", "WS[56]", "WS[57]"])
 
 
 def run_current_autotune(link, params: Optional[AutotuneParams] = None) -> AutotuneResult:
@@ -736,6 +805,29 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     i2 = p.i_frac_high * ctx.cl1
     if i2 > 0.85 * ctx.cl1:                         # I2 invariant
         raise PreflightError("전류지령 상한 I2 위반")
+
+    # ---- G0: platform grounding (pre-power, run #8) ------------------------------------
+    # FS = PWM_CLOCK*TS/XP[2] (CR p.290/325: TS*f_pwm = XP[2]/2, 150 MHz counter).
+    # NEVER hardcode 7500 — XP[2]!=2 recomputes FS.  WS[57] (=WS[54]-WS[56], the
+    # PWM command RANGE) should sit slightly BELOW FS: it is a command LIMIT in
+    # the same clock counts, not the scale itself.
+    xp2 = ctx.readings.get("XP[2]")
+    xp2_valid = isinstance(xp2, (int, float)) and xp2 > 0
+    xp2_eff = float(xp2) if xp2_valid else 2.0
+    if not xp2_valid:
+        ctx.warnings.append("XP[2] 판독 불가(%r) — 기본값 2로 FS 잠정 산출" % (xp2,))
+    fs = PWM_CLOCK_HZ * ctx.ts_s / xp2_eff
+    ws57 = ctx.readings.get("WS[57]")
+    ws57_ok = (not isinstance(ws57, (int, float))
+               or 0.8 * fs <= ws57 <= 1.001 * fs)
+    g0_pass = xp2_valid and (G0_FS_RANGE[0] <= fs <= G0_FS_RANGE[1]) and ws57_ok
+    ctx.duty_fs = fs
+    ctx.g0 = {"xp2": xp2, "ws53": ctx.readings.get("WS[53]"),
+              "ws54": ctx.readings.get("WS[54]"),
+              "ws56": ctx.readings.get("WS[56]"), "ws57": ws57,
+              "fs_counts": fs, "clock_hz": PWM_CLOCK_HZ,
+              "ws57_note": "WS[57]=PWM 지령범위(리밋) — FS보다 약간 작을 수 있음, 스케일 아님",
+              "pass": bool(g0_pass)}
     _emit(ctx, "VALIDATE", "검증 통과: TS=%dµs, CL[1]=%.2fA → I1=%.2f/I2=%.2fA,"
           " 여진 f=%s Hz (f_max=%.0f)"
           % (int(ts), ctx.cl1, i1, i2,
@@ -876,7 +968,19 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     vbus_means = [float(np.mean(rc["vbus"])) for rc in (rec1, rec2)
                   if rc["vbus"] is not None]
     vbus_dc = float(np.mean(vbus_means)) if vbus_means else None
-    s_prov = (vbus_dc / DUTY_FS) if vbus_dc else None
+    s_prov = (vbus_dc / ctx.duty_fs) if vbus_dc else None
+
+    # ---- G1': idle-leg midpoint + bus-voltage sanity (per run, run #8) ----------------
+    idle_mean = float(np.mean(rec1["idle"])) if rec1.get("idle") is not None else None
+    mid_expected = ctx.duty_fs / 2.0
+    idle_ok = (idle_mean is not None
+               and abs(idle_mean - mid_expected) <= G1P_MID_TOL_COUNTS)
+    vbus_ok = (vbus_dc is not None
+               and G1P_VBUS_RANGE[0] <= vbus_dc <= G1P_VBUS_RANGE[1])
+    ctx.g1p = {"idle_leg_mean": idle_mean, "expected_mid": mid_expected,
+               "mid_tol_counts": G1P_MID_TOL_COUNTS,
+               "vbus_v": vbus_dc, "vbus_range": list(G1P_VBUS_RANGE),
+               "pass": bool(idle_ok and vbus_ok)}
     r_pp_prov = (2.0 * s_prov * r_counts) if s_prov else None
     if r_pp_prov is not None and not (1e-3 <= r_pp_prov <= 10.0):
         raise AbortError("R_pp(잠정 Vbus스케일)=%.4g Ω 타당범위[1mΩ,10Ω] 벗어남"
@@ -965,16 +1069,16 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
 
     # ---- scale (PRIMARY: Vbus_rec/7500 — run #6 확정) + skew-corrected R/L --------------
     if not ctx.vbus_samples:
-        raise AbortError("Vbus 미기록 — 주 스케일(Vbus/7500) 산출 불가")
+        raise AbortError("Vbus 미기록 — 주 스케일(Vbus/FS) 산출 불가")
     vbus_v = float(np.mean(ctx.vbus_samples))
-    s_used = vbus_v / DUTY_FS
+    s_used = vbus_v / ctx.duty_fs                   # FS from G0 (never hardcoded)
     if not (s_used > 0 and math.isfinite(s_used)):
         raise AbortError("Vbus 스케일 비정상 (Vbus=%r V)" % vbus_v)
     tau_s = SKEW_TAU_TS * ctx.ts_s
     ctx.evidence["scale"] = {"s_v_per_count": s_used, "vbus_v": vbus_v,
-                             "tau_skew_s": tau_s,
-                             "note": "주 스케일=Vbus_rec/7500(실기 6회차 확정);"
-                                     " in-situ 크기(max|I_cmd−I| 주파수)=G1 게이트 전용"}
+                             "fs_counts": ctx.duty_fs, "tau_skew_s": tau_s,
+                             "note": "주 스케일=Vbus_rec/FS — FS=150MHz·TS/XP[2]"
+                                     " (CR 문서확정, run #8); in-situ=G5 루프게인 전용"}
     r_pp = 2.0 * s_used * r_counts                  # TERMINAL resistance (기생 포함)
     if not (1e-3 <= r_pp <= 10.0):
         raise AbortError("R_pp=%.4g Ω 타당범위[1mΩ,10Ω] 벗어남" % r_pp)
@@ -988,6 +1092,15 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
         2.0 * s_used * v1c_bar / i1_bar if i1_bar else float("nan")
     ctx.evidence["dc"]["r_naive_pp_i2_ohm"] = \
         2.0 * s_used * v2c_bar / i2_bar if i2_bar else float("nan")
+    # nameplate-band ADVISORY (run #8): terminal R expected in nameplate+[5,40]mΩ
+    # — informational ONLY, never blocks GREEN (not appended to warnings)
+    if p.nameplate_r_pp:
+        excess = r_pp - p.nameplate_r_pp
+        ctx.evidence["dc"]["r_band_advisory"] = {
+            "nameplate_pp_ohm": p.nameplate_r_pp, "excess_ohm": excess,
+            "band_ohm": list(R_ADVISORY_BAND),
+            "in_band": R_ADVISORY_BAND[0] <= excess <= R_ADVISORY_BAND[1],
+            "note": "YELLOW-advisory 전용 — GREEN 비차단(기생 배분은 실기 확인 대상)"}
     l_meas = []
     for e in sine_ev:
         w = 2 * math.pi * e["f_hz"]
@@ -1029,22 +1142,57 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
                                   "0.2010/1.2705/2×는 이 드라이브 EAS 단일점 캘리브레이션 —"
                                   " 타 모터/TS 일반화 미검증(SPEC §4)"}
 
-    # ---- GREEN gates G1..G4 (run #6: replace the scale-pending blanket YELLOW) --------
-    # G1 frequency selection (run #7 fix): the in-situ model divides by the
-    # error phasor (I_cmd - I), which is SMALL at low f (tight tracking) ->
-    # ill-conditioned there (live 200 Hz gave ratio 1.85 while the measurement
-    # itself was perfect).  Cross-check at the excitation with the LARGEST
-    # |I_cmd - I| — the best-conditioned estimator point.  Gate strength
-    # unchanged (+-10%); only WHERE the estimator is evaluated changed.
-    pick = max(sine_ev, key=lambda e: e["err_phasor_a"])
-    g1_ratio = pick["s_insitu_mag_v_per_count"] / s_used
+    # ---- GREEN gates G0/G1'/G2/G3/G4/G5 (run #8: G1 스케일게이트 폐지) ----------------
+    # run #8 규명: in-situ 비는 스케일이 아니라 개루프 루프게인 |C(jω)·G(jω)|을
+    # 측정한다 (4점 rms 0.3%, ρ=1 교차 = 372 Hz = 게인 크로스오버).  스케일 검증은
+    # 원리적으로 불가 -> G1 폐지.  s의 정당성은 G0(FS=150MHz·TS/XP[2] 문서확정)
+    # + G1'(유휴레그 중점·Vbus 범위)이 담당하고, in-situ는 G5(루프게인 일치)로
+    # 용도변경 — 채널조합·회전보정·게인읽기·주입노드를 검증한다.
+    # run #9 code-bug fixes (fable-physics; NOT a physics change):
+    #  (1) rho_meas had a spurious outer x2 (the pp conversion already sits in
+    #      the s_insitu denominator 2*I) -> rho_meas = s_insitu/s;
+    #  (2) rho_pred mixed the DISCRETE C into the prediction, which back-solves
+    #      to a wrong-looking L (~34.5uH) — the CONTINUOUS C(jw)=KP(jw+2piKI)/jw
+    #      with the SAME reported R-hat/L-hat is the contracted basis.
+    #  Residual ~-3.5% uniform offset (continuous-C / min-max-4/3 approximation
+    #  candidates) is RECORDED in evidence only — never compensated.
+    g5_rows = []
+    for e in sine_ev:
+        w = 2 * math.pi * e["f_hz"]
+        c_mag = abs(pi_continuous(e["f_hz"], kp_now, ki_now))
+        rho_meas = e["s_insitu_mag_v_per_count"] / s_used
+        rho_pred = c_mag / abs(complex(r_pp, w * l_pp))   # 보고되는 R̂·L̂ 그대로
+        g5_rows.append({"f_hz": e["f_hz"], "rho_meas": rho_meas,
+                        "rho_pred": rho_pred,
+                        "dev": rho_meas / rho_pred - 1.0})
+    g5_pass = all(abs(r["dev"]) <= G5_TOL for r in g5_rows)
+    g5_mean_dev = float(np.mean([r["dev"] for r in g5_rows]))
+    fx = None                                       # measured gain crossover (rho=1)
+    rows = sorted(g5_rows, key=lambda r: r["f_hz"])
+    for a, b in zip(rows, rows[1:]):
+        if a["rho_meas"] > 0 and b["rho_meas"] > 0 \
+                and (a["rho_meas"] - 1.0) * (b["rho_meas"] - 1.0) <= 0:
+            la, lb = math.log(a["rho_meas"]), math.log(b["rho_meas"])
+            t = la / (la - lb) if la != lb else 0.0
+            fx = math.exp(math.log(a["f_hz"])
+                          + t * (math.log(b["f_hz"]) - math.log(a["f_hz"])))
+            break
+    fx_pred = loopgain_crossover_hz(kp_now, ki_now, r_pp, l_pp)  # 수치해 (점근식 폐기)
     g2_ratios = [e["r_ac_pp_ohm"] / r_pp for e in sine_ev]
     gates = {
-        "G1_insitu_vs_vbus": {"f_hz": pick["f_hz"], "ratio": g1_ratio,
-                              "err_phasor_a": pick["err_phasor_a"],
-                              "criterion": "max|I_cmd-I| (well-conditioned)",
-                              "tol": G1_TOL,
-                              "pass": abs(g1_ratio - 1.0) <= G1_TOL},
+        "G0_platform": dict(ctx.g0),
+        "G1p_idle_vbus": dict(ctx.g1p),
+        "G5_loopgain": {"rows": g5_rows, "tol": G5_TOL,
+                        "crossover_hz": fx, "crossover_pred_hz": fx_pred,
+                        "mean_dev": g5_mean_dev,
+                        "residual_note": "균일 오프셋(실기 ~-3.5%)은 연속C(jω)"
+                                         " vs 이산·min-max 4/3 근사 잔차 후보 —"
+                                         " 기록만, 보상 금지",
+                        "pass": bool(g5_pass),
+                        "note": "in-situ 비=개루프 루프게인 |C·G| 실측(run #8) —"
+                                " 채널조합·회전보정·게인읽기·주입노드는 검증하나"
+                                " s 자체는 검증 안 함(s는 양경로 상쇄);"
+                                " s 담당은 G0+G1'"},
         "G2_rac_band": {"ratios": g2_ratios, "band": list(G2_BAND),
                         "pass": all(G2_BAND[0] <= v <= G2_BAND[1]
                                     for v in g2_ratios)},

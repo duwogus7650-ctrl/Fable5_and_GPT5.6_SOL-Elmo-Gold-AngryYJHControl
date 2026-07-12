@@ -55,7 +55,7 @@ class SimDrive:
 
     def __init__(self, kp=KP_ORACLE, ki=812.939, r_pp=R_TERM_PP, l_pp=L_PP_ORACLE,
                  ts_us=TS_US, vdt=0.24, noise_a=0.02, vbus=VBUS_TRUTH,
-                 r_dt_ac=0.0025, g1_illcond_a200=1.2, se_injects=True,
+                 r_dt_ac=0.0025, xp2=2, ripple_frac=0.055, se_injects=True,
                  with_voltage_signal=True, px_jump_at_s=None, mo0=0, mf=0, seed=1):
         # PHASE-TO-PHASE plant with TERMINAL resistance (run #6).  r_dt_ac =
         # small sample-aligned dead-time-like contamination on the RECORDED
@@ -64,13 +64,12 @@ class SimDrive:
         # (L spread 0.6%), which a big sample-aligned injection would violate.
         self.r, self.l, self.vdt, self.noise_a = r_pp, l_pp, vdt, noise_a
         self.vbus, self.r_dt_ac = float(vbus), float(r_dt_ac)
-        # run-#7 realism: the RECORDED Current Command channel carries a small
-        # spurious in-band component with ~1/f^2 amplitude (record-only, NOT
-        # in the loop) — models why the in-situ magnitude is ill-conditioned
-        # at LOW f (small |I_cmd-I| denominator amplifies channel
-        # imperfections; live: 200 Hz ratio 1.85, mid f healthy).
-        self.g1_illcond_a200 = float(g1_illcond_a200)
         self.ts_s = ts_us * 1e-6
+        # G0 platform truth: duty full scale from the 150 MHz PWM counter
+        # (CR: TS*f_pwm = XP[2]/2).  XP[2]=2, TS=100us -> FS=7500, mid=3750.
+        self.xp2 = int(xp2)
+        self.duty_fs = 150e6 * self.ts_s / self.xp2
+        self.duty_mid = self.duty_fs / 2.0
         self.a = math.exp(-r_pp * self.ts_s / l_pp)      # full-period plant step
         self.b = (1.0 - self.a) / r_pp
         self.rng = np.random.default_rng(seed)
@@ -81,6 +80,14 @@ class SimDrive:
         self.integ = 0.0
         self.u_prev = 0.0
         self.iq_now = 0.0
+        self.iq_meas = 0.0
+        # run-#10 realism: PWM current RIPPLE rides on the RECORDED/POLLED
+        # current (the recorder and the IQ poll see it; the controller's own
+        # sample is ripple-suppressed by center sampling).  Peak 5.5% ->
+        # sigma ~3.9% of the DC level — reproduces the live probe std
+        # (0.083 A @ 2.121 A) and the run-#10 poll-on-peak event.
+        self.ripple_frac = float(ripple_frac)
+        self.ripple_hz = 1170.0      # incommensurate with the 200..800 Hz SE bins
         self.last_ref = 0.0
         self.t0 = 0.0
         self.ws = 0
@@ -90,7 +97,15 @@ class SimDrive:
                      "CA[17]": 2, "CA[18]": 524288, "CA[19]": 16,
                      "CA[41]": 30, "CA[42]": 0, "CA[43]": 0, "CA[44]": 0,
                      "CA[45]": 1, "CA[46]": 1, "CA[47]": 1, "CA[70]": 0,
-                     "SC[8]": 0, "SR": 0, "MF": mf, "BV": 48.1, "XP[2]": 0,
+                     "SC[8]": 0, "SR": 0, "MF": mf, "BV": 48.1,
+                     "XP[2]": self.xp2,
+                     # WS platform regs (CR p.291): 54/56/57 = max/min/range PWM
+                     # command in 150 MHz clock counts (LIMITS, slightly inside
+                     # FS); 53 = internal-units -> bus-voltage float
+                     "WS[53]": self.vbus / self.duty_fs,
+                     "WS[54]": round(self.duty_fs * 0.998),
+                     "WS[56]": 15,
+                     "WS[57]": round(self.duty_fs * 0.998) - 15,
                      "MO": mo0, "TW[80]": 0, "LC": 0,
                      "RC": 0, "RG": 1, "RL": 4096, "RP[0]": 0, "RP[3]": 0}
         for n in range(1, 8):
@@ -102,7 +117,7 @@ class SimDrive:
                         "Active Current [A]", "Reactive Current [A]"]
         if with_voltage_signal:
             self.signals += ["A Voltage", "B Voltage", "C Voltage", "D Voltage"]
-        self.leg_counts = (at.DUTY_MID, at.DUTY_MID, at.DUTY_MID)
+        self.leg_counts = (self.duty_mid, self.duty_mid, self.duty_mid)
         self.record_calls = 0            # .NET-wrapper record() usage counter
         self.log = []
 
@@ -121,16 +136,27 @@ class SimDrive:
         if name == "DC Bus Voltage":
             return self.vbus
         if name in ("Current Command [A]", "Total Current Command [A]"):
-            val = self.last_ref
-            f_se = self.regs.get("SE[3]", 0)
-            if self.regs.get("TW[80]") == 1 and f_se and self.g1_illcond_a200:
-                # record-only channel imperfection (~1/f^2): ill-conditions the
-                # in-situ magnitude at LOW f only (measurement V/I untouched)
-                val += (self.g1_illcond_a200 * (200.0 / f_se) ** 2
-                        * math.cos(2 * math.pi * f_se * (self.t - self.t0)))
-            return val
+            # run-#8/#9 realism: during SE this channel does NOT log the
+            # controller-input command (SE injects via the CA[70] adder
+            # socket).  Empirically the effective error phasor obeys
+            # |Icmd_rec - I| ~ |I| x |C_cont|/|C_disc| — exactly what makes
+            # the in-situ ratio track the OPEN-LOOP GAIN |C·G| (rho=1 near the
+            # gain crossover) instead of the scale; the small uniform residual
+            # is the continuous-C approximation.  Record-only channel — the
+            # loop and the V/I measurement channels are untouched.
+            if self.regs.get("TW[80]") == 1 and self.se_injects:
+                f_se = float(self.regs.get("SE[3]", 0.0) or 0.0)
+                if f_se > 0:
+                    gam = (abs(at.pi_continuous(f_se, self.regs["KP[1]"],
+                                                self.regs["KI[1]"]))
+                           / abs(at.pi_discrete(f_se, self.ts_s,
+                                                self.regs["KP[1]"],
+                                                self.regs["KI[1]"])))
+                    tc = self.regs.get("TC", 0.0)
+                    return tc + (1.0 - gam) * (self.iq_meas - tc)
+            return self.last_ref
         if name == "Active Current [A]":
-            return self.iq_now
+            return self.iq_meas
         if name == "Reactive Current [A]":
             return 0.0
         if name == "A Voltage":
@@ -140,7 +166,7 @@ class SimDrive:
         if name == "C Voltage":
             return self.leg_counts[2]
         if name == "D Voltage":
-            return at.DUTY_MID                       # idle leg (live: constant 3750)
+            return self.duty_mid                     # idle leg (live: constant FS/2)
         raise KeyError(name)
 
     def record(self, signals, length, time_resolution=1):
@@ -216,10 +242,14 @@ class SimDrive:
         vph = u / 2.0 + self.r_dt_ac * i_ac          # phase-neutral volts
         ph = (vph, -vph / 2.0, -vph / 2.0)
         cm = -(max(ph) + min(ph)) / 2.0              # SVM min-max injection
-        kv = at.DUTY_FS / self.vbus                  # counts per volt
-        self.leg_counts = tuple(at.DUTY_MID + (pv + cm) * kv for pv in ph)
+        kv = self.duty_fs / self.vbus                # counts per volt (G0 truth)
+        self.leg_counts = tuple(self.duty_mid + (pv + cm) * kv for pv in ph)
         self.u_prev = u
-        self.iq_now, self.last_ref = im, ref
+        # recorded/polled current = controller sample + PWM ripple (run #10):
+        # the recorder and single IQ polls see the ripple; the loop does not
+        rip = (self.ripple_frac * abs(regs.get("TC", 0.0))
+               * math.sin(2 * math.pi * self.ripple_hz * self.t)) if mo == 1 else 0.0
+        self.iq_now, self.iq_meas, self.last_ref = im, im + rip, ref
         self.t += self.ts_s
 
     # ---- transport -------------------------------------------------------------------
@@ -279,7 +309,7 @@ class SimDrive:
         if name == "PX":
             return "%.6f" % self.px()
         if name == "IQ":
-            return "%.6f" % self.iq_now
+            return "%.6f" % self.iq_meas
         if name == "SO":
             return "1" if self.regs["MO"] == 1 else "0"
         if name == "WS[75]":
@@ -309,15 +339,15 @@ def green_run(tmp_path_factory):
 
 
 def test_t3_pipeline_completes_green_via_gates(green_run):
-    """Run #6 final: gates G1..G4 all pass on the nominal mock -> honest GREEN
-    (the old blanket scale-pending YELLOW is retired)."""
+    """Run #8 final: gates G0/G1'/G2/G3/G4/G5 all pass on the nominal mock ->
+    honest GREEN (the in-situ SCALE gate G1 is abolished)."""
     _, _, res = green_run
     assert res.status == GREEN, "status=%s reason=%s warn=%s" % (
         res.status, res.reason, res.warnings)
     assert res.warnings == []
     gates = res.evidence["gates"]
-    assert set(gates) == {"G1_insitu_vs_vbus", "G2_rac_band",
-                          "G3_l_spread", "G4_plaus_pm"}
+    assert set(gates) == {"G0_platform", "G1p_idle_vbus", "G2_rac_band",
+                          "G3_l_spread", "G4_plaus_pm", "G5_loopgain"}
     assert all(g["pass"] for g in gates.values()), gates
     assert res.ts_us == TS_US
 
@@ -624,45 +654,205 @@ def test_vbus_primary_scale_exact(green_run):
     assert sc["tau_skew_s"] == pytest.approx(1.5 * TS_US * 1e-6, rel=1e-9)
 
 
-def test_g1_picks_max_error_frequency_not_lowest(green_run):
-    """Run #7 fix: G1 must cross-check where the in-situ estimator is
-    well-conditioned = the excitation with the LARGEST |I_cmd - I|.  The mock
-    reproduces the live failure shape (200 Hz ratio ~1.7-1.85, mid/high f
-    healthy): a lowest-f hard pick would FAIL while the max-error pick passes
-    — proving this is an estimator-validity fix, not a gate relaxation."""
-    _, _, res = green_run
-    s = res.evidence["scale"]["s_v_per_count"]
-    sine = res.evidence["sine"]
-    g1 = res.evidence["gates"]["G1_insitu_vs_vbus"]
-    # picked frequency == argmax |I_cmd - I|
-    best = max(sine, key=lambda e: e["err_phasor_a"])
-    assert g1["f_hz"] == best["f_hz"]
-    assert g1["err_phasor_a"] == pytest.approx(best["err_phasor_a"])
-    assert g1["pass"] and abs(g1["ratio"] - 1.0) <= at.G1_TOL
-    # the OLD lowest-f hard pick would have failed (live run #7: 200 Hz 1.85)
-    lowest = min(sine, key=lambda e: e["f_hz"])
-    low_ratio = lowest["s_insitu_mag_v_per_count"] / s
-    assert abs(low_ratio - 1.0) > at.G1_TOL, \
-        "lowest-f ratio %.3f should be ill-conditioned" % low_ratio
-    # tolerance is UNCHANGED (no gate relaxation)
-    assert g1["tol"] == 0.10
+def test_g0_platform_fs_computed_not_hardcoded(tmp_path):
+    """G0: FS = 150e6*TS/XP[2] (document-confirmed).  XP[2]=3 mock -> FS=5000,
+    scale s=Vbus/5000, and the measurement still recovers R/L -> GREEN."""
+    drive = SimDrive(xp2=3)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, "%s / %s" % (res.reason, res.warnings)
+    g0 = res.evidence["gates"]["G0_platform"]
+    assert g0["pass"] and g0["fs_counts"] == pytest.approx(5000.0)
+    assert res.evidence["scale"]["fs_counts"] == pytest.approx(5000.0)
+    assert res.evidence["scale"]["s_v_per_count"] == \
+        pytest.approx(VBUS_TRUTH / 5000.0, rel=1e-9)
+    assert abs(res.r_pp_ohm / R_TERM_PP - 1.0) <= 0.01
+    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.03
 
 
-def test_g1_fails_yellow_on_vbus_misreport(tmp_path):
-    """G1 teeth: a bus channel misreporting Vbus (40 V while the duty counts
-    were built with 48.46 V) skews the primary scale; the in-situ magnitude
-    check at the lowest f must catch it -> YELLOW with G1 named."""
-    class BadBusDrive(SimDrive):
-        def _chan_value(self, name):
-            if name == "DC Bus Voltage":
-                return 40.0
-            return SimDrive._chan_value(self, name)
-
-    drive = BadBusDrive()
+def test_g0_invalid_xp2_falls_back_yellow(tmp_path):
+    """XP[2] unreadable -> provisional FS with default 2 + G0 fail -> YELLOW
+    (measurement still correct because the physical XP[2] IS 2)."""
+    drive = SimDrive()
+    drive.regs["XP[2]"] = 0
     res = run_current_autotune(drive, _params(drive, tmp_path))
     assert res.status == YELLOW
-    assert not res.evidence["gates"]["G1_insitu_vs_vbus"]["pass"]
-    assert any("G1" in w for w in res.warnings)
+    assert not res.evidence["gates"]["G0_platform"]["pass"]
+    assert any("XP[2]" in w for w in res.warnings)
+    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.03    # fallback FS correct here
+
+
+def test_g1p_idle_leg_and_vbus(green_run):
+    """G1': idle leg 'D Voltage' mean == FS/2 +-1 count, Vbus in [20,60] V."""
+    _, _, res = green_run
+    g1p = res.evidence["gates"]["G1p_idle_vbus"]
+    assert g1p["pass"]
+    assert abs(g1p["idle_leg_mean"] - g1p["expected_mid"]) <= 1.0
+    assert 20.0 <= g1p["vbus_v"] <= 60.0
+
+
+def test_g1p_fails_on_idle_leg_offset(tmp_path):
+    """G1' teeth: idle leg off the midpoint (counter/config anomaly) -> YELLOW."""
+    class BadIdleDrive(SimDrive):
+        def _chan_value(self, name):
+            if name == "D Voltage":
+                return self.duty_mid - 5.0
+            return SimDrive._chan_value(self, name)
+
+    drive = BadIdleDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert not res.evidence["gates"]["G1p_idle_vbus"]["pass"]
+    assert any("G1p" in w for w in res.warnings)
+
+
+def test_g1p_fails_on_vbus_out_of_range(tmp_path):
+    """G1' teeth: bus voltage outside [20,60] V -> YELLOW (gross bus anomaly)."""
+    drive = SimDrive(vbus=70.0)                     # physics consistent at 70 V
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert not res.evidence["gates"]["G1p_idle_vbus"]["pass"]
+
+
+def test_g5_loopgain_consistency_and_honest_label(green_run):
+    """G5 (repurposed in-situ): rho_meas(f) must track the OPEN-LOOP GAIN
+    |C|/|R+jwL| within +-15% (run #8: 2.6~4.1%), with the measured gain
+    crossover reported (~372-390 Hz class).  Honest label: G5 does NOT verify
+    s (it cancels on both sides) — s is owned by G0+G1'.  Also documents that
+    the old G1-style SCALE interpretation of the same ratio is invalid."""
+    _, _, res = green_run
+    g5 = res.evidence["gates"]["G5_loopgain"]
+    assert g5["pass"] and g5["tol"] == 0.15
+    assert len(g5["rows"]) == len(res.evidence["sine"])
+    for row in g5["rows"]:
+        assert abs(row["dev"]) <= 0.15, row
+    assert 250.0 <= g5["crossover_hz"] <= 500.0     # live: ~371 Hz measured
+    # predicted crossover = numeric solve of |C(jw)G(jw)|=1 (asymptote retired)
+    assert 250.0 <= g5["crossover_pred_hz"] <= 500.0
+    assert abs(g5["crossover_hz"] / g5["crossover_pred_hz"] - 1.0) <= 0.08
+    # uniform residual is RECORDED (never compensated)
+    assert "mean_dev" in g5 and "보상 금지" in g5["residual_note"]
+    assert "s 자체는 검증 안 함" in g5["note"] and "G0+G1'" in g5["note"]
+    # the ratio interpreted as a SCALE check (old G1) would be nonsense:
+    s = res.evidence["scale"]["s_v_per_count"]
+    scale_style = [e["s_insitu_mag_v_per_count"] / s
+                   for e in res.evidence["sine"]]
+    assert any(abs(v - 1.0) > 0.10 for v in scale_style), \
+        "G1-style scale gate should be unfit (loop gain, not scale): %s" % scale_style
+
+
+def test_g5_run9_regression_fixture():
+    """Run-9 correction fixture (fable-physics): the STORED live rho_meas
+    (=s_insitu/s, outer x2 removed) against rho_pred with the CONTINUOUS C and
+    the SAME reported R-hat=0.1502 / L-hat=41.29uH must land FLAT at
+    (0.975, 0.965, 0.961, 0.965) — PASS with ~4x margin under +-15%.  The
+    predicted numeric crossover is ~361 Hz (measured ~371)."""
+    KP, KI, R, L = 0.07177, 812.94, 0.1502, 41.29e-6
+    stored = {200.0: 1.843, 400.0: 0.859, 600.0: 0.537, 800.0: 0.386}
+    expect = {200.0: 0.975, 400.0: 0.965, 600.0: 0.961, 800.0: 0.965}
+    for f, rho_meas in stored.items():
+        w = 2 * math.pi * f
+        rho_pred = abs(at.pi_continuous(f, KP, KI)) / abs(complex(R, w * L))
+        ratio = rho_meas / rho_pred
+        assert ratio == pytest.approx(expect[f], abs=0.005), (f, ratio)
+        assert abs(ratio - 1.0) <= 0.15
+    fx = at.loopgain_crossover_hz(KP, KI, R, L)
+    assert fx == pytest.approx(361.0, abs=8.0)
+
+
+def test_g5_bug_teeth_both_directions(green_run):
+    """Both run-9 bug classes stay detectable:
+    (a) reintroducing the outer x2 on rho_meas -> gate FAILS at every f;
+    (b) rho_pred consuming a different L than the reported one (ph/pp mixup,
+    L-hat/2) -> gate FAILS at high f."""
+    _, _, res = green_run
+    g5 = res.evidence["gates"]["G5_loopgain"]
+    assert all(abs(2.0 * r["rho_meas"] / r["rho_pred"] - 1.0) > 0.15
+               for r in g5["rows"]), "outer x2 must be caught"
+    r_pp, l_pp = res.r_pp_ohm, res.l_pp_h            # the REPORTED values
+    devs_wrong_l = []
+    for r in g5["rows"]:
+        w = 2 * math.pi * r["f_hz"]
+        pred_wrong = (abs(at.pi_continuous(r["f_hz"], KP_ORACLE, 812.939))
+                      / abs(complex(r_pp, w * l_pp / 2.0)))
+        devs_wrong_l.append(abs(r["rho_meas"] / pred_wrong - 1.0))
+    assert max(devs_wrong_l) > 0.15, devs_wrong_l
+
+
+def test_g5_reproducibility_rho_equals_insitu_over_s(green_run):
+    """Run-8/9 reproducibility: rho_meas is EXACTLY the stored s_insitu/s
+    (no hidden factors)."""
+    _, _, res = green_run
+    s = res.evidence["scale"]["s_v_per_count"]
+    by_f = {e["f_hz"]: e for e in res.evidence["sine"]}
+    for r in res.evidence["gates"]["G5_loopgain"]["rows"]:
+        assert r["rho_meas"] == pytest.approx(
+            by_f[r["f_hz"]]["s_insitu_mag_v_per_count"] / s, rel=1e-12)
+
+
+def test_b3_selfcheck_ripple_peak_poll_passes(tmp_path):
+    """Run #10: a single IQ poll landing on a RIPPLE PEAK (+5.2% vs the window
+    mean — beyond the old hard 5% limit) must NOT warn: it lies inside the
+    recorded [min,max] ripple band.  Full run stays GREEN.  Also confirms the
+    mock ripple is real (probe std ~3-4.5% of the level, live 3.9%)."""
+    class PeakPollDrive(SimDrive):
+        def _query(self, name):
+            if name == "IQ":
+                return "%.6f" % (self.i * 1.052)     # poll on ripple peak
+            return SimDrive._query(self, name)
+
+    drive = PeakPollDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, (res.reason, res.warnings)
+    assert not any("폴링IQ" in w for w in res.warnings)
+    probe = res.evidence["probe"]
+    assert 0.025 <= probe["std"] / probe["ref"] <= 0.05   # ripple visible, <5% gate
+
+
+def test_b3_selfcheck_true_scale_error_still_caught(tmp_path):
+    """Teeth (other direction): a REAL current-scale error (poll = 1.2x the
+    window mean — outside the ripple band AND outside max(5%, 3*std)) must
+    still raise the self-check warning -> YELLOW."""
+    class ScalePollDrive(SimDrive):
+        def _query(self, name):
+            if name == "IQ":
+                return "%.6f" % (self.i * 1.2)
+            return SimDrive._query(self, name)
+
+    drive = ScalePollDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert any("폴링IQ" in w for w in res.warnings)
+    # gates themselves still pass — the YELLOW comes from the self-check only
+    assert all(g["pass"] for g in res.evidence["gates"].values())
+
+
+def test_r_nameplate_band_advisory_never_blocks_green(tmp_path):
+    """R nameplate band = ADVISORY only.  In-band (motor 0.119 + ~23 mOhm
+    parasitic) records in_band=True; an out-of-band case still stays GREEN."""
+    d1 = SimDrive()
+    r1 = run_current_autotune(d1, _params(d1, tmp_path / "a",
+                                          nameplate_r_pp=R_PP_ORACLE))
+    adv = r1.evidence["dc"]["r_band_advisory"]
+    assert r1.status == GREEN and adv["in_band"]
+    assert adv["excess_ohm"] == pytest.approx(R_TERM_PP - R_PP_ORACLE, abs=2e-3)
+    # nameplate set so the measured excess (~2 mOhm) falls BELOW the +5 mOhm
+    # band floor -> advisory out-of-band, but GREEN must NOT be blocked
+    d2 = SimDrive()
+    r2 = run_current_autotune(d2, _params(d2, tmp_path / "b",
+                                          nameplate_r_pp=0.140))
+    adv2 = r2.evidence["dc"]["r_band_advisory"]
+    assert not adv2["in_band"]
+    assert r2.status == GREEN, "advisory must never block GREEN: %s" % r2.warnings
+
+
+def test_read_platform_clock_helper():
+    """elmo_link.read_platform_clock(): read-only XP[2]/WS[53..57] + FS math
+    (duck-typed against the SimDrive transport — no hardware)."""
+    import elmo_link
+    out = elmo_link.ElmoLink.read_platform_clock(SimDrive())
+    assert out["xp2"] == 2 and out["ts_us"] == TS_US
+    assert out["fs_counts"] == pytest.approx(7500.0)
+    assert out["ws57"] is not None and out["ws57"] < out["fs_counts"]
 
 
 def test_missing_bus_signal_is_red(tmp_path):
