@@ -28,6 +28,7 @@ else:
 from elmo_link import ElmoLink
 import feedback_spec
 import autotune_current
+import autotune_velpos
 
 APP_TITLE = "AngryYJH Control"
 POLL_HZ = 5
@@ -61,6 +62,10 @@ class DriveWorker(QtCore.QThread):
     autotune_progress = QtCore.pyqtSignal(str, str)   # (phase_code, human detail)
     autotune_result = QtCore.pyqtSignal(object)       # autotune_current.AutotuneResult
     autotune_applied = QtCore.pyqtSignal(bool, str)   # (ok, message) for gain apply
+    velpos_started = QtCore.pyqtSignal()                  # Phase 2 (vel/pos) mirror set
+    velpos_progress = QtCore.pyqtSignal(str, str)         # (phase_code, human detail)
+    velpos_result = QtCore.pyqtSignal(object)             # autotune_velpos.AutotuneVPResult
+    velpos_applied = QtCore.pyqtSignal(bool, str)         # (ok, message) for KP[2..3] apply
     encoder_maint_result = QtCore.pyqtSignal(bool, str)   # (ok, drive-response text)
     stopped = QtCore.pyqtSignal()
 
@@ -88,6 +93,22 @@ class DriveWorker(QtCore.QThread):
     def apply_autotune_gains(self, result, persist: bool):
         """Queue writing a GREEN/YELLOW result's KP[1]/KI[1] to the drive (MO=0 gated)."""
         self._jobs.append(("autotune_apply", (result, bool(persist))))
+
+    def start_velpos_autotune(self, kw: dict):
+        """Queue the Phase-2 vel/pos auto-tune (ROTATES the motor ~1 rev/run +
+        low-speed jogs — the caller shows the rotation warning gate first)."""
+        self._cancel_at = False
+        self._jobs.append(("velpos", dict(kw)))
+
+    def cancel_velpos(self):
+        """Request a safe Phase-2 abort (same operator flag; the module runs the
+        segment-appropriate chain: TC=0->MO=0 or JV=0;ST->MO=0)."""
+        self._cancel_at = True
+
+    def apply_velpos_gains(self, result, persist: bool):
+        """Queue writing a GREEN/YELLOW Phase-2 result's KP[2]/KI[2]/KP[3]
+        (MO=0 gated; FF[1] is never written)."""
+        self._jobs.append(("velpos_apply", (result, bool(persist))))
 
     def encoder_maintenance(self, cmds, persist: bool):
         """Queue encoder-maintenance command(s) (TW[18]/TW[19]/TW[20]) in order.
@@ -175,6 +196,19 @@ class DriveWorker(QtCore.QThread):
                             self.tuning_gains.emit(link.read_tuning_gains())
                         except Exception:
                             pass
+                    elif kind == "velpos":
+                        self._run_velpos_autotune(link, payload)
+                    elif kind == "velpos_apply":
+                        result, persist = payload
+                        try:
+                            ok, msg = autotune_velpos.apply_gains_vp(link, result, persist=persist)
+                        except Exception as e:
+                            ok, msg = False, "적용 예외: %r" % e
+                        self.velpos_applied.emit(ok, msg)
+                        try:
+                            self.tuning_gains.emit(link.read_tuning_gains())
+                        except Exception:
+                            pass
                     elif kind == "encoder_maint":
                         cmds, persist = payload
                         try:
@@ -225,6 +259,28 @@ class DriveWorker(QtCore.QThread):
             res = autotune_current.AutotuneResult(
                 status=autotune_current.RED, reason="worker 예외: %r" % e)
         self.autotune_result.emit(res)
+        try:                                         # gains view reflects reality post-run
+            self.tuning_gains.emit(link.read_tuning_gains())
+        except Exception:
+            pass
+
+    def _run_velpos_autotune(self, link, kw: dict):
+        """Run the Phase-2 vel/pos auto-tune in this thread (mirror of
+        _run_autotune): sleep_fn -> msleep, progress_fn/cancel_fn -> Qt signals
+        / the shared operator-abort flag.  The module never raises (RED result)
+        and runs the segment-appropriate abort chain on cancel."""
+        self.velpos_started.emit()
+        params = autotune_velpos.AutotuneVPParams(
+            sleep_fn=lambda s: self.msleep(int(max(s, 0.0) * 1000)),
+            progress_fn=lambda code, detail: self.velpos_progress.emit(str(code), str(detail)),
+            cancel_fn=lambda: self._cancel_at,
+            **kw)
+        try:
+            res = autotune_velpos.run_velpos_autotune(link, params)
+        except Exception as e:                       # module shouldn't raise; be safe
+            res = autotune_velpos.AutotuneVPResult(
+                status=autotune_velpos.RED, reason="worker 예외: %r" % e)
+        self.velpos_result.emit(res)
         try:                                         # gains view reflects reality post-run
             self.tuning_gains.emit(link.read_tuning_gains())
         except Exception:
@@ -699,24 +755,27 @@ class MainWindow(QtWidgets.QMainWindow):
                              "Counts/Rev·세부 파라미터를 확인 후 Write 하세요 (실제 장착 엔코더와 일치 필수)."
                              + extra)
 
-    # EAS 6-stage wizard; our Phase-1 current-loop tune drives stages 0..2. 3..5 = Phase 2.
+    # EAS 6-stage wizard; Phase-1 current-loop tune drives stages 0..2,
+    # Phase-2 vel/pos tune drives stages 3..5.
     _AT_STAGES = ["Initialization (Starting Phase)", "Current Identification", "Current Design",
                   "Commutation", "Velocity & Position Identification", "Velocity & Position Design"]
     _AT_PHASE1_LAST = 2
+    _AT_PHASE2_LAST = 5
     _AT_CODE_STAGE = {"P0": 0, "VALIDATE": 0, "SNAPSHOT": 0, "ENABLE": 1,
                       "MEASURE_R": 1, "MEASURE_L": 1, "DESIGN": 2, "DONE": 2}
+    _VP_CODE_STAGE = {"P0": 3, "VALIDATE": 3, "SNAPSHOT": 3,
+                      "ENABLE": 4, "UNIT_DIAG": 4, "PROBE": 4, "SIZING": 4,
+                      "IDENT_KA": 4, "IDENT_FRICTION": 4,
+                      "DESIGN": 5, "DONE": 5}
 
     def _build_tuning_page(self):
         f = theme.HudCard()
         v = QtWidgets.QVBoxLayout(f); v.setContentsMargins(16, 14, 16, 16); v.setSpacing(10)
-        title = QtWidgets.QLabel("AUTOMATIC TUNING  ·  Current Loop (Phase 1)")
+        title = QtWidgets.QLabel("AUTOMATIC TUNING  ·  Phase 1 (Current) + Phase 2 (Vel/Pos)")
         title.setProperty("role", "celltitle"); v.addWidget(title)
         self.tune_stage_lbls = []
         for i, s in enumerate(self._AT_STAGES):
-            suffix = "" if i <= self._AT_PHASE1_LAST else "   · Phase 2 (미구현)"
-            row = QtWidgets.QLabel("○  " + s + suffix); row.setProperty("role", "fwval")
-            if i > self._AT_PHASE1_LAST:
-                row.setStyleSheet("color:%s;" % theme.MUTED)
+            row = QtWidgets.QLabel("○  " + s); row.setProperty("role", "fwval")
             v.addWidget(row); self.tune_stage_lbls.append(row)
         # live status line (current phase detail / result reason)
         self.tune_status = QtWidgets.QLabel("연결 후 Run — 드라이브에서 R·L 실측 → PI 게인 산출")
@@ -731,8 +790,11 @@ class MainWindow(QtWidgets.QMainWindow):
         rows = [("r_pp", "Resistance  R  (phase-to-phase)"), ("l_pp", "Inductance  L  (phase-to-phase)"),
                 ("kp_cur", "Current Loop  KP  (KP[1])"), ("ki_cur", "Current Loop  KI  (KI[1])"),
                 ("pm", "Phase Margin  (설계 안정도)"),
+                ("k_a", "Accel Constant  K_a  (Phase 2 실측)"),
+                ("b_visc", "Viscous Friction  B"), ("i_c", "Coulomb Friction  I_c"),
                 ("kp_vel", "Velocity Loop  KP  (KP[2])"), ("ki_vel", "Velocity Loop  KI  (KI[2])"),
-                ("kp_pos", "Position Loop  KP  (KP[3])")]
+                ("kp_pos", "Position Loop  KP  (KP[3])"),
+                ("pm_vel", "Velocity Phase Margin"), ("pm_pos", "Position Phase Margin")]
         for i, (k, label) in enumerate(rows):
             l = QtWidgets.QLabel(label); l.setProperty("role", "field")
             e = QtWidgets.QLineEdit(); e.setReadOnly(True); e.setText("—")
@@ -741,13 +803,18 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addWidget(self._hline())
         # controls
         btnrow = QtWidgets.QHBoxLayout(); btnrow.setSpacing(8)
-        self.btn_tune = QtWidgets.QPushButton("Run Auto-Tune"); self.btn_tune.setEnabled(False)
+        self.btn_tune = QtWidgets.QPushButton("Run Phase 1 (Current)"); self.btn_tune.setEnabled(False)
         self.btn_tune.clicked.connect(self._run_autotune_clicked)
+        self.btn_tune_vp = QtWidgets.QPushButton("Run Phase 2 (Vel/Pos)"); self.btn_tune_vp.setEnabled(False)
+        self.btn_tune_vp.clicked.connect(self._run_velpos_clicked)
         self.btn_tune_abort = QtWidgets.QPushButton("Abort"); self.btn_tune_abort.setEnabled(False)
         self.btn_tune_abort.clicked.connect(self._abort_autotune_clicked)
-        self.btn_tune_apply = QtWidgets.QPushButton("Apply Gains → Drive"); self.btn_tune_apply.setEnabled(False)
+        self.btn_tune_apply = QtWidgets.QPushButton("Apply P1 → Drive"); self.btn_tune_apply.setEnabled(False)
         self.btn_tune_apply.clicked.connect(self._apply_autotune_clicked)
-        for b in (self.btn_tune, self.btn_tune_abort, self.btn_tune_apply):
+        self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → Drive"); self.btn_tune_vp_apply.setEnabled(False)
+        self.btn_tune_vp_apply.clicked.connect(self._apply_velpos_clicked)
+        for b in (self.btn_tune, self.btn_tune_vp, self.btn_tune_abort,
+                  self.btn_tune_apply, self.btn_tune_vp_apply):
             btnrow.addWidget(b)
         v.addLayout(btnrow)
         note = QtWidgets.QLabel("ⓘ 우리 자체 오토튠 — EAS 내부 알고리즘 재현이 아니라, 드라이브 명령으로 "
@@ -755,23 +822,24 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "실기 최초 실행은 통전·미세회전이 있으므로 감독 하에서만.")
         note.setProperty("role", "hint"); note.setWordWrap(True)
         v.addWidget(note); v.addStretch(1)
-        # keep a handle to the running result so Apply can reference it
+        # keep handles to the running results so Apply can reference them
         self._at_result = None
+        self._vp_result = None
         return f
 
     # ---- auto-tune GUI glue ----------------------------------------------------------
     def _set_tune_stage(self, active_idx, done_upto=-1):
-        """Repaint the stage list: ● done, ◆ active, ○ pending (Phase-2 stays muted)."""
+        """Repaint the stage list: ● done, ◆ active, ○ pending.
+        Stages 0..2 = Phase 1 (current), 3..5 = Phase 2 (vel/pos)."""
         for i, lbl in enumerate(self.tune_stage_lbls):
             base = self._AT_STAGES[i]
-            suffix = "" if i <= self._AT_PHASE1_LAST else "   · Phase 2 (미구현)"
             if i <= done_upto:
                 mark, col = "●", theme.OK if hasattr(theme, "OK") else "#28c840"
             elif i == active_idx:
                 mark, col = "◆", theme.C_AMBER
             else:
-                mark, col = "○", (theme.MUTED if i > self._AT_PHASE1_LAST else theme.TEXT)
-            lbl.setText("%s  %s%s" % (mark, base, suffix))
+                mark, col = "○", theme.TEXT
+            lbl.setText("%s  %s" % (mark, base))
             lbl.setStyleSheet("color:%s;" % col)
 
     def _run_autotune_clicked(self):
@@ -878,6 +946,114 @@ class MainWindow(QtWidgets.QMainWindow):
     def _on_autotune_applied(self, ok, msg):
         self._flash(("게인 적용됨: " + msg) if ok else ("적용 실패: " + msg))
 
+    # ---- Phase 2 (vel/pos) GUI glue — mirror of the Phase-1 set -----------------------
+    def _run_velpos_clicked(self):
+        if not (self.worker and self.worker.isRunning()):
+            self._flash("연결 후 사용하세요."); return
+        btn = QtWidgets.QMessageBox.warning(
+            self, "Phase 2 실행 확인 (⚠ 실제 회전)",
+            "⚠ Phase 2는 모터를 실제로 회전시킵니다.\n\n"
+            "• ±토크 펄스로 약 1바퀴/측정 회전 + 저속 조그(±300/±900rpm)가 수행됩니다.\n"
+            "• 축이 자유롭게, 안전하게 돌 수 있어야 합니다 — 부하·치구·손·케이블을 확인하세요.\n"
+            "• 과속 시 자동 정지(1200rpm SW 가드), 언제든 Abort로 안전 중단됩니다.\n"
+            "• 속도/가속 리밋을 임시 설정 후 종료 시 원복합니다.\n\n"
+            "축이 자유회전 가능함을 확인했고, 실행할까요?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if btn != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self._vp_result = None
+        for k in ("k_a", "b_visc", "i_c", "kp_vel", "ki_vel", "kp_pos",
+                  "pm_vel", "pm_pos"):
+            self.tune_gain_fields[k].setText("—")
+        self.btn_tune_vp_apply.setEnabled(False)
+        self.worker.start_velpos_autotune({})     # module defaults (SPEC §2.5 sizing)
+
+    def _apply_velpos_clicked(self):
+        r = getattr(self, "_vp_result", None)
+        if r is None or r.status not in (autotune_velpos.GREEN, autotune_velpos.YELLOW):
+            self._flash("적용할 유효한 Phase 2 결과가 없습니다."); return
+        btn = QtWidgets.QMessageBox.question(
+            self, "Phase 2 게인 적용 확인",
+            "산출된 속도/위치 게인을 드라이브에 쓰고 SV로 영구저장합니다 (모터 OFF에서만).\n\n"
+            "• KP[2] = %.6g A/(cnt/s)\n• KI[2] = %.6g Hz\n• KP[3] = %.6g 1/s\n"
+            "(FF[1]은 변경하지 않습니다)\n\n진행할까요?"
+            % (r.kp_vel, r.ki_vel_hz, r.kp_pos),
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if btn != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if self.worker and self.worker.isRunning():
+            self.worker.apply_velpos_gains(r, persist=True)
+            self._flash("Phase 2 게인 적용 전송 중…")
+
+    def _on_velpos_started(self):
+        self.btn_tune.setEnabled(False); self.btn_tune_vp.setEnabled(False)
+        self.btn_tune_abort.setEnabled(True)
+        self.btn_tune_vp_apply.setEnabled(False)
+        self._set_tune_stage(3, done_upto=-1)
+        self.tune_status.setText("▶ Phase 2 시작 — 커뮤테이션/구성 검증 중…")
+
+    def _on_velpos_progress(self, code, detail):
+        stage = self._VP_CODE_STAGE.get(code, 3)
+        done = stage - 1 if code != "DONE" else self._AT_PHASE2_LAST
+        self._set_tune_stage(stage if code != "DONE" else -1, done_upto=done)
+        self.tune_status.setText("◆ [%s] %s" % (code, detail))
+
+    def _dump_velpos_result(self, res):
+        """Persist the full Phase-2 result to .omc/state (oracle comparison off disk)."""
+        try:
+            import json as _json, dataclasses as _dc, time as _time
+            d = os.path.join(".omc", "state")
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, "autotune_vp_result_%d.json" % int(_time.time() * 1000))
+            with open(path, "w", encoding="utf-8") as fh:
+                _json.dump(_dc.asdict(res), fh, ensure_ascii=False, indent=1, default=str)
+            return path
+        except Exception:
+            return None
+
+    def _on_velpos_result(self, res):
+        self.btn_tune_abort.setEnabled(False)
+        on = bool(self.worker and self.worker.isRunning())
+        self.btn_tune.setEnabled(on); self.btn_tune_vp.setEnabled(on)
+        self._vp_result = res
+        self._vp_result_path = self._dump_velpos_result(res)
+        # RED/aborted must never leave a previous run's Apply enabled (Phase-1 fix)
+        self.btn_tune_vp_apply.setEnabled(
+            res.status in (autotune_velpos.GREEN, autotune_velpos.YELLOW))
+        g = self.tune_gain_fields
+        if res.k_a is not None:
+            g["k_a"].setText("%.5g cnt/s²/A" % res.k_a)
+        if res.b_visc is not None:
+            g["b_visc"].setText("%.4g A/(cnt/s)" % res.b_visc)
+        if res.i_c is not None:
+            g["i_c"].setText("%.4g A" % res.i_c)
+        if res.kp_vel is not None:
+            g["kp_vel"].setText("%.6g A/(cnt/s)" % res.kp_vel)
+        if res.ki_vel_hz is not None:
+            g["ki_vel"].setText("%.6g Hz" % res.ki_vel_hz)
+        if res.kp_pos is not None:
+            g["kp_pos"].setText("%.6g 1/s" % res.kp_pos)
+        if res.pm_vel_deg is not None:
+            gm = (" · GM %.1f dB" % res.gm_db) if res.gm_db is not None else ""
+            g["pm_vel"].setText("%.1f °%s" % (res.pm_vel_deg, gm))
+        if res.pm_pos_deg is not None:
+            g["pm_pos"].setText("%.1f °" % res.pm_pos_deg)
+        if res.status == autotune_velpos.GREEN:
+            self._set_tune_stage(-1, done_upto=self._AT_PHASE2_LAST)
+            saved = ("  ·  저장: %s" % self._vp_result_path) if self._vp_result_path else ""
+            self.tune_status.setText("✅ Phase 2 GREEN — 산출 완료. Apply P2로 적용 가능.%s" % saved)
+        elif res.status == autotune_velpos.YELLOW:
+            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (검토 후 Apply 가능)"
+                                     % (res.reason or ""))
+        else:
+            self.tune_status.setText("⛔ Phase 2 RED — %s" % (res.reason or "실패"))
+        self._flash("Phase 2 Auto-Tune %s" % res.status)
+
+    def _on_velpos_applied(self, ok, msg):
+        self._flash(("P2 게인 적용됨: " + msg) if ok else ("P2 적용 실패: " + msg))
+
     def _on_encoder_maint_result(self, ok, msg):
         # Persistent (non-transient) so the drive's exact response can't be missed.
         self._flash("엔코더 정비 " + ("완료" if ok else "실패/거부"))
@@ -925,6 +1101,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.autotune_progress.connect(self._on_autotune_progress)
         self.worker.autotune_result.connect(self._on_autotune_result)
         self.worker.autotune_applied.connect(self._on_autotune_applied)
+        self.worker.velpos_started.connect(self._on_velpos_started)
+        self.worker.velpos_progress.connect(self._on_velpos_progress)
+        self.worker.velpos_result.connect(self._on_velpos_result)
+        self.worker.velpos_applied.connect(self._on_velpos_applied)
         self.worker.encoder_maint_result.connect(self._on_encoder_maint_result)
         self.worker.stopped.connect(self._on_stopped)
         self.worker.start()
@@ -1208,8 +1388,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_motor_write.setEnabled(on)
         if hasattr(self, "btn_tune"):
             self.btn_tune.setEnabled(on)
+        if hasattr(self, "btn_tune_vp"):
+            self.btn_tune_vp.setEnabled(on)
         if not on:
-            for b in ("btn_tune_abort", "btn_tune_apply"):
+            for b in ("btn_tune_abort", "btn_tune_apply", "btn_tune_vp_apply"):
                 if hasattr(self, b):
                     getattr(self, b).setEnabled(False)
         if hasattr(self, "motor_type_combo"):
@@ -1415,6 +1597,121 @@ def _smoke_autotune(app, win):
     return 0 if not fails else 1
 
 
+def _smoke_velpos(app, win):
+    """Headless acceptance for the Phase-2 (vel/pos) auto-tune GUI glue.
+
+    Part A — WORKER GLUE: runs the real DriveWorker._run_velpos_autotune
+    (exact production param construction: sleep_fn->msleep override,
+    progress_fn/cancel_fn->signals) against the T3 VPSim plant and checks the
+    P0..DONE progress stream + gain oracles.
+    Part B — HANDLERS: drives the GUI slots with synthetic progress + GREEN
+    result and asserts wizard stages 3..5, result fields, Apply gating, and
+    that a RED result re-disables Apply.  Saves a screenshot.  No hardware.
+    """
+    sys.stdout.reconfigure(encoding="utf-8")
+    fails = []
+
+    def chk(name, cond):
+        print("  [velpos-ui] %-46s %s" % (name, "PASS" if cond else "FAIL"))
+        if not cond:
+            fails.append(name)
+
+    # ---- Part A: worker glue against the T3 sim ---------------------------------------
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests"))
+    from test_autotune_velpos import VPSim
+
+    class GlueWorker(DriveWorker):
+        """DriveWorker with msleep mapped onto the sim clock (headless)."""
+        def __init__(self, drive):
+            super().__init__("SIM")
+            self._drive = drive
+
+        def msleep(self, ms):
+            self._drive.advance(ms / 1000.0)
+
+    sim = VPSim()
+    w = GlueWorker(sim)
+    codes, results, started = [], [], []
+    w.velpos_started.connect(lambda: started.append(1))
+    w.velpos_progress.connect(lambda c, d: codes.append(c))
+    w.velpos_result.connect(results.append)
+    w._run_velpos_autotune(sim, {})
+    chk("glue: started emitted", len(started) == 1)
+    need = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE", "UNIT_DIAG", "PROBE",
+            "SIZING", "IDENT_KA", "IDENT_FRICTION", "DESIGN", "DONE"]
+    chk("glue: progress P0..DONE stream", all(c in codes for c in need))
+    res_glue = results[0] if results else None
+    chk("glue: result GREEN", res_glue is not None
+        and res_glue.status == autotune_velpos.GREEN)
+    chk("glue: KP[2] oracle <=3%", res_glue is not None
+        and abs(res_glue.kp_vel / 7.896e-5 - 1.0) <= 0.03)
+    chk("glue: KI[2]/KP[3] deterministic", res_glue is not None
+        and abs(res_glue.ki_vel_hz / 10.70 - 1.0) <= 0.005
+        and abs(res_glue.kp_pos / 85.2 - 1.0) <= 0.005)
+    chk("glue: sim motor left OFF", sim.regs["MO"] == 0)
+
+    # ---- Part B: GUI handlers -----------------------------------------------------------
+    ac = autotune_velpos
+    win._nav_to(3)                                    # Tuning page
+    win._set_connected_ui(True)
+    app.processEvents()
+    chk("Run Phase 2 enabled on connect", win.btn_tune_vp.isEnabled())
+    chk("Apply P2 disabled initially", not win.btn_tune_vp_apply.isEnabled())
+    win._on_velpos_started()
+    chk("Abort enabled while running", win.btn_tune_abort.isEnabled())
+    chk("stage 3 active on start", "◆" in win.tune_stage_lbls[3].text())
+    for code, detail in [("P0", "연결·MO게이트"), ("VALIDATE", "G0 통과"),
+                         ("SNAPSHOT", "스냅숏"), ("ENABLE", "통전"),
+                         ("PROBE", "K_a 프로브"), ("SIZING", "Tp"),
+                         ("IDENT_KA", "K_a=5.80e6"),
+                         ("IDENT_FRICTION", "B, I_c")]:
+        win._on_velpos_progress(code, detail)
+        app.processEvents()
+    chk("stage 3 done after ENABLE+", "●" in win.tune_stage_lbls[3].text())
+    chk("stage 4 active during ident", "◆" in win.tune_stage_lbls[4].text())
+    win._on_velpos_progress("DESIGN", "KP[2]=7.888e-5 PM=67.7°")
+    app.processEvents()
+    chk("stage 5 active at DESIGN", "◆" in win.tune_stage_lbls[5].text())
+    res = ac.AutotuneVPResult(status=ac.GREEN, kp_vel=7.888e-5, ki_vel_hz=10.700,
+                              kp_pos=85.211, k_a=5.7998e6, b_visc=9.986e-8,
+                              i_c=0.2003, pm_vel_deg=67.66, gm_db=15.04,
+                              pm_pos_deg=81.66)
+    win._on_velpos_result(res)
+    app.processEvents()
+    g = win.tune_gain_fields
+    chk("K_a populated", g["k_a"].text().startswith("5.7998e+06")
+        or "5.79" in g["k_a"].text())
+    chk("B populated", "A/(cnt/s)" in g["b_visc"].text())
+    chk("I_c populated", g["i_c"].text().startswith("0.2003"))
+    chk("KP[2] populated", g["kp_vel"].text().startswith("7.888e-05"))
+    chk("KI[2] populated", g["ki_vel"].text().startswith("10.7"))
+    chk("KP[3] populated", g["kp_pos"].text().startswith("85.211"))
+    chk("PM vel populated (GM 병기)", "°" in g["pm_vel"].text()
+        and "GM" in g["pm_vel"].text())
+    chk("PM pos populated", "°" in g["pm_pos"].text())
+    chk("Apply P2 ENABLED after GREEN", win.btn_tune_vp_apply.isEnabled())
+    chk("Abort disabled after result", not win.btn_tune_abort.isEnabled())
+    chk("stages 3..5 all done (●)",
+        all("●" in win.tune_stage_lbls[i].text() for i in (3, 4, 5)))
+    chk("status shows GREEN", "GREEN" in win.tune_status.text())
+    chk("result cached for Apply", win._vp_result is res)
+    # RED result must re-disable Apply (Phase-1 bug-fix carried over)
+    win._on_velpos_result(ac.AutotuneVPResult(status=ac.RED, reason="G4 실패 (모의)"))
+    app.processEvents()
+    chk("Apply P2 disabled after RED", not win.btn_tune_vp_apply.isEnabled())
+    chk("status shows RED reason", "RED" in win.tune_status.text()
+        and "G4" in win.tune_status.text())
+
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "media", "smoke_velpos.png")
+    win._on_velpos_result(res); app.processEvents()   # screenshot in useful state
+    win.grab().save(out)
+    print("screenshot ->", out)
+    print("SMOKE-VELPOS:", "GREEN (all assertions pass)" if not fails
+          else "RED — %d failure(s): %s" % (len(fails), fails))
+    return 0 if not fails else 1
+
+
 def _smoke_encoder(app, win):
     """Headless acceptance for Encoder Maintenance wiring (no hardware, offscreen).
 
@@ -1460,7 +1757,8 @@ def main():
     smoke_fb = "--smoke-feedback" in sys.argv
     smoke_at = "--smoke-autotune" in sys.argv
     smoke_enc = "--smoke-encoder" in sys.argv
-    if smoke or smoke_fb or smoke_at or smoke_enc:
+    smoke_vp = "--smoke-velpos" in sys.argv
+    if smoke or smoke_fb or smoke_at or smoke_enc or smoke_vp:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QtWidgets.QApplication(sys.argv)
     app.setStyleSheet(theme.STYLE)
@@ -1472,6 +1770,8 @@ def main():
         return _smoke_autotune(app, win)
     if smoke_enc:
         return _smoke_encoder(app, win)
+    if smoke_vp:
+        return _smoke_velpos(app, win)
     if smoke:
         # exercise the telemetry slot with a synthetic sample, screenshot, exit
         win._on_connected({"fw": "Twitter 01.01.16.00 08Mar2020B01G", "pal": "90",

@@ -498,24 +498,14 @@ class ElmoLink:
             raise KeyError("signals not in personality: %s" % missing)
         return [lookup[n] for n in names]
 
-    def record(self, signals, length, time_resolution: int = 1,
-               timeout_s: float = 10.0, poll_s: float = 0.02) -> dict:
-        """Record `signals` (names) for `length` samples via the .NET recorder.
+    def record_start(self, signals, length, time_resolution: int = 1):
+        """ARM the .NET recorder and return immediately (Phase-2 split: the
+        recorder free-runs while the caller keeps sending TC/JV/VX commands).
 
-        Returns {name: np.ndarray (physical doubles), 'dt': float seconds}.
         Flow (docs/recording-api.md): GetRecordingObject -> RecordingSetup(
-        TimeResolution/RecordingLength/SignalData/TriggerSetup.SetupType=Immediate)
-        -> ConfigureRecording -> StartRecording -> poll GetRecordingStatus()==REnd
-        (ROff=error; timeout -> StopRecorder) -> UploadRecordingData().Data
-        (Dict<int, Double[]>, already physical — no factor/hex parsing).
-        Data keys are POSITIONAL 0..N-1 in SignalData request order — NOT the
-        personality SignalIndex (LIVE-CONFIRMED on run #4: a 6-signal request
-        returned keys [0..5] while 'A Voltage' has SignalIndex 19).
-        dt: RecordingSetup.SamplingTime when populated, else TimeResolution*TS
-        (PROVISIONAL — dt semantics live-unknown).  Blocking; raises on failure.
-        """
-        import time as _time
-        import numpy as np
+        TimeResolution/RecordingLength/SignalData/TriggerSetup.SetupType=
+        Immediate) -> ConfigureRecording -> StartRecording.  State is kept on
+        the link for the matching record_fetch().  Raises on failure."""
         if not self._comm:
             raise RuntimeError("not connected")
         REC, PERS = self._rec_ns()
@@ -536,7 +526,28 @@ class ElmoLink:
             raise IOError("ConfigureRecording failed")
         if not rec.StartRecording():
             raise IOError("StartRecording failed")
-        RS = REC.RecordingStatus
+        self._rec_pending = {"obj": rec, "setup": setup, "REC": REC,
+                             "signals": list(signals),
+                             "time_resolution": int(time_resolution)}
+
+    def record_fetch(self, timeout_s: float = 10.0, poll_s: float = 0.02) -> dict:
+        """WAIT for the armed recording to finish and upload it.
+
+        Returns {name: np.ndarray (physical doubles), 'dt': float seconds}.
+        Poll GetRecordingStatus()==REnd (ROff=error; timeout -> StopRecorder)
+        -> UploadRecordingData().Data (Dict<int, Double[]>, already physical).
+        Data keys are POSITIONAL 0..N-1 in SignalData request order — NOT the
+        personality SignalIndex (LIVE-CONFIRMED on run #4).
+        dt: RecordingSetup.SamplingTime when populated, else TimeResolution*TS
+        (PROVISIONAL — dt semantics live-unknown)."""
+        import time as _time
+        import numpy as np
+        pend = getattr(self, "_rec_pending", None)
+        if not pend:
+            raise RuntimeError("record_fetch without record_start")
+        self._rec_pending = None
+        rec, setup = pend["obj"], pend["setup"]
+        RS = pend["REC"].RecordingStatus
         t0 = _time.time()
         while True:
             st = rec.GetRecordingStatus()
@@ -556,7 +567,7 @@ class ElmoLink:
         by_key = {}
         for kv in data.Data:                     # Dictionary<int, Double[]>
             by_key[int(kv.Key)] = np.array(list(kv.Value), dtype=float)
-        out = _map_upload_data(list(signals), by_key)   # positional 0..N-1
+        out = _map_upload_data(pend["signals"], by_key)   # positional 0..N-1
         dt = 0.0
         try:
             dt = float(setup.SamplingTime)
@@ -565,11 +576,18 @@ class ElmoLink:
         if not dt or dt <= 0:
             try:                                 # provisional fallback (live-unknown)
                 ts_us = _to_num(self.command("TS"))
-                dt = int(time_resolution) * float(ts_us) * 1e-6
+                dt = pend["time_resolution"] * float(ts_us) * 1e-6
             except Exception:
                 dt = 0.0
         out["dt"] = dt
         return out
+
+    def record(self, signals, length, time_resolution: int = 1,
+               timeout_s: float = 10.0, poll_s: float = 0.02) -> dict:
+        """Blocking record = record_start + record_fetch (Phase-1 compatible
+        wrapper — existing callers/tests unchanged)."""
+        self.record_start(signals, length, time_resolution)
+        return self.record_fetch(timeout_s=timeout_s, poll_s=poll_s)
 
     def disconnect(self):
         if self._comm:
