@@ -282,6 +282,11 @@ class SimDrive:
             regs["UM"] = int(v)
             return ""
         if name == "TC":
+            if regs["MO"] != 1:
+                # live-realistic: torque command rejected with the servo off —
+                # the abort chain's A3 (after A1 MO=0) must demote this to an
+                # expected step, not a warning (2026-07-13 noise cleanup)
+                raise IOError("Drive error 58: Servo must be on")
             if abs(v) > regs["PL[1]"]:
                 raise IOError("TC exceeds PL[1]")
             regs["TC"] = v
@@ -507,6 +512,239 @@ def test_px_motion_guard_aborts(tmp_path):
     assert res.status == RED
     assert "모션" in res.reason or "dPX" in res.reason
     assert drive.regs["MO"] == 0
+
+
+# ======================================================================================
+# B4 pre-alignment / ratchet / CA[19] scaling (2026-07-13 fix — live RED
+# "모션 감지 |dPX|=2191>364": stiction snap AFTER the i1-only latch)
+# ======================================================================================
+# Sim geometry: CA[18]=524288, CA[19]=16 -> theta_abort=2913, half pitch=16384,
+# pre-align relaxed tol = 1.5 pole pitch = 49152 counts.
+SIM_CA18 = 524288.0
+SIM_THETA_ABORT = max(4.0, SIM_CA18 * 2.0 / 360.0)          # 2912.7
+SIM_PREALIGN_TOL = 1.5 * SIM_CA18 / 16.0                    # 49152.0
+
+
+class StictionDrive(SimDrive):
+    """Rotor with stiction (reassembly 'first run' hazard): holds at px0 until
+    |TC| >= breakaway_a, then snaps to px0+snap_counts and stays (latched).
+    breakaway sits BETWEEN i1 (5.30 A) and i2 (10.61 A) — the exact live
+    failure mode: an i1-only alignment never breaks it; the first rise to i2
+    does."""
+
+    def __init__(self, breakaway_a=8.0, snap_counts=17500.0, **kw):
+        SimDrive.__init__(self, **kw)
+        self.breakaway_a = float(breakaway_a)
+        self.snap_counts = float(snap_counts)
+        self.snapped = False
+
+    def px(self):
+        return SimDrive.px(self) + (self.snap_counts if self.snapped else 0.0)
+
+    def _write(self, name, v):
+        out = SimDrive._write(self, name, v)
+        if name == "TC" and abs(v) >= self.breakaway_a:
+            self.snapped = True
+        return out
+
+
+class CreepDrive(SimDrive):
+    """Non-convergent rotor: advances step_counts on EVERY rising crossing of
+    the breakaway current — never settles.  The ratchet must hit its cycle
+    cap and return an honest RED (never an infinite loop, never GREEN)."""
+
+    def __init__(self, step_counts=5000.0, breakaway_a=8.0, **kw):
+        SimDrive.__init__(self, **kw)
+        self.step_counts = float(step_counts)
+        self.breakaway_a = float(breakaway_a)
+        self.offset = 0.0
+
+    def px(self):
+        return SimDrive.px(self) + self.offset
+
+    def _write(self, name, v):
+        prev = self.regs.get("TC", 0.0)
+        out = SimDrive._write(self, name, v)
+        if name == "TC" and abs(prev) < self.breakaway_a <= abs(v):
+            self.offset += self.step_counts
+        return out
+
+
+def test_prealign_burns_stiction_snap_before_latch(tmp_path):
+    """(a) Half-aligned start + stiction: the snap (17500 cnt > theta_abort)
+    must be exhausted DURING pre-align (relaxed guard), the ratchet must
+    converge, and the measurement window must see zero motion -> GREEN.
+    Under the OLD i1-only alignment this exact drive REDs mid-measurement."""
+    drive = StictionDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, (res.reason, res.warnings)
+    assert drive.snapped, "i2 pre-align must have broken the stiction"
+    pa = res.evidence["prealign"]
+    assert pa["theta_abort_counts"] == pytest.approx(SIM_THETA_ABORT)
+    cycles = pa["cycles"]
+    assert 2 <= len(cycles) <= 3
+    assert cycles[0]["dpx"] == pytest.approx(17500.0), \
+        "snap must land in cycle 0 (pre-latch), not in the measurement window"
+    assert cycles[0]["dpx"] > pa["theta_abort_counts"]
+    assert cycles[-1]["dpx"] <= pa["theta_abort_counts"]   # converged
+    # per-step (TC, PX) waveform captured as evidence for the live delta0 run
+    tr = cycles[0]["trace_tc_px"]
+    assert tr and any(isinstance(px, float) and px > 10000 for _tc, px in tr)
+
+
+def test_prealign_relaxed_guard_still_reds_on_excess_motion(tmp_path):
+    """(b) The relaxed pre-align guard allows a LEGIT snap (<=1.5 pole pitch,
+    test above) but must still abort on motion beyond it (60000 > 49152)."""
+    drive = StictionDrive(snap_counts=60000.0)
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "dPX" in res.reason or "모션" in res.reason or "미수렴" in res.reason
+    assert drive.regs["MO"] == 0 and drive.regs["UM"] == 5   # abort chain ran
+
+
+def test_prealign_ratchet_nonconvergence_honest_red(tmp_path):
+    """(c) A rotor that keeps moving on every i2 application: the ratchet must
+    stop at its cycle cap with an honest RED '정렬 미수렴' (no infinite loop,
+    no silent GREEN), drive safed and restored."""
+    drive = CreepDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "미수렴" in res.reason
+    pa = res.evidence["prealign"]
+    assert len(pa["cycles"]) == 3                            # PREALIGN_CYCLES_MAX
+    assert all(c["dpx"] > pa["theta_abort_counts"] for c in pa["cycles"])
+    assert drive.regs["MO"] == 0 and drive.regs["UM"] == 5
+
+
+def test_prealign_nominal_single_cycle(green_run):
+    """Nominal (already-aligned) rotor: exactly one ratchet cycle, dpx within
+    the strict gate, (TC, PX) trace present.  (ALIGN progress emission order
+    is asserted in test_progress_fn_emits_all_phases_in_order.)"""
+    _, _, res = green_run
+    pa = res.evidence["prealign"]
+    assert len(pa["cycles"]) == 1
+    assert pa["cycles"][0]["dpx"] <= pa["theta_abort_counts"]
+    assert pa["cycles"][0]["trace_tc_px"]
+
+
+def test_align_tolerances_scale_with_ca19(tmp_path):
+    """(d) The old hardcoded 11.25 deg (=180/16) is retired: all alignment
+    tolerances must derive from CA[19].  p=21 vs p=16 give different, correct
+    values; theta_abort (measurement gate) is pole-count independent."""
+    tols = {}
+    for pp in (16, 21):
+        drive = SimDrive()
+        drive.regs["CA[19]"] = pp
+        res = run_current_autotune(drive, _params(drive, tmp_path / str(pp)))
+        assert res.status == GREEN, (pp, res.reason, res.warnings)
+        pa = res.evidence["prealign"]
+        assert pa["pole_pairs"] == pp
+        assert pa["half_pitch_counts"] == pytest.approx(SIM_CA18 / (2 * pp))
+        assert pa["align_tol_counts"] == pytest.approx(SIM_CA18 / (2 * pp) * 1.2)
+        assert pa["prealign_tol_counts"] == pytest.approx(1.5 * SIM_CA18 / pp)
+        assert pa["theta_abort_counts"] == pytest.approx(SIM_THETA_ABORT)
+        tols[pp] = pa["align_tol_counts"]
+    assert tols[21] < tols[16]
+    # regression teeth: p=21 must NOT reproduce the legacy 11.25-deg number
+    legacy = SIM_CA18 * 11.25 / 360.0 * 1.2
+    assert tols[16] == pytest.approx(legacy)     # p=16: formula change neutral
+    assert abs(tols[21] / legacy - 1.0) > 0.2
+
+
+def test_ca19_unreadable_falls_back_with_warning(tmp_path):
+    """CA[19]<=0: legacy 16-pole-pair assumption + explicit warning (YELLOW)."""
+    drive = SimDrive()
+    drive.regs["CA[19]"] = 0
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert any("CA[19]" in w for w in res.warnings)
+    assert res.evidence["prealign"]["pole_pairs"] == 16.0
+
+
+def test_abort_a3_err58_demoted_not_warning(tmp_path):
+    """After a successful A1 (MO=0), the drive's expected 'Drive error 58:
+    Servo must be on' on A3 TC=0 is an expected step — NOT a warning.  The
+    fixed abort order A1 -> A2 -> A3 is unchanged (asserted elsewhere)."""
+    drive = SimDrive(se_injects=False)              # deterministic abort path
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert not any("A3" in w for w in res.warnings), res.warnings
+    steps = res.evidence["abort"]["steps_done"]
+    assert any(s.startswith("A3") and "58" in s for s in steps), steps
+
+
+def test_ca18_unreadable_warns_loudly_not_silent(tmp_path):
+    """[hardening MEDIUM] CA[18]<=0: every PX motion gate degenerates to inf —
+    that state must be VISIBLE (warning -> YELLOW), never a silent disable
+    (asymmetry with the CA[19] fallback closed).  Measurement itself is
+    unaffected (the gates were the only CA[18] consumer)."""
+    drive = SimDrive()
+    drive.regs["CA[18]"] = 0
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW
+    assert any("CA[18]" in w and "비활성" in w for w in res.warnings)
+    pa = res.evidence["prealign"]
+    assert pa["theta_abort_counts"] == float("inf")
+    assert pa["prealign_tol_counts"] == float("inf")
+    assert abs(res.r_pp_ohm / R_TERM_PP - 1.0) <= 0.01
+    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.03
+
+
+def test_prealign_unparseable_px_is_not_convergence(tmp_path):
+    """[hardening LOW] PX parsing to a non-number: dpx=None must NOT count as
+    convergence (absence of evidence != evidence of standstill) — the ratchet
+    runs to its cap and returns an honest RED, drive safed and restored."""
+    class NoPxDrive(SimDrive):
+        def _query(self, name):
+            if name == "PX":
+                return "n/a"
+            return SimDrive._query(self, name)
+
+    drive = NoPxDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "미수렴" in res.reason and "판독불가" in res.reason
+    assert len(res.evidence["prealign"]["cycles"]) == 3
+    assert all(c["dpx"] is None for c in res.evidence["prealign"]["cycles"])
+    assert drive.regs["MO"] == 0 and drive.regs["UM"] == 5
+
+
+def test_prealign_reversible_excursion_visible_yellow_not_red(tmp_path):
+    """[hardening LOW] Reversible intra-cycle deflection (gearbox compliance):
+    cycle-end dpx~0 converges, but dev_max>theta_abort must surface as a
+    WARNING (YELLOW) — visible, never a hard fail (no false RED on compliant
+    gears) — and R/L stay valid."""
+    class ElasticDrive(SimDrive):
+        """Deflects +5000 cnt while TC>=8 A on the FIRST wind-up only (the
+        spring releases on the way back down), then behaves rigid."""
+        def __init__(self, **kw):
+            SimDrive.__init__(self, **kw)
+            self.offset = 0.0
+            self.released = False
+
+        def px(self):
+            return SimDrive.px(self) + self.offset
+
+        def _write(self, name, v):
+            out = SimDrive._write(self, name, v)
+            if name == "TC" and not self.released:
+                if abs(v) >= 8.0:
+                    self.offset = 5000.0
+                elif self.offset:
+                    self.offset = 0.0
+                    self.released = True
+            return out
+
+    drive = ElasticDrive()
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW, (res.status, res.reason, res.warnings)
+    assert any("가역 변위" in w for w in res.warnings)
+    pa = res.evidence["prealign"]
+    assert len(pa["cycles"]) == 1                       # converged first cycle
+    c0 = pa["cycles"][0]
+    assert c0["dpx"] <= pa["theta_abort_counts"]
+    assert c0["max_dev_counts"] == pytest.approx(5000.0)
+    assert abs(res.r_pp_ohm / R_TERM_PP - 1.0) <= 0.01
+    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.03
 
 
 def test_nan_response_aborts(tmp_path):
@@ -1088,7 +1326,7 @@ def test_ts100_explicit_over_limit_keeps_strict_red(tmp_path):
 # ======================================================================================
 # GUI hooks: progress_fn / cancel_fn (non-invasive contract)
 # ======================================================================================
-PROGRESS_ORDER = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE",
+PROGRESS_ORDER = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE", "ALIGN",
                   "MEASURE_R", "MEASURE_L", "DESIGN", "DONE"]
 
 

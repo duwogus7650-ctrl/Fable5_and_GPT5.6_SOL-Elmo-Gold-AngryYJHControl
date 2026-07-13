@@ -123,6 +123,13 @@ T_SINE_SETTLE_S = 0.05    # settle after WS[75]==2 before the record
 T_RAMP_DOWN_S = 0.30      # E1 TC->0
 ALIGN_STEPS = 10          # B4: 10 steps x 100 ms
 ALIGN_STEP_S = 0.10
+# B4 pre-alignment (2026-07-13 fix, fable-physics live RED |dPX|=2191>364):
+# align at the MEASUREMENT MAXIMUM current i2 BEFORE latching px_ref, ratchet
+# i1<->i2 quasi-statically until the cycle-end |dPX| converges, then latch.
+PREALIGN_CYCLES_MAX = 3   # ratchet upper bound (no infinite loop)
+PREALIGN_PITCH_MULT = 1.5 # relaxed PX guard during pre-align [pole pitches]
+T_PREALIGN_SETTLE_S = 0.3 # settle after each pre-align ramp leg
+POLE_PAIRS_FALLBACK = 16.0  # CA[19] unreadable -> legacy assumption + warning
 GUARD_PERIOD_S = 0.5      # I3: MF/LC/PX poll period while MO=1
 RECORDER_MAX_RL = 4096    # per-signal sample cap (CR: 16384/4 signals); longer -> TimeResolution up
 # Reference values for THIS drive at TS=100us, XP[2]=2 (tests/mock use these).
@@ -166,7 +173,7 @@ class AutotuneParams:
     poll_s: float = 0.01
     # --- GUI hooks (both NON-INVASIVE: their exceptions never kill the run) -----------
     # progress_fn(code, detail): phase-boundary notifications, codes =
-    #   P0, VALIDATE, SNAPSHOT, ENABLE, MEASURE_R, MEASURE_L, DESIGN, DONE.
+    #   P0, VALIDATE, SNAPSHOT, ENABLE, ALIGN, MEASURE_R, MEASURE_L, DESIGN, DONE.
     #   Exceptions are swallowed (logged to evidence["progress_errors"] only, so a
     #   broken GUI hook cannot flip a GREEN verdict).
     # cancel_fn() -> True requests a SAFE operator stop: polled on every _sleep
@@ -490,14 +497,20 @@ def _sleep(ctx: _Ctx, dur_s: float):
                 _guard(ctx)
 
 
-def _ramp_tc(ctx: _Ctx, target: float, total_s: float, steps: int = 10):
-    """Ramp TC from ctx.tc_now to target in `steps` writes over total_s."""
+def _ramp_tc(ctx: _Ctx, target: float, total_s: float, steps: int = 10,
+             px_trace: Optional[list] = None):
+    """Ramp TC from ctx.tc_now to target in `steps` writes over total_s.
+    px_trace (list) collects a per-step (TC, PX) waveform — pre-alignment
+    evidence for the stiction-snap characterization (delta0 / tumble)."""
     start = ctx.tc_now
     for k in range(1, steps + 1):
         val = start + (target - start) * k / steps
         _write(ctx, "TC", val, allow_motion=True)
         ctx.tc_now = val
         _sleep(ctx, total_s / steps)
+        if px_trace is not None:
+            px = _cmd(ctx, "PX")
+            px_trace.append((val, px if isinstance(px, (int, float)) else None))
 
 
 # ======================================================================================
@@ -701,10 +714,23 @@ def _do_abort(ctx: _Ctx, reason: str):
             ctx.warnings.append("abort %s 실패: %s" % (label, e))
 
     _try("A1 MO=0", lambda: ctx.link.command("MO=0", timeout_ms=1000))
+    a1_ok = "A1 MO=0" in steps
     ctx.motor_on = False
     _try("A2 TW[80]=0", lambda: ctx.link.command("TW[80]=0", timeout_ms=1000))
-    _try("A3 TC=0", lambda: ctx.link.command("TC=0", timeout_ms=1000,
-                                             allow_motion=True))
+    # A3 TC=0 — after a SUCCESSFUL A1 the drive is expected to answer
+    # "Drive error 58: Servo must be on" (torque command void with the bridge
+    # off).  That is harmless: log it as an expected step, NOT a warning.
+    # Any other failure (or err58 while A1 itself failed) stays a warning.
+    try:
+        ctx.link.command("TC=0", timeout_ms=1000, allow_motion=True)
+        steps.append("A3 TC=0")
+    except Exception as e:
+        msg = str(e)
+        if a1_ok and (re.search(r"\b58\b", msg)
+                      or "servo must be on" in msg.lower()):
+            steps.append("A3 TC=0 (err58 예상 — MO=0 탈전 확정 상태, 무해)")
+        else:
+            ctx.warnings.append("abort A3 TC=0 실패: %s" % e)
     _try("A4 restore", lambda: _restore_snapshot(ctx))
     _try("A5 RR=0", lambda: ctx.link.command("RR=0", timeout_ms=1000))
     ctx.evidence["abort"] = {"reason": reason, "steps_done": steps}
@@ -889,9 +915,32 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     _cmd(ctx, "MO=1", allow_motion=True)
     ctx.motor_on = True
     px0 = _cmd(ctx, "PX")
-    ca18 = ctx.readings.get("CA[18]")
-    ca18 = float(ca18) if isinstance(ca18, (int, float)) and ca18 > 0 else 0.0
-    align_tol = (ca18 * 11.25 / 360.0) * 1.2 if ca18 else float("inf")
+    ca18_raw = ctx.readings.get("CA[18]")
+    ca18 = (float(ca18_raw)
+            if isinstance(ca18_raw, (int, float)) and ca18_raw > 0 else 0.0)
+    if not ca18:
+        # NO silent disable (fable-critic MEDIUM): with CA[18] unreadable every
+        # PX motion gate (align_tol / prealign_tol / theta_abort) degenerates
+        # to inf — the run proceeds WITHOUT motion verification and must say so
+        # loudly (YELLOW), symmetric with the CA[19] fallback warning below.
+        ctx.warnings.append(
+            "CA[18] 판독 불가/0(%r) — counts/rev 미상으로 PX 모션게이트(정렬허용·"
+            "사전정렬 완화·θ_abort) 전체 비활성: 무모션 검증 없이 진행(YELLOW)"
+            % (ca18_raw,))
+    # motion thresholds are SENSOR- AND MOTOR-PARAMETERIZED: the old 11.25 deg
+    # (=180/16 pole pairs) hardcoded THIS motor's pole count — a p=21 motor got
+    # a wrong (too-wide) allowance.  half pole pitch [counts] = CA[18]/(2*p).
+    ca19 = ctx.readings.get("CA[19]")
+    pole_pairs = (float(ca19)
+                  if isinstance(ca19, (int, float)) and ca19 > 0 else 0.0)
+    if not pole_pairs:
+        pole_pairs = POLE_PAIRS_FALLBACK
+        ctx.warnings.append("CA[19] 판독 불가(%r) — 극쌍 %d 가정으로 정렬허용치 산출"
+                            % (ca19, int(POLE_PAIRS_FALLBACK)))
+    half_pitch = ca18 / (2.0 * pole_pairs) if ca18 else 0.0
+    align_tol = half_pitch * 1.2 if ca18 else float("inf")
+    prealign_tol = (2.0 * PREALIGN_PITCH_MULT * half_pitch) if ca18 \
+        else float("inf")                   # 1.5 pole pitch: legit align snap
     theta_abort = max(4.0, ca18 * 2.0 / 360.0) if ca18 else float("inf")
     if isinstance(px0, (int, float)):
         ctx.px_ref, ctx.px_tol = float(px0), align_tol
@@ -936,8 +985,87 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
                          % (mean_t, probe_ref, std_t))
     _dc_selfcheck(ctx, rec, "B3")
 
-    # ---- B4: alignment ramp to I1, standstill verification ----------------------------
-    _ramp_tc(ctx, i1, ALIGN_STEPS * ALIGN_STEP_S, ALIGN_STEPS)
+    # ---- B4: HIGH-CURRENT pre-alignment + ratchet, THEN latch (2026-07-13 fix) --------
+    # Root cause (fable-physics, live run: |dPX|=2191 cnt = 253 deg elec RED):
+    # aligning at i1 only and latching px_ref lets the rotor break stiction
+    # (gearbox friction) and SNAP to the commutation point when the current
+    # first rises to i2 INSIDE the measurement window.  "Standstill" is not
+    # "aligned".  Fix (b): burn the snap BEFORE the latch by ramping to the
+    # measurement maximum i2 — quasi-static guarantee: a standstill that
+    # survived i2 cannot break away when i2 is re-applied later.  Fix (c):
+    # ratchet i1<->i2 up to PREALIGN_CYCLES_MAX quasi-static round trips until
+    # the cycle-end |dPX| <= theta_abort (honest RED on non-convergence).
+    # During the pre-align ramps ONLY, the PX guard relaxes to prealign_tol
+    # (a legitimate align snap is <= ~1.5 pole pitch); MF!=0 / LC==1 guards
+    # stay at full strength; the measurement-window gate theta_abort is NEVER
+    # relaxed.  The per-step (TC, PX) trace is kept as evidence (delta0 /
+    # tumble measurement on the next live run).
+    if ctx.px_ref is not None:
+        ctx.px_tol = prealign_tol
+    prealign_ev = {"i1_a": i1, "i2_a": i2,
+                   "prealign_tol_counts": prealign_tol,
+                   "align_tol_counts": align_tol,
+                   "theta_abort_counts": theta_abort,
+                   "pole_pairs": pole_pairs, "counts_per_rev": ca18,
+                   "half_pitch_counts": half_pitch,
+                   "cycles": [],
+                   "note": "사전정렬=측정최대 i2까지 램프로 stiction 스냅을 래치 전에"
+                           " 소진(fix b) + i1↔i2 래칫 수렴(fix c); 완화가드는"
+                           " 사전정렬 램프 구간 한정, 측정창 게이트 θ_abort 불변"}
+    ctx.evidence["prealign"] = prealign_ev
+    converged = False
+    for cyc in range(PREALIGN_CYCLES_MAX):
+        px_s = _cmd(ctx, "PX")
+        if isinstance(px_s, (int, float)) and ctx.px_ref is not None:
+            ctx.px_ref = float(px_s)        # judge each cycle on its OWN motion
+        trace = []
+        _ramp_tc(ctx, i2, ALIGN_STEPS * ALIGN_STEP_S, ALIGN_STEPS,
+                 px_trace=trace)            # stiction breakaway happens HERE
+        _sleep(ctx, T_PREALIGN_SETTLE_S)
+        _ramp_tc(ctx, i1, T_RAMP_BACK_S, 5, px_trace=trace)
+        _sleep(ctx, T_PREALIGN_SETTLE_S)
+        px_e = _cmd(ctx, "PX")
+        both_num = (isinstance(px_s, (int, float))
+                    and isinstance(px_e, (int, float)))
+        dpx = abs(px_e - px_s) if both_num else None
+        px_vals = [p for _, p in trace if isinstance(p, (int, float))]
+        dev_max = (max(abs(p - px_s) for p in px_vals)
+                   if px_vals and isinstance(px_s, (int, float)) else None)
+        prealign_ev["cycles"].append({
+            "cycle": cyc, "px_start": px_s, "px_end": px_e, "dpx": dpx,
+            "max_dev_counts": dev_max, "trace_tc_px": trace})
+        if dpx is not None and dpx <= theta_abort:
+            # cycle-end motion within the strict gate = converged.  dpx=None
+            # (unparseable PX) is NOT convergence: no-motion EVIDENCE is
+            # required, absence of evidence is not evidence of standstill
+            # (fable-critic LOW #2) — keep cycling, honest RED at the cap.
+            converged = True
+            if dev_max is not None and dev_max > theta_abort:
+                # reversible intra-cycle excursion that returned by cycle end
+                # (gearbox compliance / elasticity candidate).  A standstill
+                # rotor's elastic deflection does not contaminate the R/L
+                # measurement, so this is made VISIBLE (YELLOW), never a hard
+                # fail (fable-critic LOW #3: no false RED on compliant gears).
+                ctx.warnings.append(
+                    "사전정렬 수렴 사이클 내 가역 변위 — max|ΔPX|=%.0f > θ_abort"
+                    "=%.0f counts (종단 |dPX|=%.0f로 복귀): 감속기 컴플라이언스/"
+                    "탄성 후보, 측정은 정지 유지 시 유효(YELLOW)"
+                    % (dev_max, theta_abort, dpx))
+            break
+    if not converged:
+        last_dpx = prealign_ev["cycles"][-1]["dpx"]
+        detail = ("사이클 종단 |dPX|=%.0f > %.0f counts"
+                  % (last_dpx, theta_abort) if last_dpx is not None
+                  else "PX 판독불가 — 무모션 증거 확보 실패")
+        raise AbortError("정렬 미수렴 — 래칫 %d회 후 %s"
+                         % (PREALIGN_CYCLES_MAX, detail))
+    # tighten the guard AT convergence (not after the settle): convergence just
+    # proved the rotor survived i2 within theta_abort — any motion from here on
+    # is NOT a legitimate align snap and must trip the strict gate immediately
+    last_end = prealign_ev["cycles"][-1]["px_end"]
+    if isinstance(last_end, (int, float)) and ctx.px_ref is not None:
+        ctx.px_ref, ctx.px_tol = float(last_end), theta_abort
+    # standstill verification at i1 under the strict gate, then re-latch
     _sleep(ctx, 1.0)
     pxa = _cmd(ctx, "PX")
     _sleep(ctx, 0.2)
@@ -947,6 +1075,9 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
             raise AbortError("정렬 후 모션 잔존 |dPX|=%.0f > %.0f"
                              % (abs(pxb - pxa), theta_abort))
         ctx.px_ref, ctx.px_tol = float(pxb), theta_abort   # tighten guard post-align
+    _emit(ctx, "ALIGN", "사전정렬 완료: 래칫 %d사이클(i2=%.2fA까지 소진), 종단"
+          " |dPX|≤%.0f counts — 측정창 게이트 조임"
+          % (len(prealign_ev["cycles"]), i2, theta_abort))
 
     # ---- C1/C2: two-point DC resistance (counts domain; volts after D-scale) ----------
     rec1 = _record(ctx, T_DC_RECORD_S)

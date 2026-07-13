@@ -762,6 +762,7 @@ class MainWindow(QtWidgets.QMainWindow):
     _AT_PHASE1_LAST = 2
     _AT_PHASE2_LAST = 5
     _AT_CODE_STAGE = {"P0": 0, "VALIDATE": 0, "SNAPSHOT": 0, "ENABLE": 1,
+                      "ALIGN": 1,       # B4 pre-align/ratchet (2026-07-13 fix)
                       "MEASURE_R": 1, "MEASURE_L": 1, "DESIGN": 2, "DONE": 2}
     _VP_CODE_STAGE = {"P0": 3, "VALIDATE": 3, "SNAPSHOT": 3,
                       "ENABLE": 4, "UNIT_DIAG": 4, "PROBE": 4, "SIZING": 4,

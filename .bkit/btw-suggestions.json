@@ -1,0 +1,47 @@
+{
+  "version": "1.0",
+  "suggestions": [
+    {
+      "id": "btw-001",
+      "timestamp": "2026-07-13T03:57:40Z",
+      "suggestion": "EAS처럼 오토튜닝 중 사용자가 입력한 극쌍수(CA[19])와 실제 감지한 극쌍수가 다르면 알림을 띄우고 Predefined/Identified/Cancel 중 선택하게 하는 기능. 현재 우리 앱에는 극쌍수 식별 단계 자체가 없음(Motor Settings에서 타이핑만).",
+      "context": {
+        "file": "main.py:558 (poles/CA[19] field), autotune_velpos.py (commutation 미구현)",
+        "pdcaPhase": null,
+        "feature": "AngryYJH Control autotune — pole-pair identification + mismatch dialog"
+      },
+      "category": "skill-request",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    },
+    {
+      "id": "btw-002",
+      "timestamp": "2026-07-13T03:57:40Z",
+      "suggestion": "정정(사실): 우리 모터(AngryYJH 앱이 튜닝하는 것)는 극쌍 21이 맞음. EAS로 방금 튜닝하고 온 다른 모터는 극쌍 16. 두 모터는 동일 사양이 아님(사용자가 이전에 '동일 사양'이라 한 것은 착오). 따라서 우리 드라이브에 기록돼 있던 CA[19]=16은 우리 모터에 대해 잘못된 값 — 21로 바로잡아야 함.",
+      "context": {
+        "file": "memory/angryyjh-control-elmo.md (CA[19]=16 기록), Motor Settings CA[19]",
+        "pdcaPhase": null,
+        "feature": "motor identity / pole-pair correction"
+      },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-003",
+      "timestamp": "2026-07-13T04:20:00Z",
+      "suggestion": "상태 메모: 사용자가 극쌍 16짜리 모터를 다시 EAS로 돌리러 잠시 자리 비움. 드라이브/COM3가 그 모터로 감. 우리 앱 재실행은 사용자 복귀 후. 이 다운타임에 Phase 1 정렬 수정(고전류 사전정렬)을 코드로만 구현·검증 진행.",
+      "context": { "file": "autotune_current.py", "pdcaPhase": null, "feature": "Phase 1 alignment fix — downtime implementation" },
+      "category": "general",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+  ],
+  "stats": { "total": 3, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+}
