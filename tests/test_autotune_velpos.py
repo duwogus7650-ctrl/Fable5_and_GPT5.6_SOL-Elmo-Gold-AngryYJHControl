@@ -1217,6 +1217,272 @@ def test_poll_latency_cut_before_guard(tmp_path):
     assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
 
 
+class TransitDecaySim(VPSim):
+    """LIVE raised-cap run analogue (fable-physics 개정6): at ~1.2 A the rotor
+    is KICKED through a long free play (8634 cnt) with monotonically DECAYING
+    velocity (the recorded 89k->68k->55k->6k HOLD signature — transit
+    dissipation, NOT drive), lands, and the TRUE load breakaway is 5 A.
+    The old magnitude-only sustain latched the fake i_ba=1.33 A here."""
+
+    def __init__(self, kick_at=1.2, v0=89000.0, tau=0.11, travel=8634.0,
+                 i_s_load=5.0, **kw):
+        kw.setdefault("i_c", 0.2)
+        VPSim.__init__(self, **kw)
+        self.kick_at = float(kick_at)
+        self.v_kick = float(v0)
+        self.tau = float(tau)
+        self.travel_left = float(travel)
+        self.i_s_load = float(i_s_load)
+        self.burst = False
+        self.landed = False
+
+    def _step(self, nk):
+        cmd = self._cmd_current()
+        if self.torque_disabled:
+            self.i_act = 0.0
+        else:
+            self.i_act = self.a_i * self.i_act + (1 - self.a_i) * self.cmd_prev
+        self.cmd_prev = cmd
+        if self.landed:                      # engaged: hard load stiction
+            drive = self.commut_sign * self.k_a * self.i_act * self.um5_eff
+            c_hold = self.k_a * (self.i_s_load if abs(self.v) < 1.0
+                                 else self.i_c)
+            if abs(self.v) < 1.0 and abs(drive) <= c_hold:
+                self.v = 0.0
+            else:
+                sgn = math.copysign(1.0, self.v) if abs(self.v) >= 1.0 \
+                    else math.copysign(1.0, drive)
+                acc = drive - self.D * self.v - self.k_a * self.i_c * sgn
+                v_new = self.v + self.dt * acc
+                if self.v * v_new < 0.0 and abs(drive) <= c_hold:
+                    v_new = 0.0
+                self.v = v_new
+            self.p += self.dt * self.v
+        elif self.burst:                     # decaying free-flight transit
+            self.v *= math.exp(-self.dt / self.tau)
+            dp = self.dt * self.v
+            if dp >= self.travel_left:
+                dp = self.travel_left
+                self.v = 0.0
+                self.burst = False
+                self.landed = True
+            self.travel_left -= dp
+            self.p += dp
+        else:                                # stuck pre-kick
+            self.v = 0.0
+            if abs(self.i_act) >= self.kick_at:
+                self.burst = True
+                self.v = self.v_kick
+        self.v_meas = self.v + nk
+        if self._rec and self._rec["left"] > 0:
+            r = self._rec
+            if r["k"] % r["tres"] == 0:
+                for nm in r["names"]:
+                    r["bufs"][nm].append(self._chan(nm))
+                r["left"] -= 1
+            r["k"] += 1
+        self.t += self.dt
+
+
+def test_transit_decay_stall_classified_true_iba_latched(tmp_path):
+    """[개정6-1] the live fake: a decaying transit (89k->..->6k) must be
+    classified STALL (collapse rule) and recorded as a lash event; the ramp
+    keeps ramping PAST 1.33 A and latches the TRUE breakaway ~5 A; the
+    pipeline identifies K_a on the real load."""
+    drive = TransitDecaySim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ba = res.evidence["breakaway"]
+    assert ba["i_ba_a"] > 4.5, \
+        "fake transit latched again: i_ba=%.2f" % ba["i_ba_a"]
+    assert len(ba["lash_events"]) >= 1            # the transit, classified
+    assert all(le["tc_a"] < 1.7 for le in ba["lash_events"])
+    assert any(le.get("collapsed") for le in ba["lash_events"]), \
+        "decay signature must be recorded as collapse"
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+class RiseJiggleSim(VPSim):
+    """269 cnt residual free play appearing AFTER the ramp (re-mesh) + load
+    stiction ABOVE the escalation cap: the first diag pulse jiggles 269 cnt
+    (the live '이동>200cnt' false-success), later pulses do nothing."""
+
+    def __init__(self, i_rise=9.5, jiggle_cnt=269.0, **kw):
+        kw.setdefault("i_c", 0.2)
+        VPSim.__init__(self, **kw)
+        self.i_rise = float(i_rise)
+        self.i_s = float(i_rise)             # UM3 drag threshold attribute
+        self.jiggle_left = float(jiggle_cnt)
+        self.risen = False
+
+    def _write(self, name, v):
+        out = VPSim._write(self, name, v)
+        if name == "TC" and v == 0.0:
+            self.risen = True                # ramp end
+        return out
+
+    def _step(self, nk):
+        if not self.risen:
+            self.C = self.k_a * self.i_c
+            VPSim._step(self, nk)
+            return
+        cmd = self._cmd_current()
+        self.i_act = self.a_i * self.i_act + (1 - self.a_i) * self.cmd_prev
+        self.cmd_prev = cmd
+        if self.jiggle_left > 0.0 and abs(self.i_act) > 0.3:
+            dp = min(self.jiggle_left, 67250.0 * self.dt)   # ~4 ms crossing
+            self.p += math.copysign(dp, self.i_act)
+            self.jiggle_left -= dp
+            self.v = (math.copysign(dp / self.dt, self.i_act)
+                      if self.jiggle_left > 0.0 else 0.0)
+        else:
+            self.v = 0.0                     # stiction above every rung
+        self.v_meas = self.v + nk
+        if self._rec and self._rec["left"] > 0:
+            r = self._rec
+            if r["k"] % r["tres"] == 0:
+                for nm in r["names"]:
+                    r["bufs"][nm].append(self._chan(nm))
+                r["left"] -= 1
+            r["k"] += 1
+        self.t += self.dt
+
+
+def test_jiggle_escalates_not_success(tmp_path):
+    """[개정6-2] a 269 cnt backlash jiggle (>200 cnt = the old success hole)
+    must NOT pass the sustained-rotation success test — it escalates, exhausts
+    at the default cap (<6 A: drag gate holds) and REDs honestly with the
+    escalation history."""
+    drive = RiseJiggleSim()                  # default ramp cap 4.24 A < 6 A
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "기계구속" in res.reason and "판별 유보" in res.reason
+    ud = res.evidence["unit_diag"]
+    assert len(ud["escalations"]) >= 1
+    assert ud["escalations"][0]["mode"] in ("유격착지/꿈틀", "무이동")
+    assert any(e["mode"] == "유격착지/꿈틀" for e in ud["escalations"]), \
+        "the jiggle must be classified as non-sustained, not success"
+    assert "um3_drag" not in res.evidence    # gate: cap 4.24 < 6 A
+    assert drive.regs["MO"] == 0
+
+
+def test_exhaustion_routes_drag_when_gate_met(tmp_path):
+    """[개정6-3] '지속회전 없음' routing: ladder exhaustion (jiggle + 무이동)
+    with the raised cap (8.49 A >= 6 A) must run the UM3 drag from the
+    EXHAUSTION path; stiction 9.5 A blocks the 6 A drag -> honest '판별 불가'
+    RED (never a bare 기계구속 verdict when the oracle could run)."""
+    drive = RiseJiggleSim(i_rise=9.5)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status == RED
+    assert "판별 불가" in res.reason
+    assert "um3_drag" in res.evidence        # drag DID run from exhaustion
+    assert res.evidence["um3_drag"]["pa_effective"] is False
+    ud = res.evidence["unit_diag"]
+    assert len(ud["escalations"]) >= 2       # jiggle then 무이동 rungs
+    # fix-5: escalation levels recorded as windup-curve points
+    wc = res.evidence["windup_curve"]
+    assert any(q.get("src") == "unitdiag_escalation" for q in wc["points"])
+    assert drive.regs["UM"] == 5 and drive.regs["MO"] == 0
+
+
+def test_jv_noload_gate_adapts_to_iba(tmp_path):
+    """[실기전 #1] geared unit with HIGH running friction (i_c=3.0 A > the
+    legacy fixed 0.10*CL=2.12 A gate) and static breakaway ~5 A: the OLD
+    fixed gate would kill the run at D1 AFTER K_a already succeeded; the
+    adaptive gate max(0.10*CL, 1.2*i_ba) must pass it and identify B/I_c."""
+    drive = HiStictionLowRunSim(i_s=5.0, i_c=3.0)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    jv = res.evidence["jv"]
+    ba = res.evidence["breakaway"]
+    assert ba["i_ba_a"] > 4.5
+    assert jv["i_ss_max_a"] == pytest.approx(1.2 * ba["i_ba_a"])
+    # teeth: the measured steady currents DID exceed the legacy fixed gate
+    assert all(abs(q["i_ss"]) > 0.10 * CL1 for q in jv["points"])
+    assert all(abs(q["i_ss"]) <= jv["i_ss_max_a"] for q in jv["points"])
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+    assert abs(res.i_c / 3.0 - 1.0) <= 0.15
+
+
+class LateLandSim(VPSim):
+    """LATE lash landing + position noise (fable-critic MEDIUM-1 boundary):
+    the rotor crosses a 400 cnt free play at ~50 ms INTO the diag pulse and
+    freezes; the recorded Position carries +-2 cnt noise.  The old 2-point
+    0.8 ms end-velocity diff could read that noise as >3000 cnt/s and pass
+    the landing as sustained rotation — the 10 ms least-squares tail slope
+    must reject it (escalation, never success)."""
+
+    def __init__(self, i_rise=9.5, jiggle_cnt=400.0, delay_s=0.05, **kw):
+        kw.setdefault("i_c", 0.2)
+        VPSim.__init__(self, **kw)
+        self.i_rise = float(i_rise)
+        self.i_s = float(i_rise)             # UM3 drag threshold attribute
+        self.jiggle_left = float(jiggle_cnt)
+        self.delay_s = float(delay_s)
+        self.risen = False
+        self.t_on = None
+
+    def _write(self, name, v):
+        out = VPSim._write(self, name, v)
+        if name == "TC":
+            if v == 0.0:
+                self.risen = True            # ramp end
+                self.t_on = None
+            elif self.risen and abs(v) > 0.3 and self.t_on is None:
+                self.t_on = self.t           # diag pulse onset
+        return out
+
+    def _chan(self, name):
+        if name == "Position":               # quantization/readout noise
+            return float(round(self.p + self.rng.uniform(-2.0, 2.0)))
+        return VPSim._chan(self, name)
+
+    def _step(self, nk):
+        if not self.risen:
+            self.C = self.k_a * self.i_c
+            VPSim._step(self, nk)
+            return
+        cmd = self._cmd_current()
+        self.i_act = self.a_i * self.i_act + (1 - self.a_i) * self.cmd_prev
+        self.cmd_prev = cmd
+        late_now = (self.t_on is not None
+                    and (self.t - self.t_on) >= self.delay_s)
+        if late_now and self.jiggle_left > 0.0 and abs(self.i_act) > 0.3:
+            dp = min(self.jiggle_left, 80000.0 * self.dt)   # ~5 ms crossing
+            self.p += math.copysign(dp, self.i_act)
+            self.jiggle_left -= dp
+            self.v = (math.copysign(dp / self.dt, self.i_act)
+                      if self.jiggle_left > 0.0 else 0.0)
+        else:
+            self.v = 0.0                     # stiction above every rung
+        self.v_meas = self.v + nk
+        if self._rec and self._rec["left"] > 0:
+            r = self._rec
+            if r["k"] % r["tres"] == 0:
+                for nm in r["names"]:
+                    r["bufs"][nm].append(self._chan(nm))
+                r["left"] -= 1
+            r["k"] += 1
+        self.t += self.dt
+
+
+def test_late_landing_with_noise_rejected_by_lsq_tail(tmp_path):
+    """[실기전 #2] late landing passes the TRAVEL test (400 > min_late) — the
+    decision falls entirely on the tail velocity: with +-2 cnt position noise
+    the least-squares 10 ms slope must stay far below 3000 cnt/s ->
+    유격착지/꿈틀 escalation, exhaustion, honest RED (never a false success)."""
+    drive = LateLandSim()                    # default cap 4.24 < 6 A: no drag
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "기계구속" in res.reason and "판별 유보" in res.reason
+    ud = res.evidence["unit_diag"]
+    esc0 = ud["escalations"][0]
+    assert esc0["mode"] == "유격착지/꿈틀"
+    assert esc0["late_travel_cnt"] > 200.0   # travel test PASSED (the trap)
+    assert esc0["v_end_pos_cnt_s"] < 3000.0  # LSQ tail caught the freeze
+    assert drive.regs["MO"] == 0
+
+
 def test_ramp_frac_above_abs_max_is_preflight_red(tmp_path):
     """0.6*CL automatic ramping is FORBIDDEN: ramp_frac beyond the 0.4 abs max
     -> pre-power RED (operator-approval constant, never a parameter path)."""

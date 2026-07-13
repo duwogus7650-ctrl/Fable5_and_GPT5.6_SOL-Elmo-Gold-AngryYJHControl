@@ -53,6 +53,28 @@
       "priority": null,
       "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
     }
+    {
+      "id": "btw-005",
+      "timestamp": "2026-07-14T00:10:00Z",
+      "suggestion": "UI 디자인 고도화 요청: 현 컨셉(앵그리 아노다이즈드 네이비)은 유지하되 색배합을 더 세련되게, 사람들이 봤을 때 '우와' 할 수준으로. HTML 프리뷰(angryyjh_control.html)부터 고도화하고, 좋으면 실제 PyQt6 앱 QSS 테마에도 반영 검토.",
+      "context": { "file": "scratchpad/angryyjh_control.html, main.py (theme QSS)", "pdcaPhase": null, "feature": "UI polish — premium instrument aesthetic" },
+      "category": "improvement",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-006",
+      "timestamp": "2026-07-14T00:40:00Z",
+      "suggestion": "①Phase 1 R/L(+Ke) 측정값을 Motor Settings 화면에도 자동 표시(승인됨). ②Motion 창 Position이 매번 똑같은 non-zero 값으로 보이는 것 = EnDat 절대위치 오프셋(정상, 버그 아님; 폴링은 매 주기 갱신됨). 다만 사용자 혼동 → Position이 '절대 오프셋'임을 UI에서 더 명확히(예: 오프셋 표기 or 자동갱신 인디케이터) 개선 검토.",
+      "context": { "file": "main.py (motor_params/tuning result 핸들러, telemetry 표시)", "pdcaPhase": null, "feature": "UI wiring — R/L auto-display + position clarity" },
+      "category": "improvement",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
   ],
-  "stats": { "total": 4, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+  "stats": { "total": 6, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
 }

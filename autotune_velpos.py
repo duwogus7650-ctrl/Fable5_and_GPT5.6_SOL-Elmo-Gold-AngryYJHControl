@@ -147,6 +147,26 @@ RAMP_FAST_POLL_S = 0.01
 HOLD_INSTANT_GUARD_FRAC = 0.25  # HOLD: |VX| >= 0.25*guard (300 rpm) confirms
                           # in ONE poll (closes the 150 ms window hole where a
                           # high-current breakaway could reach 3300 rpm)
+# --- HOLD sustain AND-rule (fable-physics 개정6: live i_ba=1.33 A was FAKE —
+# backlash free flight with MONOTONICALLY DECAYING velocity 89k->68k->55k->6k;
+# magnitude-only sustain (vx>3k x3) passed a dissipating transit) -------------
+HOLD_POLLS_MAX = 15       # extended confirm window (450 ms) — a PROMISING
+                          # (non-decaying) slow breakaway may need ~8 polls to
+                          # accumulate the travel proof; a transit CANNOT
+                          # (its travel is bounded by the free play)
+SUSTAIN_VX_END_FRAC = 0.5  # sustain/collapse split: vx_now vs HOLD-max vx
+                          # (live retrofit: 6k/89k = 0.07 -> stall, correct)
+WINDUP_CNT_PER_A = 60.0   # elastic windup model [cnt/A] (fable-physics)
+UNITDIAG_END_V_MIN = 3000.0  # pulse-end POSITION-derived velocity floor
+UNITDIAG_TAIL_S = 0.010   # tail-slope window (~10 ms LEAST-SQUARES — a 2-point
+                          # 0.8 ms diff turns +-1.5 cnt position noise into
+                          # >3000 cnt/s: module discipline "slopes by least
+                          # squares, never point differences")
+JV_NOLOAD_IBA_FRAC = 1.2  # D1 no-load current gate = max(0.10*CL, 1.2*i_ba):
+                          # running friction is bounded above by the STATIC
+                          # breakaway current i_ba (with margin for B*v) — the
+                          # fixed 0.10*CL predates the i_ba>4.24 A field fact
+                          # and would kill a geared run AFTER K_a succeeded
 PULSE_FRAC_ABS_MAX = 0.4  # main-pulse i0 ceiling (0.2 cap RETIRED: a geared
                           # unit with i_ba>4.24 A cannot be measured at 2.12 A)
 NET_FRICTION_FRAC = 0.75  # tp sizing net current: i_net = i0 - 0.75*i_ba
@@ -204,10 +224,15 @@ class AutotuneVPParams:
     # 0.76 deg output; the true load breakaway is >1.52 A).  Physics
     # invariant: lash traversal is FINITE (<= free play), true breakaway is
     # UNBOUNDED under held torque.
-    hold_window_polls: int = 5          # HOLD confirm window (150 ms @ 30 ms)
-    sustain_dpx_cnt: float = 6000.0     # sustained travel since detection [cnt]
-                                        # (> lash upper bound 1.0 deg out = 5461)
-    sustain_vx_consec: int = 3          # |VX|>detect_vx consecutive polls
+    hold_window_polls: int = 5          # legacy min window (evidence only; the
+                                        # AND-rule extends to HOLD_POLLS_MAX)
+    sustain_dpx_cnt: float = 13000.0    # sustained-travel FLOOR [cnt] (개정6:
+                                        # observed free-play envelope >=8634,
+                                        # unit-dependent 2k..9k -> floor 13000;
+                                        # effective thr = max(this, 2*lash실측)
+    sustain_vx_consec: int = 3          # DEPRECATED (개정6): magnitude-only
+                                        # consecutive-vx sustain passed decaying
+                                        # transits — replaced by the AND-rule
     tp_target_rpm: float = 800.0        # Tp sizing target speed
     jv_speeds_rpm: Sequence[float] = (300.0, 900.0)
     rec_dt_s: float = 400e-6            # recorder sample time (tres = rec_dt/TS)
@@ -1124,11 +1149,10 @@ def _breakaway_ramp(ctx: _Ctx):
     # >1.52 A).  Physics invariant: lash traversal is FINITE (<= free play);
     # true load breakaway is UNBOUNDED under held torque.  On RAMP detection
     # the TC is FROZEN (never increased, never cut) for <= hold_window_polls:
-    #   SUSTAINED = cumulative travel since detection > sustain_dpx_cnt
-    #               (above any credible lash: 1.0 deg output = 5461 cnt; a bare
-    #               motor's 33 deg satisfies instantly)
-    #               OR |VX| > detect_vx for sustain_vx_consec consecutive polls
-    #             -> i_ba = frozen current, TC=0, done.
+    #   SUSTAINED = cumulative travel > max(13000 cnt, 2*lash실측)
+    #               AND vx_now >= 0.5*vx_max (개정6 AND-rule — a decaying
+    #               transit NEVER sustains; magnitude-only vx passed the live
+    #               fake i_ba=1.33 A)  -> i_ba = frozen current, TC=0, done.
     #   STALLED   = 2 consecutive quiet polls (or window exhausted)
     #             -> classified as lash traversal: record the travel in
     #                lash_events and RESUME the ramp from the same point.
@@ -1201,14 +1225,26 @@ def _breakaway_ramp(ctx: _Ctx):
             if px_f is not None:
                 px_prev = px_f
         px_detect = px_f
-        vx_consec = 0
         stall = 0
         cum = 0.0
+        vx_max = 0.0
+        vxa2 = 0.0
         sustained = False
+        collapsed = False
+        # 개정6 AND-rule: SUSTAIN = cum > max(floor 13000, 2*lash실측)
+        #                 AND vx_now >= 0.5*vx_max (a DECAYING transit never
+        #                 qualifies — live retrofit: 6k/89k=0.07 -> stall).
+        # COLLAPSE (vx_now < 0.5*vx_max after real motion) classifies the
+        # dissipating free flight immediately; a PROMISING slow breakaway
+        # (vx non-decaying) keeps the window open up to HOLD_POLLS_MAX —
+        # its travel is unbounded and will cross the threshold; a transit's
+        # travel is bounded by the free play and cannot.
+        max_lash = max((le["travel_cnt"] for le in lash_events), default=0.0)
+        sustain_thr = max(p.sustain_dpx_cnt, 2.0 * max_lash)
         vx_instant = HOLD_INSTANT_GUARD_FRAC * ctx.vx_guard_cnt
         prev_mode = ctx.guard_vx_only
         ctx.guard_vx_only = True        # MEDIUM: HOLD window = VX-only guard
-        for _h in range(max(1, int(p.hold_window_polls))):
+        for _h in range(HOLD_POLLS_MAX):
             _sleep(ctx, p.poll_dt)
             px2 = _cmd(ctx, "PX")
             vx2 = _cmd(ctx, "VX")
@@ -1220,16 +1256,19 @@ def _breakaway_ramp(ctx: _Ctx):
             vxa2 = abs(float(vx2)) if isinstance(vx2, (int, float)) else 0.0
             if px2_f is not None and px_detect is not None:
                 cum = abs(px2_f - px_detect)
-            vx_consec = vx_consec + 1 if vxa2 > p.detect_vx else 0
+            vx_max = max(vx_max, vxa2)
             moving = step_d > p.detect_dpx or vxa2 > p.detect_vx
             stall = 0 if moving else stall + 1
             trace.append((round(tc, 4), round(step_d, 1), round(vxa2, 1),
                           "HOLD"))
-            if vxa2 >= vx_instant:      # 즉시확정: 고전류 이탈이 150 ms 확인창에서
-                sustained = True        # 3300 rpm까지 크는 구멍 봉쇄 (0.25*guard,
-                break                   # 유격 자유비행으론 도달 불가한 속도)
-            if cum > p.sustain_dpx_cnt or vx_consec >= p.sustain_vx_consec:
+            if vxa2 >= vx_instant:      # 즉시확정 (유격비행 도달불가 속도)
                 sustained = True
+                break
+            if cum > sustain_thr and vxa2 >= SUSTAIN_VX_END_FRAC * vx_max:
+                sustained = True        # AND-rule: travel proof + no decay
+                break
+            if vx_max > p.detect_vx and vxa2 < SUSTAIN_VX_END_FRAC * vx_max:
+                collapsed = True        # monotone transit dissipation (live)
                 break
             if stall >= 2:
                 break
@@ -1237,8 +1276,11 @@ def _breakaway_ramp(ctx: _Ctx):
         if sustained:
             i_ba = tc               # frozen detection current = true breakaway
             break
-        # finite travel then stop = backlash traversal: record + resume ramp
-        lash_events.append({"tc_a": round(tc, 4), "travel_cnt": round(cum, 1)})
+        # finite/decaying travel = backlash traversal: record + resume ramp
+        lash_events.append({"tc_a": round(tc, 4), "travel_cnt": round(cum, 1),
+                            "vx_max": round(vx_max, 1),
+                            "vx_end": round(vxa2, 1),
+                            "collapsed": bool(collapsed)})
         hits = 0
     if len(lash_events) > 2:
         ctx.warnings.append("브레이크어웨이 램프: 유격/실속 이벤트 %d회 — 디텐트"
@@ -1275,8 +1317,9 @@ def _breakaway_ramp(ctx: _Ctx):
         "breakaway_k": p.breakaway_k, "trace_tc_dpx_vx": trace[:200],
         "lash_events": lash_events,
         "hold_window_polls": p.hold_window_polls,
+        "hold_polls_max": HOLD_POLLS_MAX,
         "sustain_dpx_cnt": p.sustain_dpx_cnt,
-        "sustain_vx_consec": p.sustain_vx_consec,
+        "sustain_vx_end_frac": SUSTAIN_VX_END_FRAC,
         "note": "i_ba=브레이크어웨이 전류(정지마찰 전류등가 상계) — B·I_c 식별"
                 " 선험치로 evidence 보존; probe=clip(k·i_ba, probe_i_a,"
                 " 0.2·CL[1]); 검출=폴 간 델타 2연속 + HOLD-CONFIRM 지속확인"
@@ -1339,13 +1382,18 @@ def _unit_diag(ctx: _Ctx, i_diag: float = UNITDIAG_I_A) -> float:
         if fail is None:
             return i_try                    # success — corrections adopted
         escal.append(fail)
+        wc = ctx.evidence.get("windup_curve")
+        if isinstance(wc, dict):        # 개정6 fix-5: multi-point windup curve
+            wc["points"].append({"tc_a": round(i_try, 3), "iq_a": None,
+                                 "dpx_cnt": fail.get("d_pos_cnt"),
+                                 "src": "unitdiag_escalation"})
         if idx == len(ladder) - 1:
-            # LOW-2 (fable-critic): this exhaustion state (RECORDED currents
-            # witnessed real torque, no motion at the cap) is the SAME premise
-            # as the ramp's PART B trigger — route through the drag oracle
-            # when the gate allows, else mark the verdict 판별 유보.
-            if fail.get("mode") == "무이동":
-                _drag_route(ctx, i_cap)     # raises the routed RED on success
+            # LOW-2 + 개정6 fix-3: ANY exhaustion (무이동 OR 유격착지/꿈틀)
+            # means NO SUSTAINED ROTATION was achieved — the same premise as
+            # the ramp cap-out, so route through the drag oracle when the
+            # gate allows (the live fake motion skipped the drag exactly
+            # here), else mark the verdict 판별 유보.
+            _drag_route(ctx, i_cap)         # raises the routed RED on success
             raise AbortError(
                 "UNIT-DIAG: 축 구속/고마찰(기계구속) — 상향 %d회, 최종"
                 " i_diag=%.2fA(캡 %.2fA)에도 지속모션 없음 (ΔPos=%.0fcnt,"
@@ -1538,6 +1586,27 @@ def _unit_diag_pulse(ctx: _Ctx, i_diag: float, escal: list):
         # no usable in-pulse motion — same class as 무이동, escalate
         return {"mode": "무이동", "i_diag_a": i_diag, "d_pos_cnt": d_pos,
                 "pulse_travel_cnt": pulse_travel}
+    # 개정6 fix-2: success = SUSTAINED ROTATION, not "moved" — a 269 cnt
+    # backlash jiggle passed the old ratio test.  Require BOTH:
+    #   |late_travel| > max(MIN_DPOS, 3 x elastic-windup model 60*i_diag)
+    #   AND pulse-end velocity > 3000 cnt/s, POSITION-derived (the velocity
+    #   channel is itself under diagnosis — must not gate on it).
+    min_late = max(UNITDIAG_MIN_DPOS, 3.0 * WINDUP_CNT_PER_A * i_diag)
+    # tail velocity by LEAST SQUARES over ~10 ms (fable-critic MEDIUM-1: the
+    # 2-point 0.8 ms diff read +-1.5 cnt position noise as >3000 cnt/s and
+    # could pass a LATE lash landing as sustained rotation)
+    n_tail = max(4, int(round(UNITDIAG_TAIL_S / (g * dt))))
+    tail_idx = w_idx[-min(n_tail, len(w_idx)):]
+    slope_tail, _ot, _rt = window_slope(t_true[tail_idx],
+                                        pos[tail_idx].astype(float))
+    v_end_pos = abs(slope_tail)
+    ev["late_travel_min_cnt"] = round(min_late, 1)
+    ev["v_end_pos_cnt_s"] = round(v_end_pos, 1)
+    if abs(late_travel) < min_late or v_end_pos < UNITDIAG_END_V_MIN:
+        return {"mode": "유격착지/꿈틀", "i_diag_a": i_diag,
+                "d_pos_cnt": d_pos, "pulse_travel_cnt": pulse_travel,
+                "late_travel_cnt": late_travel,
+                "v_end_pos_cnt_s": round(v_end_pos, 1)}
     if abs(late_travel) < 0.2 * abs(pulse_travel):
         return {"mode": "유격착지", "i_diag_a": i_diag, "d_pos_cnt": d_pos,
                 "pulse_travel_cnt": pulse_travel,
@@ -1865,10 +1934,29 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     ctx.evidence["pulse_runs"] = runs
     k_a = 0.5 * (runs[0]["k_a_diff"] + runs[1]["k_a_diff"])
     _emit(ctx, "IDENT_KA", "K_a=%.4g cnt/s²/A (±펄스 차분, 런2회 평균)" % k_a)
+    # 개정6 fix-5: ABSOLUTE plausibility advisory — the live 46,000 (1/125 of
+    # the FF[1]-implied value) should have been flagged loudly on the spot
+    ff1_adv = ctx.readings.get("FF[1]")
+    if isinstance(ff1_adv, (int, float)) and ff1_adv > 0 and k_a > 0:
+        ka_impl = 1.0 / ff1_adv
+        ratio = k_a / ka_impl
+        if not (0.1 <= ratio <= 10.0):
+            ctx.warnings.append(
+                "K_a 절대 타당성 이탈 — 실측 %.3g = FF[1] 함의 %.3g의 %.3g×"
+                " ([0.1,10]× 밖): 식별 오염 의심(유격/단위), 결과 신뢰불가"
+                % (k_a, ka_impl, ratio))
 
     # ---- D1 JV steady states (method B friction + rotating commutation check) ---------
     jv_pts = []
     stop_cnt = ctx.ca18 * JV_STOP_RPM / 60.0
+    # adaptive no-load current gate (fable-critic #1): this unit's geared
+    # running friction can exceed the legacy fixed 0.10*CL (=2.12 A) at
+    # 300 rpm while being perfectly healthy — i_ba (static breakaway) bounds
+    # the running friction from above, so the gate scales with it
+    i_ba_jv = ctx.evidence.get("breakaway", {}).get("i_ba_a")
+    i_ss_max = (max(0.10 * ctx.cl1, JV_NOLOAD_IBA_FRAC * float(i_ba_jv))
+                if isinstance(i_ba_jv, (int, float)) and i_ba_jv > 0
+                else 0.10 * ctx.cl1)
     for rpm in list(p.jv_speeds_rpm) + [-x for x in p.jv_speeds_rpm]:
         jv = ctx.ca18 * rpm / 60.0
         _seg(ctx, "jv")
@@ -1883,9 +1971,10 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         jv_pts.append({"rpm": rpm, "jv_cnt_s": jv, "v_ss": v_ss, "i_ss": i_ss})
         if v_ss * jv <= 0:
             raise AbortError("JV 커뮤검증 실패: sign(v) ≠ sign(JV) @%.0frpm" % rpm)
-        if abs(i_ss) > 0.10 * ctx.cl1:
+        if abs(i_ss) > i_ss_max:
             raise AbortError("JV 무부하전류 과대 |I_ss|=%.2fA > %.2fA @%.0frpm"
-                             % (abs(i_ss), 0.10 * ctx.cl1, rpm))
+                             " (게이트=max(0.10·CL, %.1f·i_ba))"
+                             % (abs(i_ss), i_ss_max, JV_NOLOAD_IBA_FRAC))
     _write(ctx, "JV", 0.0, allow_motion=True)
     _cmd(ctx, "ST", allow_motion=True)
     waited = 0.0
@@ -1910,6 +1999,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     coef, *_ = np.linalg.lstsq(A, y, rcond=None)
     b_jv, i_c_jv = float(coef[0]), float(coef[1])
     ctx.evidence["jv"] = {"points": jv_pts, "b_jv": b_jv, "i_c_jv": i_c_jv,
+                          "i_ss_max_a": i_ss_max,
                           # breakaway prior (B1.4): static friction upper bound
                           # — expect i_ba >= I_c (stiction >= Coulomb); kept as
                           # a cross-reference, NOT a gate (기록만, 2026-07-13)
@@ -1946,7 +2036,11 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     gates["G1c_pos_2nd"] = {"dev": g1c, "tol": G1C_TOL, "pass": g1c <= G1C_TOL}
     g1d = max(abs(q["int_v"] / q["d_pos"] - 1.0) if q["d_pos"] else float("inf")
               for q in runs)
-    gates["G1d_intv_dpos"] = {"dev": g1d, "tol": G1D_TOL, "pass": g1d <= G1D_TOL}
+    gates["G1d_intv_dpos"] = {"dev": g1d, "tol": G1D_TOL,
+                              "pass": g1d <= G1D_TOL,
+                              "note": "본펄스 캡처의 ∫v·dt vs ΔPos 자동검증 —"
+                                      " 레코딩 dt(tres=4 상한 ×4) 유계항목 폐색"
+                                      " (U-P5, 개정6 fix-5)"}
     r2min = min(q["r2"] for q in runs)
     gates["G1e_window_r2"] = {"r2": r2min, "min": G1E_R2_MIN,
                               "pass": r2min >= G1E_R2_MIN}

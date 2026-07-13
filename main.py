@@ -927,6 +927,15 @@ class MainWindow(QtWidgets.QMainWindow):
             g["r_pp"].setText("%.6g Ω" % res.r_pp_ohm)
         if res.l_pp_h is not None:
             g["l_pp"].setText("%.6g µH" % (res.l_pp_h * 1e6))
+        # btw-006: surface the Phase-1-measured R/L on the Motor Settings page too.
+        # The drive itself stores no R/L (Current ID computes them), so those fields
+        # would otherwise stay "—"; mirror the measured values here for convenience.
+        mf = getattr(self, "motor_fields", None)
+        if mf:
+            if res.r_pp_ohm is not None and "R" in mf:
+                mf["R"].setText("%.6g Ω  · Phase 1 측정" % res.r_pp_ohm)
+            if res.l_pp_h is not None and "L" in mf:
+                mf["L"].setText("%.6g mH  · Phase 1 측정" % (res.l_pp_h * 1e3))
         if res.kp_v_per_a is not None:
             g["kp_cur"].setText("%.6g V/A" % res.kp_v_per_a)
         if res.ki_hz is not None:
