@@ -42,6 +42,17 @@
       "priority": null,
       "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
     }
+    {
+      "id": "btw-004",
+      "timestamp": "2026-07-13T10:40:00Z",
+      "suggestion": "상태 메모(퇴근): 드라이브 전원 off OK(모터 MO=0 탈전·SV설정 유지). Phase 2가 정직 RED(캡 4.24A/출력~15N·m에도 브레이크어웨이 없음, IQ=4.21A 토크 실인가) — 코드 정상, 하드웨어 원인. 다음 세션 확인: 기어드모터 홀딩 브레이크 미해제 의심(우리 앱이 EAS와 달리 브레이크 해제 안 하는지).",
+      "context": { "file": "autotune_velpos.py _breakaway_ramp", "pdcaPhase": null, "feature": "Phase 2 blocked on mechanical/brake" },
+      "category": "general",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
   ],
-  "stats": { "total": 3, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+  "stats": { "total": 4, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
 }

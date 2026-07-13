@@ -124,11 +124,43 @@ PRE_ROLL_S = 0.05         # quiet pre-roll in each recording
 TP_MIN_S, TP_MAX_S = 0.05, 0.30
 GUARD_PERIOD_S = 0.03     # MF/LC/VX poll while MO=1
 GUARD_RPM = 1200.0        # |VX| ceiling (cnt/s via CA[18])
-MAINPULSE_STOP_FRAC = 0.9 # main-pulse motion early-stop at 0.9*guard (HIGH fix
-                          # 2026-07-13: mover-floored i0 at TP_MIN clip peaks
-                          # ~1071 rpm — correctly sized pulses stay BELOW this
-                          # cut; a mis-sized pulse is truncated before the
-                          # guard and analyzed from the captured window)
+MAINPULSE_STOP_FRAC = 0.6   # main-pulse motion early-stop at 0.6*guard
+                          # (fable-critic MEDIUM: real serial latency makes the
+                          # effective poll period ~2x — normal sizing rises
+                          # 400..1100 rpm per REAL poll, so the cut->guard band
+                          # must be wide; the sizing TARGET is clamped below
+                          # the cut so correct pulses are never truncated)
+PULSE_TARGET_CAP_FRAC = 0.8  # effective sizing target <= 0.8*cut (=576 rpm):
+                          # target must sit UNDER the runtime cut by margin
+PULSE_CUT_POLL_S = 0.01   # VX-only cut poll during main pulses (10 ms: worst
+                          # per-poll rise stays under the cut->guard band)
+# --- raised-cap ramp (fable-physics 2026-07-13: live unit shows NO breakaway
+# at 0.2*CL=4.24 A -> i_ba>4.24 A confirmed; cap raised to 0.4*CL=8.49 A for
+# THIS unit via params.ramp_frac=0.4; the DEFAULT stays 0.2 for bare motors) --
+RAMP_FRAC_ABS_MAX = 0.4   # automatic ramp/pulse current ceiling [frac of CL[1]]
+RAMP_FRAC_OPERATOR_ONLY = 0.6   # NEVER automatic — operator-approved sessions
+                          # may edit this constant deliberately (자동 램프 금지)
+RAMP_FAST_POLL_ABOVE_A = 2.0    # above this TC: VX-only polls at 10 ms (the
+                          # 30 ms PX+VX pair costs ~60 ms real period; a
+                          # high-current snap grows ~2700 rpm in 2 polls)
+RAMP_FAST_POLL_S = 0.01
+HOLD_INSTANT_GUARD_FRAC = 0.25  # HOLD: |VX| >= 0.25*guard (300 rpm) confirms
+                          # in ONE poll (closes the 150 ms window hole where a
+                          # high-current breakaway could reach 3300 rpm)
+PULSE_FRAC_ABS_MAX = 0.4  # main-pulse i0 ceiling (0.2 cap RETIRED: a geared
+                          # unit with i_ba>4.24 A cannot be measured at 2.12 A)
+NET_FRICTION_FRAC = 0.75  # tp sizing net current: i_net = i0 - 0.75*i_ba
+WINDUP_LEVELS_A = (1.0, 2.0, 4.0, 6.0, 8.0)   # windup-curve capture currents
+# --- PART B: UM=3 low-speed drag discrimination (commutation-agnostic) -------
+UM3_DRAG_I_A = 6.0        # held stator current [A] (torque oracle ~Kt*6=0.72 N*m)
+UM3_TICKS_PER_EREV = 512  # PA unit in UM=3: 512 ticks / electrical rev (CR)
+UM3_EREV_PER_S = 1.0      # sweep rate ~1 elec rev/s = motor 1.4 rpm (guard-free)
+UM3_REVS = 3              # per direction (motor 51 deg = output 1.7 deg)
+UM3_STEP_S = 0.03         # PA step period
+UM3_FOLLOW_MIN = 0.9      # follow ratio |dPX|/(revs*CA[18]/CA[19]) threshold
+UM3_EARLY_CHECK_EREV = 0.5  # HIGH-2: effectiveness check point [elec rev]
+UM3_EARLY_MIN_FRAC = 0.2  # PX response must exceed this frac of commanded travel
+KT_NOMINAL = 0.12         # N*m/A — message annotation only, not a gate
 SEG_TIMEBOX_S = 5.0
 TOTAL_BUDGET_S = 120.0
 JV_SETTLE_S = 0.8
@@ -377,6 +409,10 @@ class _Ctx:
         # every subsequent _record_fetch (v *= s_scale, dt *= g_dt)
         self.s_scale = 1.0              # velocity-channel scale (true = rec * s)
         self.g_dt = 1.0                 # recording dt factor (true = g * assumed)
+        self.guard_vx_only = False      # fast windows: skip MF/LC serial reads
+                                        # (fable-critic MEDIUM: the 3-read guard
+                                        # costs ~45 ms real - VX alone keeps the
+                                        # cut/latch latency inside the band)
 
 
 def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
@@ -428,13 +464,17 @@ def _check_cancel(ctx: _Ctx):
 
 def _guard(ctx: _Ctx):
     """30 ms in-motion guard (SPEC §4): MF!=0, LC==1, |VX|>1200rpm, segment
-    timebox, total budget -> abort."""
-    mf = _cmd(ctx, "MF")
-    if isinstance(mf, (int, float)) and mf != 0:
-        raise AbortError("모터 폴트 MF=0x%X" % int(mf))
-    lc = _cmd(ctx, "LC")
-    if lc == 1:
-        raise AbortError("전류 리미터 포화 LC=1")
+    timebox, total budget -> abort.  guard_vx_only windows (pulse/HOLD/fast
+    ramp) skip the MF/LC serial reads - the real latency of the 3-read guard
+    (~45 ms) would blow the cut->guard margin; MF/LC coverage resumes at the
+    next normal window (fire-safe: HL[2]/limits backstop stays armed)."""
+    if not ctx.guard_vx_only:
+        mf = _cmd(ctx, "MF")
+        if isinstance(mf, (int, float)) and mf != 0:
+            raise AbortError("모터 폴트 MF=0x%X" % int(mf))
+        lc = _cmd(ctx, "LC")
+        if lc == 1:
+            raise AbortError("전류 리미터 포화 LC=1")
     vx = _cmd(ctx, "VX")
     if isinstance(vx, (int, float)) and abs(vx) > ctx.vx_guard_cnt:
         raise AbortError("과속 가드 |VX|=%.0f cnt/s > %.0f (1200rpm)"
@@ -478,20 +518,36 @@ def _size_tp(k_a_probe: float, i0: float, target_cnt: float) -> float:
     return min(max(target_cnt / (k_a_probe * i0), TP_MIN_S), TP_MAX_S)
 
 
+def _i_net(i0: float, i_ba) -> float:
+    """Net accelerating current for tp sizing (fable-physics cap-raise): the
+    load friction absorbs ~NET_FRICTION_FRAC*i_ba of the commanded current on
+    a geared unit, so the speed prediction must use i_net = i0 - 0.75*i_ba
+    (floored at 0.25*i0 so a near-friction i0 sizes to TP_MAX instead of
+    diverging).  i_ba unknown -> i0 unchanged (bare-motor behavior)."""
+    if isinstance(i_ba, (int, float)) and i_ba > 0:
+        return max(i0 - NET_FRICTION_FRAC * float(i_ba), 0.25 * i0)
+    return i0
+
+
 def _pulse_sleep_with_cut(ctx: _Ctx, dur_s: float, vx_cut_cnt: float) -> bool:
     """Sleep dur_s in 30 ms polls; True when |VX| crossed vx_cut_cnt (motion
     early-stop, UNIT-DIAG pattern extended to the MAIN pulses — HIGH fix:
     any mis-sized pulse is cut before the overspeed guard and analyzed from
     the captured window; a correctly sized pulse never reaches the cut)."""
     remaining = float(dur_s)
-    while remaining > 1e-9:
-        step = min(GUARD_PERIOD_S, remaining)
-        _sleep(ctx, step)
-        remaining -= step
-        vx = _cmd(ctx, "VX")
-        if isinstance(vx, (int, float)) and abs(vx) > vx_cut_cnt:
-            return True
-    return False
+    prev_mode = ctx.guard_vx_only
+    ctx.guard_vx_only = True            # MEDIUM: no MF/LC serial reads inside
+    try:                                # the cut window (latency guard band)
+        while remaining > 1e-9:
+            step = min(PULSE_CUT_POLL_S, remaining)
+            _sleep(ctx, step)
+            remaining -= step
+            vx = _cmd(ctx, "VX")
+            if isinstance(vx, (int, float)) and abs(vx) > vx_cut_cnt:
+                return True
+        return False
+    finally:
+        ctx.guard_vx_only = prev_mode
 
 
 def _wait_rest(ctx: _Ctx, timeout_s: float = 5.0):
@@ -583,22 +639,27 @@ def _rec_names(ctx: _Ctx):
     return [ctx.sig["vel"], ctx.sig["pos"], ctx.sig["cur"], ctx.sig["icmd"]]
 
 
-def _record_start(ctx: _Ctx, duration_s: float, tres_override: Optional[int] = None):
+def _record_start(ctx: _Ctx, duration_s: float, tres_override: Optional[int] = None,
+                  extra_names: Optional[Sequence[str]] = None):
     """Arm the free-running recorder for `duration_s` (tres from rec_dt; the
-    UNIT-DIAG passes tres_override=1 for the Phase-1-verified dt=TS base)."""
+    UNIT-DIAG passes tres_override=1 for the Phase-1-verified dt=TS base).
+    extra_names: optional additional personality channels (windup-curve
+    companion capture) — the 16384-total-sample cap scales with the count."""
+    names = _rec_names(ctx) + list(extra_names or [])
     if tres_override is not None:
         tres = int(tres_override)
     else:
         tres = max(1, int(round(ctx.params.rec_dt_s / ctx.ts_s)))
     length = int(math.ceil(duration_s / (tres * ctx.ts_s)))
-    if length > 16384 // 4:                     # per-signal cap -> coarser dt
-        tres *= 2                               # SPEC §6 edge: tres fallback
+    cap = 16384 // max(4, len(names))           # per-signal cap -> coarser dt
+    while length > cap:                         # SPEC §6 edge: tres fallback
+        tres *= 2
         length = int(math.ceil(duration_s / (tres * ctx.ts_s)))
     fn = getattr(ctx.link, "record_start", None)
     if not callable(fn):
         raise AbortError("링크에 record_start() 없음 — 레코더 분리 래퍼 필요")
     try:
-        fn(_rec_names(ctx), length, time_resolution=tres)
+        fn(names, length, time_resolution=tres)
     except Exception as e:
         raise AbortError("레코딩 시작 실패: %s" % e)
     return tres * ctx.ts_s
@@ -630,8 +691,11 @@ def _record_fetch(ctx: _Ctx) -> dict:
         ctx.warnings.append("레코딩 dt 미보고 — rec_dt=%.3gs 잠정 적용 (U-P5)" % dt)
     # apply the UNIT-DIAG-confirmed unit corrections (§9: 이후 K_a측정은 확정된
     # s·dt 보정 적용).  Both stay 1.0 until B1.5 establishes them.
+    base = {ctx.sig["vel"], ctx.sig["pos"], ctx.sig["cur"], ctx.sig["icmd"],
+            "dt"}
+    extras = {k: np.asarray(a, float) for k, a in out.items() if k not in base}
     return {"v": v * ctx.s_scale, "v_raw": v, "p": p, "i": i, "icmd": icmd,
-            "dt": float(dt) * ctx.g_dt}
+            "dt": float(dt) * ctx.g_dt, "extras": extras}
 
 
 # ======================================================================================
@@ -688,6 +752,12 @@ def _do_abort(ctx: _Ctx, reason: str):
                                                  allow_motion=True))
     _try("A_mo MO=0", lambda: ctx.link.command("MO=0", timeout_ms=1000))
     ctx.motor_on = False
+    if "UM" in set(ctx.dirty) and "UM" in ctx.snapshot:
+        # PART B wrote UM=3 for the drag oracle: ALWAYS restore the snapshot
+        # mode (double cover with the drag's own finally-restore)
+        _try("A_um UM=%s 복원" % ctx.snapshot["UM"],
+             lambda: ctx.link.command("UM=%s" % _fmt(ctx.snapshot["UM"]),
+                                      timeout_ms=1000))
     _try("A_lim restore", lambda: _restore_limits(ctx))
     ctx.evidence["abort"] = {"reason": reason, "segment": ctx.segment,
                              "steps_done": steps}
@@ -829,6 +899,174 @@ def _decimate(a, max_n: int = 512):
     return [round(float(x), 3) for x in a[::step]]
 
 
+def _um3_drag(ctx: _Ctx):
+    """PART B (fable-physics §4): UM=3 low-speed drag discrimination — a
+    COMMUTATION-AGNOSTIC torque oracle, run only when the raised-cap ramp
+    still finds no breakaway with real torque.
+
+    UM=3 (stepper) commands the stator angle directly, bypassing the
+    commutation mapping entirely (Phase-1 injected 10.6 A this way), so a
+    held TC=6 A guarantees ~Kt*6 = 0.72 N*m at the shaft regardless of CA[7].
+    PA is swept in ELECTRICAL ticks (512/elec rev, CR :15742-15745), INTEGER
+    values (CR :12471), and each PA is armed with BG (CR :12476 "Effective on
+    the next call to BG"; harmless if the write were immediate) — ~1 elec
+    rev/s nominal = motor 1.4 rpm (guard-irrelevant), UM3_REVS per direction
+    (motor 51 deg = output 1.7 deg).  BG runs the PTP profiler (SP/AC/DC), so
+    the 1 rev/s rate is NOT guaranteed — and PA may be clipped by the
+    VH[3]/VL[3]/HL[3]/LL[3] soft limits (live probe: all 0!).  Therefore an
+    EARLY EFFECTIVENESS CHECK is mandatory (fable-critic HIGH-2): at ~0.5
+    elec rev into the FIRST direction the PX response must exceed
+    UM3_EARLY_MIN_FRAC of the commanded travel, else pa_effective=False is
+    returned and the caller must raise the honest "판별 불가" RED — NEVER a
+    mechanical verdict (a dead stator angle and a stuck axis are headless-
+    indistinguishable).  follow = |dPX| / (revs * CA[18]/CA[19]), min of both
+    directions.  UM is restored in the normal path AND by the abort chain.
+    Returns the evidence dict or None when CA[19] is unreadable."""
+    ca19 = ctx.readings.get("CA[19]")
+    if not isinstance(ca19, (int, float)) or ca19 <= 0:
+        ctx.warnings.append("CA[19] 판독불가(%r) — UM3 드래그 판별 생략" % (ca19,))
+        return None
+    cnt_per_erev = ctx.ca18 / float(ca19)
+    _emit(ctx, "BREAKAWAY", "UM3 저속 드래그 판별: TC=%.1fA 고정, PA %d elec rev/방향"
+          " (~%.1f rpm, 출력 ≈1.7°) — 커뮤 무관 토크 오라클"
+          % (UM3_DRAG_I_A, UM3_REVS, UM3_EREV_PER_S * 60.0 / float(ca19)))
+    _cmd(ctx, "MO=0")
+    ctx.motor_on = False
+    _write(ctx, "UM", 3)
+    ev = {"i_drag_a": UM3_DRAG_I_A, "cnt_per_erev": cnt_per_erev,
+          "revs_per_dir": UM3_REVS, "threshold": UM3_FOLLOW_MIN,
+          "directions": []}
+    ctx.evidence["um3_drag"] = ev
+    try:
+        _cmd(ctx, "MO=1", allow_motion=True)
+        ctx.motor_on = True
+        _seg(ctx, "tc")
+        _write(ctx, "TC", UM3_DRAG_I_A, allow_motion=True)
+        _sleep(ctx, 0.3)                # align snap (<= half elec pitch) + settle
+        # NOTE: even the PA READ passes the motion-gated prefix filter
+        # (prefix "PA") — allow_motion on a pure query is harmless
+        pa_rd = _cmd(ctx, "PA", allow_motion=True)
+        pa = float(pa_rd) if isinstance(pa_rd, (int, float)) else 0.0
+        follows = []
+        ev["pa_effective"] = True
+        for d_idx, sign in enumerate((+1.0, -1.0)):
+            _seg(ctx, "tc")             # re-arm the 5 s timebox per direction
+            px_a = _cmd(ctx, "PX")
+            px_a_f = float(px_a) if isinstance(px_a, (int, float)) else None
+            ticks_total = UM3_REVS * UM3_TICKS_PER_EREV
+            n = max(1, int(math.ceil(UM3_REVS / UM3_EREV_PER_S / UM3_STEP_S)))
+            k_early = max(1, int(math.ceil(
+                n * UM3_EARLY_CHECK_EREV / UM3_REVS)))
+            trace = []
+            for k in range(1, n + 1):
+                pa_t = pa + sign * ticks_total * k / n
+                # CR :12471/:12476 — PA is an INTEGER and takes effect on BG
+                # (BG is harmless if the drive applied PA immediately)
+                _write(ctx, "PA", int(round(pa_t)), allow_motion=True)
+                _cmd(ctx, "BG", allow_motion=True)
+                _sleep(ctx, UM3_STEP_S)
+                if k % 8 == 0:          # 지령각-PX 추종 시계열 (decimated)
+                    pxk = _cmd(ctx, "PX")
+                    if isinstance(pxk, (int, float)):
+                        trace.append((round(pa_t - pa, 1), round(float(pxk), 1)))
+                if d_idx == 0 and k == k_early:
+                    # EARLY EFFECTIVENESS CHECK (HIGH-2): no PX response by
+                    # 0.5 elec rev commanded -> the discrimination premise is
+                    # broken (PA/BG not effective? soft-limit clip? OR truly
+                    # stuck — indistinguishable) -> abort the sweep honestly
+                    pxe = _cmd(ctx, "PX")
+                    resp = (abs(float(pxe) - px_a_f)
+                            if isinstance(pxe, (int, float))
+                            and px_a_f is not None else 0.0)
+                    ev["early_px_response_cnt"] = round(resp, 1)
+                    ev["early_expected_cnt"] = round(
+                        UM3_EARLY_CHECK_EREV * cnt_per_erev, 1)
+                    if resp < UM3_EARLY_MIN_FRAC * UM3_EARLY_CHECK_EREV                             * cnt_per_erev:
+                        ev["pa_effective"] = False
+                        ev["directions"].append(
+                            {"sign": sign, "aborted_at_erev":
+                             UM3_EARLY_CHECK_EREV, "trace_pa_px": trace})
+                        return ev
+            pa += sign * ticks_total
+            px_b = _cmd(ctx, "PX")
+            dpx = (abs(float(px_b) - float(px_a))
+                   if isinstance(px_a, (int, float))
+                   and isinstance(px_b, (int, float)) else 0.0)
+            expected = UM3_REVS * cnt_per_erev
+            follow = dpx / expected if expected else 0.0
+            follows.append(follow)
+            ev["directions"].append({"sign": sign, "dpx_cnt": round(dpx, 1),
+                                     "expected_cnt": round(expected, 1),
+                                     "follow": round(follow, 3),
+                                     "trace_pa_px": trace})
+            _sleep(ctx, 0.2)
+        ev["follow_ratio"] = round(min(follows), 3)   # both directions must follow
+        return ev
+    finally:
+        _seg(ctx, "idle")
+        try:
+            ctx.link.command("TC=0", timeout_ms=1000, allow_motion=True)
+        except Exception:
+            pass
+        try:
+            ctx.link.command("MO=0", timeout_ms=1000)
+            ctx.motor_on = False
+            ctx.link.command("UM=%s" % _fmt(ctx.snapshot.get("UM", 5)),
+                             timeout_ms=1000)
+        except Exception as e:
+            ctx.warnings.append("UM3 드래그 종료 복원 실패(%s) — abort 체인이"
+                                " UM 복원 재시도" % e)
+
+
+def _drag_route(ctx: _Ctx, i_cap: float):
+    """PART B router (fable-critic HIGH-1/HIGH-2): run the UM=3 drag oracle
+    and raise the routed honest RED.
+
+    GATE: only meaningful when i_cap >= UM3_DRAG_I_A — the discrimination
+    logic needs cap torque >= drag torque, otherwise the 6 A drag exceeds the
+    cap torque and ALWAYS follows, mis-routing healthy mechanical friction to
+    a commutation RED.  Gate unmet / CA[19] unreadable / drag exception ->
+    returns None (caller raises its own generic verdict, marked 판별 유보).
+
+    Verdicts (전류 증액 금지):
+      pa_effective False -> "판별 불가" (a dead stator command and a stuck
+        axis are indistinguishable — NEVER claim mechanical);
+      follow >= 0.9      -> commutation torque-efficiency RED;
+      else               -> mechanical-friction RED, honestly labeled
+        "슬립 또는 PA 미실효" (partial follow proved PA works early on,
+        but 실기 특성화 still owns the final word)."""
+    if i_cap < UM3_DRAG_I_A:
+        return None
+    drag = None
+    try:
+        drag = _um3_drag(ctx)
+    except (AbortError, PermissionError):
+        raise
+    except Exception as e:                  # never mask the primary finding
+        ctx.warnings.append("UM3 드래그 실험 예외(%r) — 판별 없이 진행" % (e,))
+    if not drag:
+        return None
+    if not drag.get("pa_effective", True):
+        raise AbortError(
+            "UM3 드래그: PA 지령 실효 미확인 — 초기 %.1f elec rev에 PX 응답"
+            " %.0fcnt(<%.0f%%·기대 %.0fcnt): 판별 불가 (기계구속 단정 금지;"
+            " PA/BG 실효·VH[3]/HL[3] 소프트리밋=0 실기 특성화 필요)"
+            % (UM3_EARLY_CHECK_EREV, drag.get("early_px_response_cnt", 0.0),
+               100 * UM3_EARLY_MIN_FRAC, drag.get("early_expected_cnt", 0.0)))
+    if drag.get("follow_ratio", 0.0) >= UM3_FOLLOW_MIN:
+        raise AbortError(
+            "UM3 드래그 추종(%.2f≥%.1f): 기계는 ≤%.2fN·m로 구동됨 — UM=5"
+            " %.2fA로 브레이크어웨이 실패 = 커뮤테이션 토크효율<70%% 의심:"
+            " EAS 커뮤 재실행/CA[7] 확인 (전류 더 올리지 말 것)"
+            % (drag["follow_ratio"], UM3_FOLLOW_MIN,
+               KT_NOMINAL * UM3_DRAG_I_A, i_cap))
+    raise AbortError(
+        "UM3 드래그 슬립 또는 PA 미실효(%.2f<%.1f, 초기응답은 정상 — 실기"
+        " 특성화 필요): 기계 마찰 T_s>%.2fN·m(출력 20+N·m) 우세 — 자유축"
+        " 비정상, 기계 점검 (전류 더 올리지 말 것)"
+        % (drag["follow_ratio"], UM3_FOLLOW_MIN, KT_NOMINAL * UM3_DRAG_I_A))
+
+
 def _breakaway_ramp(ctx: _Ctx):
     """B1.4 adaptive breakaway ramp (fable-physics 2026-07-13 — live run #2
     root cause: probe/diag currents below the GEARED stiction never move the
@@ -854,6 +1092,18 @@ def _breakaway_ramp(ctx: _Ctx):
     p = ctx.params
     _seg(ctx, "tc")
     i_cap = p.ramp_frac * ctx.cl1
+    # best-effort recorder capture across the ramp (windup-curve companion):
+    # base 4 channels + optional Reactive Current / Field Angle when the
+    # personality exposes them (commutation red-flag evidence)
+    extra_names = [n for n in ("Reactive Current [A]", "Field Angle")
+                   if n in ctx.evidence.get("recorder_signals", [])]
+    ramp_rec_armed = False
+    try:
+        _record_start(ctx, min(p.ramp_time_s + 0.8, 3.0),
+                      extra_names=extra_names)
+        ramp_rec_armed = True
+    except Exception as e:
+        ctx.warnings.append("램프 레코딩 시작 실패(%s) — windup rec 생략" % e)
     px0 = _cmd(ctx, "PX")
     px0 = float(px0) if isinstance(px0, (int, float)) else None
     steps = max(1, int(math.ceil(p.ramp_time_s / p.poll_dt)))
@@ -882,32 +1132,82 @@ def _breakaway_ramp(ctx: _Ctx):
     #   STALLED   = 2 consecutive quiet polls (or window exhausted)
     #             -> classified as lash traversal: record the travel in
     #                lash_events and RESUME the ramp from the same point.
+    # windup-current curve (fable-physics 추가 evidence): dPX at fixed current
+    # levels while (presumably) stuck — elastic windup grows ~linearly with i;
+    # IQ rising while windup SATURATES = torque not reaching the mesh
+    # (commutation red flag, early capture).  Captured at level crossings.
+    levels = [x for x in WINDUP_LEVELS_A if x < i_cap]
+    windup_pts = []
     px_prev = px0
     lash_events = []
     tc = 0.0
     for k in range(1, steps + 1):
         tc = i_cap * k / steps
+        fast = tc > RAMP_FAST_POLL_ABOVE_A
         _write(ctx, "TC", tc, allow_motion=True)
-        _sleep(ctx, p.poll_dt)
-        px = _cmd(ctx, "PX")
-        vx = _cmd(ctx, "VX")
-        px_f = float(px) if isinstance(px, (int, float)) else None
-        dpx_step = (abs(px_f - px_prev)
-                    if px_f is not None and px_prev is not None else 0.0)
-        if px_f is not None:
-            px_prev = px_f
+        # high-current region: VX-only polls at 10 ms (the PX+VX pair costs
+        # ~60 ms real period — a breakaway snap grows ~2700 rpm in 2 such
+        # polls; PX evidence moves to the HOLD confirm stage).  The in-sleep
+        # guard also runs VX-only here (MEDIUM: MF/LC add ~30 ms real).
+        ctx.guard_vx_only = fast
+        try:
+            _sleep(ctx, RAMP_FAST_POLL_S if fast else p.poll_dt)
+        finally:
+            ctx.guard_vx_only = False
+        if fast:
+            vx = _cmd(ctx, "VX")
+            px_f = None
+            dpx_step = 0.0
+        else:
+            px = _cmd(ctx, "PX")
+            vx = _cmd(ctx, "VX")
+            px_f = float(px) if isinstance(px, (int, float)) else None
+            dpx_step = (abs(px_f - px_prev)
+                        if px_f is not None and px_prev is not None else 0.0)
+            if px_f is not None:
+                px_prev = px_f
         vxa = abs(float(vx)) if isinstance(vx, (int, float)) else 0.0
         moved = dpx_step > p.detect_dpx or vxa > p.detect_vx
         hits = hits + 1 if moved else 0
-        trace.append((round(tc, 4), round(dpx_step, 1), round(vxa, 1), "RAMP"))
+        trace.append((round(tc, 4), round(dpx_step, 1), round(vxa, 1),
+                      "RAMPF" if fast else "RAMP"))
+        while levels and tc >= levels[0] and hits == 0:   # windup point (stuck)
+            iq_lv = _cmd(ctx, "IQ")
+            px_lv = _cmd(ctx, "PX")
+            windup_pts.append({
+                "tc_a": round(tc, 3),
+                "iq_a": (round(float(iq_lv), 3)
+                         if isinstance(iq_lv, (int, float)) else None),
+                "dpx_cnt": (round(float(px_lv) - px0, 1)
+                            if isinstance(px_lv, (int, float))
+                            and px0 is not None else None)})
+            levels.pop(0)
         if hits < 2:                # 2 consecutive DELTAS: windup/noise rejected
             continue
+        if vxa >= HOLD_INSTANT_GUARD_FRAC * ctx.vx_guard_cnt:
+            # MEDIUM: already >=300 rpm AT the detection poll - a lash free
+            # flight is over by the 2-consecutive-hits point (the ramp's own
+            # invariant), so this IS the load breakaway: latch NOW, skip the
+            # HOLD window entirely (real serial latency lets speed grow
+            # 400..1100 rpm per poll)
+            i_ba = tc
+            trace.append((round(tc, 4), round(dpx_step, 1), round(vxa, 1),
+                          "INSTANT"))
+            break
         # ---- HOLD-CONFIRM: TC frozen at the detection current ---------------------
+        if px_f is None:                # fast region: re-anchor the PX evidence
+            pxh = _cmd(ctx, "PX")
+            px_f = float(pxh) if isinstance(pxh, (int, float)) else None
+            if px_f is not None:
+                px_prev = px_f
         px_detect = px_f
         vx_consec = 0
         stall = 0
         cum = 0.0
         sustained = False
+        vx_instant = HOLD_INSTANT_GUARD_FRAC * ctx.vx_guard_cnt
+        prev_mode = ctx.guard_vx_only
+        ctx.guard_vx_only = True        # MEDIUM: HOLD window = VX-only guard
         for _h in range(max(1, int(p.hold_window_polls))):
             _sleep(ctx, p.poll_dt)
             px2 = _cmd(ctx, "PX")
@@ -925,11 +1225,15 @@ def _breakaway_ramp(ctx: _Ctx):
             stall = 0 if moving else stall + 1
             trace.append((round(tc, 4), round(step_d, 1), round(vxa2, 1),
                           "HOLD"))
+            if vxa2 >= vx_instant:      # 즉시확정: 고전류 이탈이 150 ms 확인창에서
+                sustained = True        # 3300 rpm까지 크는 구멍 봉쇄 (0.25*guard,
+                break                   # 유격 자유비행으론 도달 불가한 속도)
             if cum > p.sustain_dpx_cnt or vx_consec >= p.sustain_vx_consec:
                 sustained = True
                 break
             if stall >= 2:
                 break
+        ctx.guard_vx_only = prev_mode
         if sustained:
             i_ba = tc               # frozen detection current = true breakaway
             break
@@ -946,6 +1250,21 @@ def _breakaway_ramp(ctx: _Ctx):
     _write(ctx, "TC", 0.0, allow_motion=True)
     _sleep(ctx, 0.15)                       # coast to rest (friction brakes fast)
     _seg(ctx, "idle")
+    rec_w = None
+    if ramp_rec_armed:
+        try:
+            rec_w = _record_fetch(ctx)      # free-runs to completion (TC=0 coast)
+        except Exception as e:
+            ctx.warnings.append("램프 레코딩 업로드 실패(%s) — windup rec 생략" % e)
+    ctx.evidence["windup_curve"] = {
+        "points": windup_pts, "levels_a": list(WINDUP_LEVELS_A),
+        "rec": ({"i_cmd": _decimate(rec_w["icmd"]),
+                 "i_act": _decimate(rec_w["i"]),
+                 **{nm: _decimate(rec_w["extras"][nm])
+                    for nm in rec_w.get("extras", {})}} if rec_w else None),
+        "note": "홀드별 ΔPX(탄성이면 ~선형·모델 60·i cnt) — IQ 상승에 와인드업"
+                " 포화면 토크가 메시 미도달=커뮤 적신호 조기포착; rec=램프 전구간"
+                " 채널 데시메이션(Reactive/Field Angle는 personality 존재 시)"}
     probe = (min(max(p.breakaway_k * i_ba, p.probe_i_a), i_cap)
              if i_ba is not None else None)
     ctx.evidence["breakaway"] = {
@@ -978,10 +1297,18 @@ def _breakaway_ramp(ctx: _Ctx):
                 "브레이크어웨이 램프: 무이동 + IQ=%.2fA ≪ 캡 %.2fA — 토크경로 이상"
                 " 의심, UNIT-DIAG 물리분기로 판별 위임" % (iq_cap, i_cap))
             return None
+        # ---- PART B: torque real + no breakaway at the cap -> UM=3 drag
+        # discrimination via _drag_route (raises the routed RED itself).
+        # HIGH-1 gate lives inside: only when i_cap >= UM3_DRAG_I_A (6 A) —
+        # below that the drag torque exceeds the cap torque and would ALWAYS
+        # follow, mis-routing healthy friction to a commutation RED.
+        _drag_route(ctx, i_cap)             # returns only when 판별 불가/생략
         raise AbortError(
-            "축 구속(클램프/브레이크?) — 브레이크어웨이 없음: TC=%.2fA(0.2·CL[1])"
-            "에서도 |ΔPX|≤%.0fcnt·|VX|≤%.0fcnt/s (IQ=%.2fA 토크 실인가 확인)"
-            % (i_cap, p.detect_dpx, p.detect_vx, iq_cap))
+            "축 구속(클램프/브레이크?) — 브레이크어웨이 없음: TC=%.2fA"
+            "(%.2f·CL[1])에서도 |ΔPX|≤%.0fcnt·|VX|≤%.0fcnt/s"
+            " (IQ=%.2fA 토크 실인가 확인; UM3 판별 유보%s)"
+            % (i_cap, p.ramp_frac, p.detect_dpx, p.detect_vx, iq_cap,
+               " — 캡<%.0fA" % UM3_DRAG_I_A if i_cap < UM3_DRAG_I_A else ""))
     return probe
 
 
@@ -1013,12 +1340,20 @@ def _unit_diag(ctx: _Ctx, i_diag: float = UNITDIAG_I_A) -> float:
             return i_try                    # success — corrections adopted
         escal.append(fail)
         if idx == len(ladder) - 1:
+            # LOW-2 (fable-critic): this exhaustion state (RECORDED currents
+            # witnessed real torque, no motion at the cap) is the SAME premise
+            # as the ramp's PART B trigger — route through the drag oracle
+            # when the gate allows, else mark the verdict 판별 유보.
+            if fail.get("mode") == "무이동":
+                _drag_route(ctx, i_cap)     # raises the routed RED on success
             raise AbortError(
                 "UNIT-DIAG: 축 구속/고마찰(기계구속) — 상향 %d회, 최종"
                 " i_diag=%.2fA(캡 %.2fA)에도 지속모션 없음 (ΔPos=%.0fcnt,"
-                " 모드=%s; IQ/기록전류로 토크 실인가 확인됨)"
+                " 모드=%s; IQ/기록전류로 토크 실인가 확인됨; UM3 판별 유보%s)"
                 % (len(escal) - 1, i_try, i_cap,
-                   fail.get("d_pos_cnt", 0.0), fail.get("mode")))
+                   fail.get("d_pos_cnt", 0.0), fail.get("mode"),
+                   " — 캡<%.0fA" % UM3_DRAG_I_A if i_cap < UM3_DRAG_I_A
+                   else ""))
         ctx.warnings.append(
             "UNIT-DIAG %s(i=%.2fA) — i_diag %.2f→%.2fA 상향 재펄스 (%d/%d)"
             % (fail.get("mode"), i_try, i_try, ladder[idx + 1],
@@ -1087,16 +1422,18 @@ def _unit_diag_pulse(ctx: _Ctx, i_diag: float, escal: list):
     vx_stop = ctx.ca18 * UNITDIAG_EARLYSTOP_RPM / 60.0
     early_stop = False
     remaining = float(UNITDIAG_T_S)
+    ctx.guard_vx_only = True            # MEDIUM: pulse window = VX-only guard
     while remaining > 1e-9:
-        step = min(0.03, remaining)
-        _sleep(ctx, step)
-        remaining -= step
+        step = min(RAMP_FAST_POLL_S, remaining)   # 10 ms VX-only during the
+        _sleep(ctx, step)                         # pulse (adaptive current can
+        remaining -= step                         # be near the 0.4*CL cap)
         vx = _cmd(ctx, "VX")
         if isinstance(vx, (int, float)):
             vx_log.append((ctx.elapsed_s - t0_nom, clock() - t0_clk, float(vx)))
             if abs(vx) > vx_stop:
                 early_stop = True
                 break
+    ctx.guard_vx_only = False
     tb_off = clock()
     _write(ctx, "TC", 0.0, allow_motion=True)
     ta_off = clock()
@@ -1172,7 +1509,11 @@ def _unit_diag_pulse(ctx: _Ctx, i_diag: float, escal: list):
     t_true = np.arange(len(v)) * g * dt
     k_on = np.flatnonzero(act_mask)
     t_p0 = float(t_true[k_on[0]])
-    w = (t_true >= t_p0 + 0.024) & (t_true <= t_p0 + t_pulse) & act_mask
+    # late-window start adapts to EARLY-STOPPED pulses (cap-raise: a near-cap
+    # i_diag is cut in ~20-30 ms; a fixed 24 ms start would empty the window
+    # on a HEALTHY fast pulse).  0.4*t_pulse >> current-loop tau (0.44 ms).
+    w_start = min(0.024, 0.4 * t_pulse)
+    w = (t_true >= t_p0 + w_start) & (t_true <= t_p0 + t_pulse) & act_mask
     if w.sum() < 8:
         raise AbortError("UNIT-DIAG: 후반창 표본 부족 (n=%d)" % int(w.sum()))
     # ---- lash-landing rejection (fable-physics §4; denominator fix
@@ -1245,7 +1586,8 @@ def _unit_diag_pulse(ctx: _Ctx, i_diag: float, escal: list):
 # ======================================================================================
 _P1_READS = (["TS", "UM", "MF", "SR", "GS[0]", "GS[1]", "GS[2]",
               "KP[1]", "KP[2]", "KP[3]", "KI[1]", "KI[2]",
-              "CA[7]", "CA[17]", "CA[18]", "CA[41]", "CA[42]", "CA[43]", "CA[44]",
+              "CA[7]", "CA[17]", "CA[18]", "CA[19]",
+              "CA[41]", "CA[42]", "CA[43]", "CA[44]",
               "CL[1]", "PL[1]", "MC", "VH[2]", "VH[3]", "VL[3]",
               "ER[2]", "ER[3]", "HL[2]", "HL[3]", "LL[2]", "LL[3]",
               "AC", "DC", "SD", "SP", "FF[1]", "FF[2]", "VX", "PX", "BV",
@@ -1316,6 +1658,11 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     if not isinstance(cl1, (int, float)) or cl1 <= 0:
         raise PreflightError("CL[1]=%r 비정상" % (cl1,))
     ctx.cl1 = float(cl1)
+    if not (0.0 < p.ramp_frac <= RAMP_FRAC_ABS_MAX + 1e-9):
+        raise PreflightError(
+            "ramp_frac=%.2f 허용범위(0, %.1f] 벗어남 — %.1f·CL 이상 자동 램프 금지"
+            "(오퍼레이터 승인 전용 상수 RAMP_FRAC_OPERATOR_ONLY)"
+            % (p.ramp_frac, RAMP_FRAC_ABS_MAX, RAMP_FRAC_ABS_MAX))
     ca18 = r.get("CA[18]")
     ctx.ca18 = float(ca18) if isinstance(ca18, (int, float)) and ca18 > 0 else 65536.0
     ctx.vx_guard_cnt = ctx.ca18 * GUARD_RPM / 60.0
@@ -1399,7 +1746,12 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         rec_dt = _record_start(ctx, 0.4)
         _sleep(ctx, PRE_ROLL_S)
         _write(ctx, "TC", i_probe, allow_motion=True)
-        _sleep(ctx, PROBE_T_S)
+        # cap-raise: the ADAPTIVE probe current (mover-fed, up to 0.4*CL) can
+        # cross the guard within 50 ms on a low-running-friction plant — the
+        # same motion cut as the main pulses protects it (two-slope analysis
+        # is duration-agnostic; the cut only shortens the on-window)
+        probe_cut = _pulse_sleep_with_cut(
+            ctx, PROBE_T_S, MAINPULSE_STOP_FRAC * ctx.vx_guard_cnt)
         _write(ctx, "TC", 0.0, allow_motion=True)
         _sleep(ctx, 0.4 - PRE_ROLL_S - PROBE_T_S + 0.02)
         rec = _record_fetch(ctx)
@@ -1407,11 +1759,13 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         k_a_probe, vpk, a_on, moved = _probe_ka(ctx, rec, i_probe)
         ctx.evidence.setdefault("probe", []).append(
             {"i_a": i_probe, "k_a_probe": k_a_probe, "v_peak": vpk,
-             "slope_on": a_on, "moved": moved, "dt": rec_dt})
+             "slope_on": a_on, "moved": moved, "dt": rec_dt,
+             "early_stop": bool(probe_cut)})
         if moved and k_a_probe > 0:
             break
         if attempt == 0:
-            i_probe = min(2.0 * i_probe, 0.2 * ctx.cl1)
+            i_probe = max(i_probe,
+                          min(2.0 * i_probe, PULSE_FRAC_ABS_MAX * ctx.cl1))
             ctx.warnings.append("프로브 v̇≈0 — 전류 ×2 재시도 (%.2fA)" % i_probe)
             continue
         raise AbortError("정지마찰 과대 — 프로브 무이동 (I=%.2fA)" % i_probe)
@@ -1426,14 +1780,30 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     # RED on a healthy axis.  With the mover floor the FIRST pulse moves, and
     # _size_tp keeps the peak near the target for whatever i0 is in force.
     i_mover = i_diag_final                  # proven rotor-moving current
-    i0 = max(min(p.i_pulse_frac * ctx.cl1, 0.2 * ctx.cl1), i_mover)
-    target_cnt = ctx.ca18 * p.tp_target_rpm / 60.0
-    tp = _size_tp(k_a_probe, i0, target_cnt)
+    i_ba_val = ctx.evidence.get("breakaway", {}).get("i_ba_a")
+    floor_ba = (1.25 * i_ba_val
+                if isinstance(i_ba_val, (int, float)) and i_ba_val > 0 else 0.0)
+    # cap-raise (fable-physics): the 0.2*CL pulse ceiling is RETIRED — a geared
+    # unit with i_ba>4.24 A cannot be identified at 2.12 A.  Floors: configured
+    # fraction, 1.25*i_ba (friction headroom), proven mover; ceiling 0.4*CL.
+    i0 = min(max(p.i_pulse_frac * ctx.cl1, floor_ba, i_mover),
+             PULSE_FRAC_ABS_MAX * ctx.cl1)
+    # MEDIUM: the sizing TARGET must sit under the runtime cut (0.6*guard) by
+    # margin, else every correctly-sized pulse would be truncated
+    target_rpm_eff = min(p.tp_target_rpm,
+                         PULSE_TARGET_CAP_FRAC * MAINPULSE_STOP_FRAC * GUARD_RPM)
+    target_cnt = ctx.ca18 * target_rpm_eff / 60.0
+    tp = _size_tp(k_a_probe, _i_net(i0, i_ba_val), target_cnt)
     rev_est = (k_a_probe * i0) * tp * tp / ctx.ca18   # ~both pulses combined
     ctx.evidence["sizing"] = {"i0_a": i0, "tp_s": tp, "rev_est": rev_est,
-                              "k_a_probe": k_a_probe, "i_mover_a": i_mover}
-    _emit(ctx, "SIZING", "본펄스 I0=%.2fA(mover 하한 %.2fA) Tp=%.0fms,"
-          " 예상회전≈%.2f rev/런" % (i0, i_mover, tp * 1e3, rev_est))
+                              "k_a_probe": k_a_probe, "i_mover_a": i_mover,
+                              "i_ba_floor_a": floor_ba,
+                              "i_net_a": _i_net(i0, i_ba_val),
+                              "target_rpm_eff": target_rpm_eff}
+    _emit(ctx, "SIZING", "본펄스 I0=%.2fA(하한: frac %.2f/1.25·i_ba %.2f/mover"
+          " %.2f, 캡 %.1f·CL) Tp=%.0fms, 예상회전≈%.2f rev/런"
+          % (i0, p.i_pulse_frac * ctx.cl1, floor_ba, i_mover,
+             PULSE_FRAC_ABS_MAX, tp * 1e3, rev_est))
 
     # ---- C1/C2 pulse-pair runs (G2 friction-ratio retry: once) -------------------------
     runs = None
@@ -1461,13 +1831,15 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                          "cut_second": bool(cut2), "i0_a": i0, "tp_s": tp,
                          "cut_cnt_s": cut_cnt})
                     ctx.warnings.append(
-                        "본펄스 모션 조기종료(|VX|>%.0f=0.9·가드) — 사이징 여유"
-                        " 재검토, 캡처창으로 분석 계속" % cut_cnt)
+                        "본펄스 모션 조기종료(|VX|>%.0f=%.2f·가드) — 사이징"
+                        " 여유 재검토, 캡처창으로 분석 계속"
+                        % (cut_cnt, MAINPULSE_STOP_FRAC))
                 vpk_run = float(np.max(np.abs(rec["v"])))
                 if vpk_run < ctx.ca18 * MOTION_MIN_RPM / 60.0:
                     if m_try == 0:
                         i0 = min(2.0 * i0, 0.4 * ctx.cl1)
-                        tp = _size_tp(k_a_probe, i0, target_cnt)   # HIGH fix:
+                        tp = _size_tp(k_a_probe, _i_net(i0, i_ba_val),
+                                      target_cnt)                  # HIGH fix:
                         # NEVER reuse the old tp with a bigger i0 (stale tp =
                         # v_pk x2 past the guard, the live order-killer)
                         ctx.warnings.append("모션부족(v_pk=%.0f<%.0frpm) — I0 ×2"
@@ -1484,8 +1856,9 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         friction_ratio = fr_num / i0 if i0 else float("inf")
         if friction_ratio <= FRICTION_RATIO_MAX or sizing_try == 1:
             break
-        i0 = min(1.5 * i0, 0.2 * ctx.cl1)
-        tp = _size_tp(k_a_probe, i0, target_cnt)    # HIGH fix: resize with i0
+        i0 = min(1.5 * i0, PULSE_FRAC_ABS_MAX * ctx.cl1)
+        tp = _size_tp(k_a_probe, _i_net(i0, i_ba_val),
+                      target_cnt)                   # HIGH fix: resize with i0
         ctx.warnings.append("마찰비 %.2f>%.1f — I0 증액 재시도(%.2fA, Tp 재산정"
                             " %.0fms)" % (friction_ratio, FRICTION_RATIO_MAX,
                                           i0, tp * 1e3))

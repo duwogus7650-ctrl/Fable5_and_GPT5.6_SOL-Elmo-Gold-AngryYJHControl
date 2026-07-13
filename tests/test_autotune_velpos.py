@@ -57,7 +57,7 @@ class VPSim:
                  kp2=KP2_ORACLE, ki2=KI2_ORACLE, kp3=KP3_ORACLE,
                  ff1=1.726e-7, gs2=0, um=5, ca17=5, ca7=438.0,
                  vel_scale_err=1.0, torque_disabled=False, vel_garbage=False,
-                 hl_writable=True, mo0=0, mf=0, seed=1):
+                 hl_writable=True, mo0=0, mf=0, seed=1, um5_eff=1.0):
         # §9 fault-injection knobs:
         #  vel_scale_err: RECORDED Velocity = v_true * err (live 1/125
         #    hypothesis — internal units); VX polls stay TRUE cnt/s.
@@ -66,6 +66,11 @@ class VPSim:
         #  vel_garbage: Velocity channel nonlinearly broken (scale+offset) —
         #    a single scale factor cannot fix it -> hard gate must RED.
         self.vel_scale_err = float(vel_scale_err)
+        # UM=5 torque efficiency (<1 = commutation mis-mapping analogue: the
+        # commanded current flows — IQ real — but shaft torque is derated);
+        # the UM=3 PA-follow path is INDEPENDENT of this knob (stator-angle
+        # drive bypasses the commutation mapping)
+        self.um5_eff = float(um5_eff)
         self.torque_disabled = bool(torque_disabled)
         self.vel_garbage = bool(vel_garbage)
         self.dt = ts_us * 1e-6
@@ -91,7 +96,8 @@ class VPSim:
                      "GS[0]": 0, "GS[1]": 0, "GS[2]": gs2,
                      "KP[1]": KP1_EAS, "KP[2]": kp2, "KP[3]": kp3,
                      "KI[1]": KI1_EAS, "KI[2]": ki2,
-                     "CA[7]": ca7, "CA[17]": ca17, "CA[18]": CA18,
+                     "CA[7]": ca7, "CA[17]": ca17, "CA[18]": CA18, "CA[19]": 21,
+                     "PA": 0.0,
                      "CA[41]": 30, "CA[42]": 0, "CA[43]": 0, "CA[44]": 0,
                      "CL[1]": CL1, "PL[1]": 70.7107, "MC": 140,
                      "VH[2]": 3.93e6, "VH[3]": 0, "VL[3]": 0,
@@ -138,7 +144,7 @@ class VPSim:
         else:
             self.i_act = self.a_i * self.i_act + (1 - self.a_i) * self.cmd_prev
         self.cmd_prev = cmd
-        drive = self.commut_sign * self.k_a * self.i_act
+        drive = self.commut_sign * self.k_a * self.i_act * self.um5_eff
         if abs(self.v) < 1.0 and abs(drive) <= self.C:
             self.v = 0.0                        # stiction holds
         else:
@@ -249,12 +255,44 @@ class VPSim:
                 raise IOError("JV exceeds VH[2]")
             self.jv, self.mode = v, "jv"
             return ""
+        if name == "UM":
+            if regs["MO"] == 1:
+                raise IOError("UM change requires MO=0")
+            regs["UM"] = int(v)
+            return ""
+        if name == "PA":
+            # REAL CR semantics (HIGH-2): PA is only ARMED here — it takes
+            # effect on the next BG (CR :12476).  A code path that skips BG
+            # gets NO motion (the exact live failure mode being encoded).
+            self.pa_pending = v
+            return ""
         if name in ("HL[2]", "LL[2]") and not self.hl_writable:
             raise IOError("%s write refused (U-P4 tooth)" % name)
         regs[name] = v
         return ""
 
+    def _apply_pa(self):
+        """BG: apply the armed PA.  UM=3 stepper drag physics — the stator
+        angle drags the rotor iff the held current exceeds the STATIC
+        friction equivalent (i_s/i_s_load on subclasses); commutation-
+        agnostic by construction (um5_eff NOT applied)."""
+        regs = self.regs
+        v = getattr(self, "pa_pending", None)
+        if v is None:
+            return
+        old_pa = regs.get("PA", 0.0)
+        regs["PA"] = v
+        if regs.get("UM") == 3 and regs["MO"] == 1:
+            th = getattr(self, "i_s", getattr(self, "i_s_load", self.i_c))
+            if abs(self.tc) > th:
+                pp = regs.get("CA[19]", 21)
+                self.p += (v - old_pa) * (regs["CA[18]"] / (pp * 512.0))
+        self.pa_pending = None
+
     def _query(self, name):
+        if name == "BG":                        # arm/apply the pending PA
+            self._apply_pa()
+            return ""
         if name == "ST":                        # motion-gated stop (query form)
             self.jv = 0.0
             if self.mode != "jv":
@@ -455,18 +493,20 @@ def test_commutation_sign_fault_aborts(tmp_path):
 
 
 def test_axis_clamped_at_cap_red(tmp_path):
-    """(b) 2026-07-13 breakaway rework: sub-cap stiction is now TUNABLE by
-    design (see test_previous_stiction_red_case_now_tunes) — the honest RED
-    moved to the true dead-end: the ramp reaches 0.2*CL[1] with REAL torque
-    (IQ ~ cap) and zero motion = clamped/braked axis."""
-    drive = VPSim(i_c=6.0)                   # stiction above the 4.24 A cap
+    """[HIGH-1] DEFAULT cap (0.2*CL=4.24 A < 6 A drag): PART B must NOT run
+    (drag torque would exceed the cap torque and ALWAYS follow -> healthy
+    friction mis-routed to a commutation RED).  Generic honest RED with the
+    판별-유보 note; UM never touched."""
+    drive = VPSim(i_c=6.0)                   # stiction above the default cap
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == RED
     assert "축 구속" in res.reason and "브레이크어웨이 없음" in res.reason
+    assert "판별 유보" in res.reason                  # drag skipped, said so
+    assert "um3_drag" not in res.evidence            # PART B gate held
     ba = res.evidence["breakaway"]
     assert not ba["detected"] and ba["i_ba_a"] is None
     assert ba["iq_at_cap_a"] > 0.5 * ba["i_cap_a"]   # torque was real
-    assert "unit_diag" not in res.evidence           # gated before the diag
+    assert drive.regs["UM"] == 5                     # never switched
     assert drive.regs["MO"] == 0
     assert drive.regs["SD"] == pytest.approx(1e6)    # limits restored on abort
 
@@ -487,33 +527,35 @@ def test_previous_stiction_red_case_now_tunes(tmp_path):
 
 
 def test_overspeed_sw_guard_aborts(tmp_path):
-    """|VX| crossing the 1200 rpm SW guard mid-pulse -> abort (TC=0 then
-    MO=0), limits restored.  HIGH-fix update: the per-poll velocity rise must
-    EXCEED the cut-to-guard band (0.9..1.0 of guard, ~131k cnt/s) so the
-    main-pulse motion cut CANNOT intercept first — i_pulse_frac=0.2 gives
-    +702k cnt/s per 30 ms poll (polls land at 702k then 1404k > guard,
-    skipping the cut band): the guard remains the ultimate backstop for
-    dynamics faster than the cut's poll cadence."""
+    """|VX| crossing the 1200 rpm SW guard -> abort, limits restored.
+    Cap-raise update: TC-segment oversizing is now owned by the 10 ms motion
+    cut (rise per cut poll < cut->guard band for any i0 <= 0.4*CL), so the
+    guard's own teeth are proven on the JV segment (NO cut path there):
+    commanding 1500 rpm crosses the guard during settle -> RED with the JV
+    abort chain (JV=0 -> ST -> MO=0)."""
     drive = VPSim()
     res = run_velpos_autotune(drive, _params(drive, tmp_path,
-                                             tp_target_rpm=5000.0,
-                                             i_pulse_frac=0.2))
+                                             jv_speeds_rpm=(300.0, 1500.0)))
     assert res.status == RED and "과속" in res.reason
     cmds = [c.replace(" ", "") for c, _ in drive.log]
-    i_tc = len(cmds) - 1 - cmds[::-1].index("TC=0")
-    i_mo = next(i for i, c in enumerate(cmds) if i > i_tc and c == "MO=0")
-    assert i_tc < i_mo
+    i_jv0 = len(cmds) - 1 - cmds[::-1].index("JV=0")     # abort A1
+    i_st = next(i for i, c in enumerate(cmds) if i > i_jv0 and c == "ST")
+    i_mo = next(i for i, c in enumerate(cmds) if i > i_st and c == "MO=0")
+    assert i_jv0 < i_st < i_mo
+    assert drive.regs["MO"] == 0
     assert drive.regs["SD"] == pytest.approx(1e6)    # limits restored on abort
 
 
 def test_mainpulse_motion_cut_saves_slow_oversize(tmp_path):
-    """Counterpart of the guard test: an oversized pulse whose speed rises
-    SLOWLY enough to land inside the cut band (0.9..1.0 of guard) is
-    TRUNCATED by the main-pulse motion cut and the run SURVIVES on the
-    captured window (visible warning) — mis-sizing is no longer fatal."""
-    drive = VPSim()
-    res = run_velpos_autotune(drive, _params(drive, tmp_path,
-                                             tp_target_rpm=5000.0))
+    """Counterpart of the guard test: a REALISTIC mis-sizing (the net-current
+    model assumes running friction ~0.75*i_ba, but this plant runs at 0.1 A —
+    actual net current ~2x the model) drives the pulse past the sizing target
+    toward the guard; the motion cut TRUNCATES it and the run SURVIVES on the
+    captured window (visible warning) — mis-sizing is no longer fatal.
+    (The old absurd-tp_target scenario is now neutralized upstream by the
+    target clamp <= 0.8*cut, so the teeth moved to the model-mismatch path.)"""
+    drive = HiStictionLowRunSim(i_s=2.0, i_c=0.1)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == YELLOW, (res.status, res.reason, res.warnings)
     assert "과속" not in res.reason
     assert any("조기종료" in w for w in res.warnings)
@@ -1025,6 +1067,163 @@ def test_unit_diag_escalation_exhausted_cap_red(tmp_path):
     assert ud["i_diag_a"] == pytest.approx(0.2 * CL1)   # last rung = the cap
     assert len(ud["escalations"]) == 3                  # 0.5/0.75/1.125 failed
     assert drive.regs["MO"] == 0
+
+
+# ======================================================================================
+# PART A/B (fable-physics cap-raise + UM=3 drag discrimination, 2026-07-13)
+# ======================================================================================
+def test_raised_cap_finds_high_iba_and_identifies(tmp_path):
+    """PART A: live-class unit (i_ba above the retired 0.2*CL cap): with
+    ramp_frac=0.4 the FAST-POLL ramp (VX-only, 10 ms above 2 A) catches the
+    high-current breakaway, HOLD confirms INSTANTLY at 300 rpm (no overspeed
+    anywhere), the pulse ceiling unlocks past 0.2*CL, and the pipeline
+    identifies the true K_a.  Windup-curve points captured at 1/2/4 A."""
+    drive = HiStictionLowRunSim(i_s=4.5, i_c=1.0)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    assert "과속" not in res.reason
+    ba = res.evidence["breakaway"]
+    assert ba["i_cap_a"] == pytest.approx(0.4 * CL1)
+    assert ba["i_ba_a"] > 0.2 * CL1                  # beyond the OLD cap
+    assert any(ph == "RAMPF" for *_x, ph in ba["trace_tc_dpx_vx"])
+    sz = res.evidence["sizing"]
+    assert sz["i0_a"] > 0.2 * CL1                    # pulse ceiling unlocked
+    assert sz["i0_a"] >= sz["i_ba_floor_a"] - 1e-9
+    assert sz["i0_a"] >= sz["i_mover_a"] - 1e-9
+    guard_cnt = CA18 * 1200.0 / 60.0
+    for run in res.evidence["pulse_runs"]:
+        assert abs(run["v_peak"]) < guard_cnt
+    wc = res.evidence["windup_curve"]
+    assert [int(q["tc_a"]) for q in wc["points"]] == [1, 2, 4]
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+def test_um3_drag_routes_commutation_fault(tmp_path):
+    """PART B: UM=5 torque efficiency 30% (commutation mis-mapping analogue —
+    IQ real, shaft torque derated): no breakaway even at the raised cap, but
+    the UM=3 stator drag (commutation-AGNOSTIC) FOLLOWS both directions ->
+    routed honest RED '커뮤테이션 토크효율' (never more current); UM restored;
+    full 1..8 A windup curve captured on the way."""
+    drive = VPSim(um5_eff=0.3, i_c=3.0)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status == RED
+    assert "커뮤테이션" in res.reason and "CA[7]" in res.reason
+    ba = res.evidence["breakaway"]
+    assert not ba["detected"]
+    assert ba["iq_at_cap_a"] > 0.5 * ba["i_cap_a"]   # IQ real (the deceit)
+    drag = res.evidence["um3_drag"]
+    assert drag["pa_effective"] is True
+    assert drag["follow_ratio"] >= 0.9
+    assert len(drag["directions"]) == 2
+    assert all(d["follow"] >= 0.9 for d in drag["directions"])
+    assert drag["directions"][0]["trace_pa_px"]      # 지령각-PX 추종 시계열
+    # BG-armed integer PA: the mock ONLY moves on BG, so follow=1.0 proves
+    # the code sends int PA + BG per step (HIGH-2 semantics teeth)
+    assert any(c.replace(" ", "") == "BG" for c, _ in drive.log)
+    wc = res.evidence["windup_curve"]
+    assert [int(q["tc_a"]) for q in wc["points"]] == [1, 2, 4, 6, 8]
+    assert drive.regs["UM"] == 5 and drive.regs["MO"] == 0
+    assert drive.regs["SD"] == pytest.approx(1e6)
+
+
+class BGIgnoredSim(VPSim):
+    """PA/BG dead end (soft-limit clip / BG-inactive analogue): BG is
+    acknowledged but the armed PA is NEVER applied — the stator angle stays
+    frozen while the axis itself is movable (um5_eff keeps UM=5 from breaking
+    away, so the drag oracle runs)."""
+
+    def __init__(self, **kw):
+        kw.setdefault("um5_eff", 0.3)
+        kw.setdefault("i_c", 3.0)
+        VPSim.__init__(self, **kw)
+
+    def _apply_pa(self):
+        v = getattr(self, "pa_pending", None)
+        if v is not None:
+            self.regs["PA"] = v          # readback moves, rotor does NOT
+            self.pa_pending = None
+
+
+def test_um3_pa_ineffective_honest_red(tmp_path):
+    """[HIGH-2] PA sweep not effective (PX no response by 0.5 elec rev):
+    honest '판별 불가' RED — NEVER a mechanical verdict (a dead stator
+    command and a stuck axis are indistinguishable headless)."""
+    drive = BGIgnoredSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status == RED
+    assert "판별 불가" in res.reason and "실효 미확인" in res.reason
+    assert "기계 점검" not in res.reason             # no mechanical claim
+    assert "커뮤테이션" not in res.reason            # no commutation claim
+    drag = res.evidence["um3_drag"]
+    assert drag["pa_effective"] is False
+    assert drag["early_px_response_cnt"] < 0.2 * drag["early_expected_cnt"]
+    assert drive.regs["UM"] == 5 and drive.regs["MO"] == 0
+
+
+class PartialDragSim(VPSim):
+    """Mechanical jam AFTER a finite drag travel: PA applies (early check
+    passes) but the rotor jams once drag_budget_cnt is consumed -> partial
+    follow < 0.9 (the honest mechanical-dominant slip case)."""
+
+    def __init__(self, drag_budget_cnt=2000.0, **kw):
+        kw.setdefault("um5_eff", 0.3)
+        kw.setdefault("i_c", 3.0)
+        VPSim.__init__(self, **kw)
+        self.drag_budget = float(drag_budget_cnt)
+
+    def _apply_pa(self):
+        p_before = self.p
+        VPSim._apply_pa(self)
+        moved = abs(self.p - p_before)
+        if moved > 0.0:
+            if moved > self.drag_budget:
+                import math as _m
+                self.p -= _m.copysign(moved - self.drag_budget,
+                                      self.p - p_before)
+                self.drag_budget = 0.0
+            else:
+                self.drag_budget -= moved
+
+
+def test_um3_partial_slip_mechanical_red(tmp_path):
+    """[HIGH-2 4] partial follow (early response OK, then jam): the
+    mechanical verdict fires but honestly labeled '슬립 또는 PA 미실효'
+    (실기 특성화 owns the final word)."""
+    drive = PartialDragSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status == RED
+    assert "슬립 또는 PA 미실효" in res.reason and "기계 점검" in res.reason
+    drag = res.evidence["um3_drag"]
+    assert drag["pa_effective"] is True              # early check passed
+    assert drag["follow_ratio"] < 0.9
+    assert drive.regs["UM"] == 5 and drive.regs["MO"] == 0
+
+
+def test_poll_latency_cut_before_guard(tmp_path):
+    """[MEDIUM] serial-latency analogue: every sleep stretched x2 (~60 ms
+    effective poll pairs, the live-measured figure) with an accurate clock —
+    the pulse overshoot must be caught by the 0.6*guard motion cut, never by
+    the 1200 rpm guard (no 과속 RED), and identification completes."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(
+        drive, tmp_path,
+        sleep_fn=lambda d: drive.advance(2.0 * d),
+        clock_fn=lambda: drive.t))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    assert "과속" not in res.reason
+    guard_cnt = CA18 * 1200.0 / 60.0
+    for run in res.evidence["pulse_runs"]:
+        assert abs(run["v_peak"]) < guard_cnt
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+def test_ramp_frac_above_abs_max_is_preflight_red(tmp_path):
+    """0.6*CL automatic ramping is FORBIDDEN: ramp_frac beyond the 0.4 abs max
+    -> pre-power RED (operator-approval constant, never a parameter path)."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.6))
+    assert res.status == RED and "ramp_frac" in res.reason
+    assert all("=" not in c for c, _ in drive.log)   # pre-power, read-only
 
 
 # ======================================================================================
