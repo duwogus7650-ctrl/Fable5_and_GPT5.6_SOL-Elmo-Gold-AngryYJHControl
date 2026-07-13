@@ -145,7 +145,17 @@ class VPSim:
             sgn = math.copysign(1.0, self.v) if abs(self.v) >= 1.0 \
                 else math.copysign(1.0, drive)
             acc = drive - self.D * self.v - self.C * sgn
-            self.v += self.dt * acc
+            v_new = self.v + self.dt * acc
+            # Karnopp zero-crossing clamp (sim-physics fix 2026-07-13): plain
+            # explicit integration of Coulomb friction overshoots zero and
+            # chatters in a +-C*dt limit cycle FOREVER (|v|~116 > the 1.0
+            # stick band) — the rotor never re-sticks, so static friction
+            # never re-engages: unphysical (a real rotor stops).  Friction
+            # may stop motion, never reverse it: clamp to 0 when the sign
+            # flip is friction-driven (|drive| <= C).
+            if self.v * v_new < 0.0 and abs(drive) <= self.C:
+                v_new = 0.0
+            self.v = v_new
         self.p += self.dt * self.v
         self.v_meas = self.v + nk
         if self._rec and self._rec["left"] > 0:
@@ -266,7 +276,11 @@ class VPSim:
 
 
 def _params(drive, tmpdir, **kw):
-    return AutotuneVPParams(sleep_fn=drive.advance, snapshot_dir=str(tmpdir), **kw)
+    # clock_fn homogeneous with the sim time base (2026-07-13: the UNIT-DIAG
+    # pulse duration is wall-clock MEASURED; sims must supply their clock)
+    kw.setdefault("clock_fn", lambda: drive.t)
+    kw.setdefault("sleep_fn", drive.advance)
+    return AutotuneVPParams(snapshot_dir=str(tmpdir), **kw)
 
 
 # ======================================================================================
@@ -440,29 +454,74 @@ def test_commutation_sign_fault_aborts(tmp_path):
     assert drive.regs["MO"] == 0
 
 
-def test_static_friction_too_high_red(tmp_path):
-    """I_c above even the UNIT-DIAG current -> caught EARLIER now (§9): the
-    diag sees dPos~0 while I_active ~ I_cmd -> mechanical-constraint/stiction
-    RED (previously the B1 probe caught this after a x2 retry)."""
-    drive = VPSim(i_c=0.6)
+def test_axis_clamped_at_cap_red(tmp_path):
+    """(b) 2026-07-13 breakaway rework: sub-cap stiction is now TUNABLE by
+    design (see test_previous_stiction_red_case_now_tunes) — the honest RED
+    moved to the true dead-end: the ramp reaches 0.2*CL[1] with REAL torque
+    (IQ ~ cap) and zero motion = clamped/braked axis."""
+    drive = VPSim(i_c=6.0)                   # stiction above the 4.24 A cap
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == RED
-    assert ("정지마찰" in res.reason) or ("기계구속" in res.reason)
+    assert "축 구속" in res.reason and "브레이크어웨이 없음" in res.reason
+    ba = res.evidence["breakaway"]
+    assert not ba["detected"] and ba["i_ba_a"] is None
+    assert ba["iq_at_cap_a"] > 0.5 * ba["i_cap_a"]   # torque was real
+    assert "unit_diag" not in res.evidence           # gated before the diag
     assert drive.regs["MO"] == 0
+    assert drive.regs["SD"] == pytest.approx(1e6)    # limits restored on abort
+
+
+def test_previous_stiction_red_case_now_tunes(tmp_path):
+    """Intent regression for the 2026-07-13 rework: I_c=0.6 A (the OLD
+    '기계구속' RED at the fixed 0.5 A diag current) must now break away via
+    the adaptive ramp and identify correctly — this is the live failed-unit
+    scenario (0.5 A cannot move it, ~2 A can)."""
+    drive = VPSim(i_c=0.6)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ba = res.evidence["breakaway"]
+    assert ba["detected"] and ba["i_ba_a"] > 0.6
+    assert res.evidence["unit_diag"]["i_diag_a"] > vp.UNITDIAG_I_A
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+    assert abs(res.i_c / 0.6 - 1.0) <= 0.15
 
 
 def test_overspeed_sw_guard_aborts(tmp_path):
-    """Oversized Tp target -> |VX| crosses the 1200 rpm SW guard mid-pulse ->
-    abort (TC=0 then MO=0), limits restored."""
+    """|VX| crossing the 1200 rpm SW guard mid-pulse -> abort (TC=0 then
+    MO=0), limits restored.  HIGH-fix update: the per-poll velocity rise must
+    EXCEED the cut-to-guard band (0.9..1.0 of guard, ~131k cnt/s) so the
+    main-pulse motion cut CANNOT intercept first — i_pulse_frac=0.2 gives
+    +702k cnt/s per 30 ms poll (polls land at 702k then 1404k > guard,
+    skipping the cut band): the guard remains the ultimate backstop for
+    dynamics faster than the cut's poll cadence."""
     drive = VPSim()
     res = run_velpos_autotune(drive, _params(drive, tmp_path,
-                                             tp_target_rpm=5000.0))
+                                             tp_target_rpm=5000.0,
+                                             i_pulse_frac=0.2))
     assert res.status == RED and "과속" in res.reason
     cmds = [c.replace(" ", "") for c, _ in drive.log]
     i_tc = len(cmds) - 1 - cmds[::-1].index("TC=0")
     i_mo = next(i for i, c in enumerate(cmds) if i > i_tc and c == "MO=0")
     assert i_tc < i_mo
     assert drive.regs["SD"] == pytest.approx(1e6)    # limits restored on abort
+
+
+def test_mainpulse_motion_cut_saves_slow_oversize(tmp_path):
+    """Counterpart of the guard test: an oversized pulse whose speed rises
+    SLOWLY enough to land inside the cut band (0.9..1.0 of guard) is
+    TRUNCATED by the main-pulse motion cut and the run SURVIVES on the
+    captured window (visible warning) — mis-sizing is no longer fatal."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path,
+                                             tp_target_rpm=5000.0))
+    assert res.status == YELLOW, (res.status, res.reason, res.warnings)
+    assert "과속" not in res.reason
+    assert any("조기종료" in w for w in res.warnings)
+    assert res.evidence.get("pulse_early_stops")
+    guard_cnt = CA18 * 1200.0 / 60.0
+    for run in res.evidence["pulse_runs"]:
+        assert abs(run["v_peak"]) < guard_cnt
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02     # window analysis intact
 
 
 def test_jv_asymmetry_red(tmp_path):
@@ -559,6 +618,412 @@ def test_unit_diag_hard_gate_red_on_broken_velocity(tmp_path):
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == RED and "하드게이트" in res.reason
     assert "pulse_runs" not in res.evidence            # gated BEFORE main pulses
+    assert drive.regs["MO"] == 0
+
+
+# ======================================================================================
+# B1.4 adaptive breakaway ramp + UNIT-DIAG wall-clock timing (2026-07-13)
+# ======================================================================================
+def test_breakaway_adaptive_probe_low_vs_high_friction(tmp_path):
+    """(a) the ramp finds i_ba just above the true stiction, records it, and
+    sizes probe = clip(1.5*i_ba, probe_i_a, 0.2*CL[1]) — DIFFERENT probes for
+    low- vs high-friction plants, both identifying K_a correctly."""
+    probes = {}
+    for ic in (0.2, 1.2):
+        drive = VPSim(i_c=ic)
+        res = run_velpos_autotune(drive, _params(drive, tmp_path / str(ic)))
+        assert res.status in (GREEN, YELLOW), (ic, res.status, res.reason)
+        ba = res.evidence["breakaway"]
+        assert ba["detected"]
+        assert ic < ba["i_ba_a"] <= ic + 0.35        # prompt, just above I_s
+        assert ba["probe_i_a_adapted"] == pytest.approx(
+            min(max(1.5 * ba["i_ba_a"], 0.25), 0.2 * CL1))
+        assert len(ba["trace_tc_dpx_vx"]) >= 2       # ramp trace evidence
+        assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02, (ic, res.k_a)
+        assert res.evidence["jv"]["i_ba_prior_a"] == ba["i_ba_a"]
+        probes[ic] = ba["probe_i_a_adapted"]
+    assert probes[1.2] > 2.0 * probes[0.2]           # adapts with friction
+
+
+def test_unit_diag_g_uses_measured_wall_clock(tmp_path):
+    """(c) live run-2 timing bug: serial VX round-trips stretch the REAL pulse
+    to ~125 ms while the nominal reference stays 80 ms — the OLD
+    g = 0.080/(N*dt) would read ~0.64 and wrongly adopt a dt factor.  With a
+    sleep_fn stretched x1.5625 and an accurate injected clock, the measured
+    T_host must be ~125 ms, g ~ 1, and NO dt correction adopted."""
+    drive = VPSim()
+    stretch = 1.5625                                  # 80 ms -> 125 ms (live)
+    params = _params(drive, tmp_path,
+                     sleep_fn=lambda d: drive.advance(d * stretch),
+                     clock_fn=lambda: drive.t,
+                     tp_target_rpm=500.0)             # stretched pulses < guard
+    res = run_velpos_autotune(drive, params)
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ud = res.evidence["unit_diag"]
+    assert ud["t_pulse_src"] == "measured(clock_fn)"
+    assert ud["t_pulse_host_s"] == pytest.approx(vp.UNITDIAG_T_S * stretch,
+                                                 rel=0.06)
+    assert abs(ud["g"] - 1.0) <= 0.10                 # measured time -> g~1
+    assert ud["g_dt_adopted"] == 1.0 and ud["s_scale_adopted"] == 1.0
+    # the OLD nominal-reference formula would have claimed a dt factor:
+    g_old = vp.UNITDIAG_T_S / (ud["n_pulse"] * ud["dt_assumed_s"])
+    assert g_old < 0.75, "old formula must show the ~0.64 artifact (got %.3f)" \
+        % g_old
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02      # pipeline unharmed
+
+
+def test_high_stiction_unit_diag_position_ka_no_125x(tmp_path):
+    """(d) the live failed unit (0.5 A cannot move the geared rotor): the
+    breakaway-adapted diag current ACTUALLY moves it, UNIT-DIAG judges via the
+    position-based accel, the hard gate passes with NO 125x-style corrections
+    (s=1, g=1), and the pipeline completes with the true K_a."""
+    drive = VPSim(i_c=1.2)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ud = res.evidence["unit_diag"]
+    assert ud["i_diag_a"] > vp.UNITDIAG_I_A           # adaptive current used
+    assert abs(ud["d_pos_cnt"]) > vp.UNITDIAG_MIN_DPOS  # rotor actually moved
+    assert ud["gate_pass"] and ud["ka_dev"] <= vp.UNITDIAG_KA_TOL
+    assert ud["s_scale_adopted"] == 1.0 and ud["g_dt_adopted"] == 1.0  # no 125x
+    assert abs(ud["s"] - 1.0) <= 0.05 and abs(ud["g"] - 1.0) <= 0.10
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+    assert abs(res.i_c / 1.2 - 1.0) <= 0.15
+
+
+# ======================================================================================
+# hardening round 2 (fable-critic): windup rejection / early-stop / honest IQ /
+# current-channel guard / nominal-floor branch (2026-07-13)
+# ======================================================================================
+class WindupSim(VPSim):
+    """Backlash/compliance windup: a ONE-SHOT +2000 cnt PX jump when TC first
+    exceeds 0.3 A (spring winds up, then SATURATES — no further motion, no
+    velocity signature); the TRUE breakaway is at i_c=1.4 A."""
+
+    def __init__(self, windup_at=0.3, windup_cnt=2000.0, **kw):
+        kw.setdefault("i_c", 1.4)
+        VPSim.__init__(self, **kw)
+        self.windup_at = float(windup_at)
+        self.windup_cnt = float(windup_cnt)
+        self.wound = False
+
+    def _query(self, name):
+        if name == "PX":
+            off = self.windup_cnt if self.wound else 0.0
+            return "%.6f" % (self.p + off)
+        return VPSim._query(self, name)
+
+    def _write(self, name, v):
+        out = VPSim._write(self, name, v)
+        if name == "TC" and abs(v) >= self.windup_at:
+            self.wound = True
+        return out
+
+
+def test_breakaway_rejects_windup_single_jump(tmp_path):
+    """[#1 MEDIUM] cumulative-dpx regression: a one-shot windup jump at 0.3 A
+    must NOT latch i_ba (the old |px-px0| test would self-satisfy '2연속'
+    forever and freeze i_ba~0.36 A -> probe too small -> the exact false RED
+    this ramp was built to remove).  Per-poll DELTA detection must ride
+    through the jump and latch at the TRUE breakaway ~1.4 A."""
+    drive = WindupSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ba = res.evidence["breakaway"]
+    assert drive.wound                                   # windup DID happen
+    tr = ba["trace_tc_dpx_vx"]
+    assert any(d > 400.0 and tc < 1.0 for tc, d, vv, _ph in tr), \
+        "the one-shot jump must be visible in the trace (and rejected)"
+    assert ba["i_ba_a"] > 1.4, \
+        "i_ba latched below the true breakaway: %.3f (windup accepted?)" \
+        % ba["i_ba_a"]
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+class HiStictionLowRunSim(VPSim):
+    """High STATIC friction (i_s) with LOW running Coulomb friction (i_c):
+    the adaptive diag current is large while the moving rotor barely brakes —
+    the 80 ms pulse would cross the 1200 rpm guard without the early-stop."""
+
+    def __init__(self, i_s=2.0, **kw):
+        kw.setdefault("i_c", 0.1)
+        VPSim.__init__(self, **kw)
+        self.i_s = float(i_s)
+
+    def _step(self, nk):
+        self.C = self.k_a * (self.i_s if abs(self.v) < 1.0 else self.i_c)
+        VPSim._step(self, nk)
+
+
+def test_unit_diag_early_stop_prevents_overspeed(tmp_path):
+    """[#2 MEDIUM] adaptive i_diag ~3.2 A + low running friction: without the
+    early-stop the diag pulse crosses 1200 rpm inside the nominal 80 ms (safe
+    abort, run dies).  The 500 rpm motion early-stop must cut the pulse, the
+    analysis proceeds on the captured window, and the pipeline completes with
+    the true K_a — no 과속 abort anywhere."""
+    drive = HiStictionLowRunSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ud = res.evidence["unit_diag"]
+    assert ud["i_diag_a"] > 2.5                          # adaptive current engaged
+    assert ud["early_stop"] is True
+    assert ud["t_pulse_nominal_s"] < vp.UNITDIAG_T_S     # pulse actually cut
+    assert ud["gate_pass"]
+    # teeth: at this accel the uncut 80 ms pulse WOULD have crossed the guard
+    accel = KA_TRUTH * (ud["i_diag_a"] - 0.1)
+    assert accel * vp.UNITDIAG_T_S > CA18 * 1200.0 / 60.0
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+def test_breakaway_iq_unreadable_defers_honestly(tmp_path):
+    """[#3 LOW] cap + no motion + IQ unparseable: no false 'IQ witnessed the
+    torque' claim — defer to the UNIT-DIAG physics branch (which re-derives
+    the discrimination from RECORDED currents with full logs)."""
+    class NoIqClampSim(VPSim):
+        def __init__(self, **kw):
+            kw.setdefault("i_c", 6.0)                    # clamped beyond cap
+            VPSim.__init__(self, **kw)
+
+        def _query(self, name):
+            if name == "IQ":
+                return "n/a"
+            return VPSim._query(self, name)
+
+    drive = NoIqClampSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    # the RAMP itself must not claim the axis is clamped (its IQ witness was
+    # unreadable) — the final verdict comes from the UNIT-DIAG escalation
+    # ladder, whose RECORDED currents legitimately witness the torque
+    assert any("IQ 판독불가" in w for w in res.warnings)
+    assert res.evidence["breakaway"]["iq_at_cap_a"] is None
+    assert "기계구속" in res.reason and "상향" in res.reason
+    assert drive.regs["MO"] == 0
+
+
+def test_unit_diag_current_channel_broken_explicit_red(tmp_path):
+    """[#4 LOW] rotor moved (dPos big) but the RECORDED Active Current never
+    crosses 0.5*i_diag: must be an explicit '전류채널 이상' RED, not the opaque
+    IndexError/ZeroDivision '내부 예외' the generic handler would report."""
+    class BadCurrentChanSim(VPSim):
+        def _chan(self, name):
+            if name == "Active Current [A]":
+                return self.i_act * 0.01                 # recorder channel broken
+            return VPSim._chan(self, name)
+
+    drive = BadCurrentChanSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED and "전류채널 이상" in res.reason
+    assert "내부 예외" not in res.reason
+    assert abs(res.evidence["unit_diag"]["d_pos_cnt"]) > vp.UNITDIAG_MIN_DPOS
+    assert drive.regs["MO"] == 0
+
+
+def test_unit_diag_nominal_floor_branch(tmp_path):
+    """[#5 LOW] clock_fn NOT homogeneous with sleep_fn (frozen clock = the
+    un-injected-sim class): the physical nominal floor must engage, be labeled
+    honestly, and the diag still passes with g~1 and no corrections."""
+    drive = VPSim()
+    params = _params(drive, tmp_path, clock_fn=lambda: 0.0)   # out-of-band clock
+    res = run_velpos_autotune(drive, params)
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason)
+    ud = res.evidence["unit_diag"]
+    assert ud["t_pulse_src"] == "nominal-floor"
+    assert ud["t_pulse_host_s"] == pytest.approx(vp.UNITDIAG_T_S)
+    assert abs(ud["g"] - 1.0) <= 0.10
+    assert ud["g_dt_adopted"] == 1.0 and ud["s_scale_adopted"] == 1.0
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+# ======================================================================================
+# backlash false-positive fix: RAMP->HOLD-CONFIRM + UNIT-DIAG escalation
+# (fable-physics field verdict 2026-07-13: live i_ba=1.01 A was a lash
+#  traversal, 4166 cnt = 0.76 deg output; true load breakaway > 1.52 A)
+# ======================================================================================
+class GearLashSim(VPSim):
+    """Geared axis with BACKLASH + load-side static friction: inside the free
+    play the rotor flies on its OWN inertia (k_a_free, tiny Coulomb); at the
+    lash end it engages the load (inelastic, v->0) and further motion needs
+    i > i_s_load; once broken away it runs on the normal plant (i_c).
+    Engagement is permanent (teeth stay in contact) — a simplification that is
+    sufficient to prove the ramp classification."""
+
+    def __init__(self, lash_cnt=4500.0, i_s_load=2.5, i_c_free=0.05,
+                 k_a_free_mult=3.0, **kw):
+        kw.setdefault("i_c", 0.2)
+        VPSim.__init__(self, **kw)
+        self.lash_left = float(lash_cnt)
+        self.i_s_load = float(i_s_load)
+        self.i_c_free = float(i_c_free)
+        self.k_a_free = self.k_a * float(k_a_free_mult)
+        self.engaged = False
+
+    def _step(self, nk):
+        if self.engaged:
+            self.C = self.k_a * (self.i_s_load if abs(self.v) < 1.0
+                                 else self.i_c)
+            VPSim._step(self, nk)
+            return
+        # free-play flight: rotor-only inertia, tiny Coulomb, no load
+        cmd = self._cmd_current()
+        if self.torque_disabled:
+            self.i_act = 0.0
+        else:
+            self.i_act = self.a_i * self.i_act + (1 - self.a_i) * self.cmd_prev
+        self.cmd_prev = cmd
+        drive = self.commut_sign * self.k_a_free * self.i_act
+        c_free = self.k_a_free * self.i_c_free
+        if abs(self.v) < 1.0 and abs(drive) <= c_free:
+            self.v = 0.0
+        else:
+            sgn = math.copysign(1.0, self.v) if abs(self.v) >= 1.0 \
+                else math.copysign(1.0, drive)
+            v_new = self.v + self.dt * (drive - c_free * sgn)
+            if self.v * v_new < 0.0 and abs(drive) <= c_free:
+                v_new = 0.0                     # Karnopp clamp (same as base)
+            self.v = v_new
+        dp = self.dt * self.v
+        if dp > 0:
+            self.lash_left -= dp
+            if self.lash_left <= 0:
+                dp += self.lash_left            # clamp at the lash end
+                self.lash_left = 0.0
+                self.v = 0.0                    # inelastic engagement
+                self.engaged = True
+        self.p += dp
+        self.v_meas = self.v + nk
+        if self._rec and self._rec["left"] > 0:
+            r = self._rec
+            if r["k"] % r["tres"] == 0:
+                for nm in r["names"]:
+                    r["bufs"][nm].append(self._chan(nm))
+                r["left"] -= 1
+            r["k"] += 1
+        self.t += self.dt
+
+
+class StictionRiseSim(VPSim):
+    """Stiction RISES after the breakaway ramp (detent/re-mesh analogue): the
+    ramp honestly measures a small i_ba, but by UNIT-DIAG time the axis needs
+    i_rise to move — exercises the escalation ladder in isolation."""
+
+    def __init__(self, i_rise=1.5, **kw):
+        kw.setdefault("i_c", 0.2)
+        VPSim.__init__(self, **kw)
+        self.i_rise = float(i_rise)
+        self.risen = False
+
+    def _write(self, name, v):
+        out = VPSim._write(self, name, v)
+        if name == "TC" and v == 0.0:
+            self.risen = True                    # first TC=0 = ramp end
+        return out
+
+    def _step(self, nk):
+        if self.risen:
+            self.C = self.k_a * (self.i_rise if abs(self.v) < 1.0
+                                 else self.i_c)
+        else:
+            self.C = self.k_a * self.i_c
+        VPSim._step(self, nk)
+
+
+def test_gear_lash_ramp_classifies_and_finds_true_breakaway(tmp_path):
+    """(a) FIELD CASE: the low-current lash burst must be classified as STALL
+    (finite travel, recorded in lash_events), the ramp RESUMES, and the TRUE
+    load breakaway (~2.5 A) is latched by the HOLD-CONFIRM sustain rule; the
+    adapted diag current really moves the rotor -> pipeline completes with the
+    true K_a and NO 125x corrections.
+
+    HIGH-fix teeth (fable-critic): NO i_pulse_frac override — with the DEFAULT
+    0.10 the OLD sizing had i0=2.12 A < 2.5 A stiction -> motion retry doubled
+    i0 to 4.24 A with the STALE tp=71 ms -> 1200 rpm guard crossed at ~56 ms
+    -> false RED.  Mover-floored i0 + per-i0 tp resize must pass on defaults."""
+    drive = GearLashSim()                        # lash 4500 cnt, load 2.5 A
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    ba = res.evidence["breakaway"]
+    assert ba["detected"]
+    assert 2.5 < ba["i_ba_a"] <= 2.9, ba["i_ba_a"]   # TRUE breakaway, not ~0.13
+    assert len(ba["lash_events"]) >= 1               # burst classified as lash
+    for lev in ba["lash_events"]:
+        assert lev["travel_cnt"] < 6000.0            # finite travel = backlash
+        assert lev["tc_a"] < 1.0                     # happened at LOW current
+    assert any(ph == "HOLD" for *_x, ph in ba["trace_tc_dpx_vx"])
+    ud = res.evidence["unit_diag"]
+    assert ud["i_diag_a"] > 3.0                      # adapted from the true i_ba
+    assert ud["s_scale_adopted"] == 1.0 and ud["g_dt_adopted"] == 1.0
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+    assert drive.engaged
+
+
+def test_main_pulse_sized_by_proven_mover_no_overspeed(tmp_path):
+    """[HIGH] order-killer regression (fable-critic): stiction 2.5 A /
+    running 0.2 A unit with DEFAULT params.  OLD path: i0=2.12<2.5 -> first
+    pulse no motion -> retry i0=4.24 with tp STILL 71 ms -> accel 2.34e7
+    cnt/s^2 -> |VX| crosses the 1.31e6 guard at ~56 ms -> false RED.  NEW
+    path: i0 floored at the proven mover current identifies on the FIRST
+    pulse pair, tp resized per i0, every pulse peak under the guard."""
+    drive = GearLashSim()                            # defaults everywhere
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason, res.warnings)
+    assert "과속" not in res.reason
+    sz = res.evidence["sizing"]
+    assert sz["i_mover_a"] == res.evidence["unit_diag"]["i_diag_a"]
+    assert sz["i0_a"] >= res.evidence["breakaway"]["i_ba_a"]   # mover floor
+    assert sz["i0_a"] >= sz["i_mover_a"]
+    assert vp.TP_MIN_S <= sz["tp_s"] <= vp.TP_MAX_S
+    guard_cnt = CA18 * 1200.0 / 60.0
+    for run in res.evidence["pulse_runs"]:
+        assert abs(run["v_peak"]) < guard_cnt            # never near the abort
+    assert not any("모션부족" in w for w in res.warnings)  # FIRST-try motion
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+def test_hold_confirm_sustain_vs_stall_branches(green_run, tmp_path):
+    """(b) HOLD-CONFIRM branch pair: a plain plant SUSTAINS at the detection
+    current (no lash events); the geared plant STALLS first (lash event
+    recorded) and only sustains at the load breakaway."""
+    _, _, res_nom = green_run
+    ba_nom = res_nom.evidence["breakaway"]
+    assert ba_nom["lash_events"] == []               # sustain branch
+    assert 0.2 < ba_nom["i_ba_a"] <= 0.55
+    drive = GearLashSim(i_s_load=2.0)                # default i0=2.12 > 2.0
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason)
+    ba = res.evidence["breakaway"]
+    assert len(ba["lash_events"]) >= 1 and ba["i_ba_a"] > 2.0   # stall branch
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+def test_unit_diag_escalation_recovers_low_probe(tmp_path):
+    """(c) dual defense: stiction rises after the ramp so the ramp-sized diag
+    current cannot move the axis — the escalation ladder must find a mover,
+    adopt s/g/K_a from the SUCCESSFUL pulse, feed the proven current forward
+    to the B1 probe, and the pipeline completes (YELLOW: escalations are
+    visible warnings)."""
+    drive = StictionRiseSim(i_rise=1.5)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW, (res.status, res.reason, res.warnings)
+    assert any("상향" in w for w in res.warnings)
+    ud = res.evidence["unit_diag"]
+    assert len(ud["escalations"]) >= 1
+    assert ud["i_diag_a"] > 1.5                      # final successful rung
+    assert ud["gate_pass"]
+    assert ud["s_scale_adopted"] == 1.0 and ud["g_dt_adopted"] == 1.0
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+
+
+def test_unit_diag_escalation_exhausted_cap_red(tmp_path):
+    """(d) truly constrained axis (stiction above the cap, arising after the
+    ramp): the ladder exhausts at 0.2*CL[1] and only then the honest final RED
+    '축 구속/고마찰(기계구속)' fires, escalation history in evidence."""
+    drive = StictionRiseSim(i_rise=6.0)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "기계구속" in res.reason and "상향" in res.reason
+    ud = res.evidence["unit_diag"]
+    assert ud["i_diag_a"] == pytest.approx(0.2 * CL1)   # last rung = the cap
+    assert len(ud["escalations"]) == 3                  # 0.5/0.75/1.125 failed
     assert drive.regs["MO"] == 0
 
 

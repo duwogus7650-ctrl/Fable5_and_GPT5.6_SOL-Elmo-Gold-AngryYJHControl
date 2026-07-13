@@ -765,7 +765,8 @@ class MainWindow(QtWidgets.QMainWindow):
                       "ALIGN": 1,       # B4 pre-align/ratchet (2026-07-13 fix)
                       "MEASURE_R": 1, "MEASURE_L": 1, "DESIGN": 2, "DONE": 2}
     _VP_CODE_STAGE = {"P0": 3, "VALIDATE": 3, "SNAPSHOT": 3,
-                      "ENABLE": 4, "UNIT_DIAG": 4, "PROBE": 4, "SIZING": 4,
+                      "ENABLE": 4, "BREAKAWAY": 4,     # B1.4 adaptive ramp
+                      "UNIT_DIAG": 4, "PROBE": 4, "SIZING": 4,
                       "IDENT_KA": 4, "IDENT_FRICTION": 4,
                       "DESIGN": 5, "DONE": 5}
 
@@ -1638,8 +1639,8 @@ def _smoke_velpos(app, win):
     w.velpos_result.connect(results.append)
     w._run_velpos_autotune(sim, {})
     chk("glue: started emitted", len(started) == 1)
-    need = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE", "UNIT_DIAG", "PROBE",
-            "SIZING", "IDENT_KA", "IDENT_FRICTION", "DESIGN", "DONE"]
+    need = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE", "BREAKAWAY", "UNIT_DIAG",
+            "PROBE", "SIZING", "IDENT_KA", "IDENT_FRICTION", "DESIGN", "DONE"]
     chk("glue: progress P0..DONE stream", all(c in codes for c in need))
     res_glue = results[0] if results else None
     chk("glue: result GREEN", res_glue is not None
