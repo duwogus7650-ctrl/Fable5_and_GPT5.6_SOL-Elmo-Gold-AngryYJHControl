@@ -803,6 +803,22 @@ class MainWindow(QtWidgets.QMainWindow):
             gform.addWidget(l, i, 0); gform.addWidget(e, i, 1); self.tune_gain_fields[k] = e
         v.addLayout(gform)
         v.addWidget(self._hline())
+        # breakaway cap selector (multi-unit: stiff gearboxes need 0.4*CL —
+        # fable-physics: this unit shows NO breakaway at the default 0.2*CL;
+        # the kernel's RAMP_FRAC_ABS_MAX(0.4) pre-gate stays the hard ceiling)
+        caprow = QtWidgets.QHBoxLayout(); caprow.setSpacing(8)
+        cap_l = QtWidgets.QLabel("브레이크어웨이 캡 (P2)"); cap_l.setProperty("role", "field")
+        self.cmb_ba_cap = QtWidgets.QComboBox()
+        self.cmb_ba_cap.addItem("0.2·CL (기본, 안전)", 0.2)
+        self.cmb_ba_cap.addItem("0.4·CL (고전류, 뻑뻑한 감속기용)", 0.4)
+        self.cmb_ba_cap.setCurrentIndex(0)
+        caprow.addWidget(cap_l); caprow.addWidget(self.cmb_ba_cap, 1)
+        v.addLayout(caprow)
+        cap_hint = QtWidgets.QLabel(
+            "ⓘ 0.4·CL은 출력 토크 ~2배 · 감독 필수 · 안전장치 유지(1200rpm 가드·모션 조기종료·abort). "
+            "0.4 선택 시 캡≥6A라 UM3 커뮤/기계 판별도 실행됩니다.")
+        cap_hint.setProperty("role", "hint"); cap_hint.setWordWrap(True)
+        v.addWidget(cap_hint)
         # controls
         btnrow = QtWidgets.QHBoxLayout(); btnrow.setSpacing(8)
         self.btn_tune = QtWidgets.QPushButton("Run Phase 1 (Current)"); self.btn_tune.setEnabled(False)
@@ -958,12 +974,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._flash(("게인 적용됨: " + msg) if ok else ("적용 실패: " + msg))
 
     # ---- Phase 2 (vel/pos) GUI glue — mirror of the Phase-1 set -----------------------
+    def _velpos_overrides(self) -> dict:
+        """Phase-2 param overrides from the Tuning-page controls (everything
+        else = kernel defaults).  ramp_frac = user-selected breakaway cap;
+        the kernel's RAMP_FRAC_ABS_MAX(0.4) preflight gate stays the ceiling."""
+        try:
+            frac = float(self.cmb_ba_cap.currentData())
+        except (TypeError, ValueError):
+            frac = 0.2
+        return {"ramp_frac": frac}
+
     def _run_velpos_clicked(self):
         if not (self.worker and self.worker.isRunning()):
             self._flash("연결 후 사용하세요."); return
+        ov = self._velpos_overrides()
         btn = QtWidgets.QMessageBox.warning(
             self, "Phase 2 실행 확인 (⚠ 실제 회전)",
             "⚠ Phase 2는 모터를 실제로 회전시킵니다.\n\n"
+            "• 브레이크어웨이 캡: %.1f·CL[1] (%.2f A)\n"
+            % (ov["ramp_frac"],
+               ov["ramp_frac"] * 21.2132) +
             "• ±토크 펄스로 약 1바퀴/측정 회전 + 저속 조그(±300/±900rpm)가 수행됩니다.\n"
             "• 축이 자유롭게, 안전하게 돌 수 있어야 합니다 — 부하·치구·손·케이블을 확인하세요.\n"
             "• 과속 시 자동 정지(1200rpm SW 가드), 언제든 Abort로 안전 중단됩니다.\n"
@@ -978,7 +1008,7 @@ class MainWindow(QtWidgets.QMainWindow):
                   "pm_vel", "pm_pos"):
             self.tune_gain_fields[k].setText("—")
         self.btn_tune_vp_apply.setEnabled(False)
-        self.worker.start_velpos_autotune({})     # module defaults (SPEC §2.5 sizing)
+        self.worker.start_velpos_autotune(ov)     # cap override + module defaults
 
     def _apply_velpos_clicked(self):
         r = getattr(self, "_vp_result", None)
@@ -1646,7 +1676,7 @@ def _smoke_velpos(app, win):
     w.velpos_started.connect(lambda: started.append(1))
     w.velpos_progress.connect(lambda c, d: codes.append(c))
     w.velpos_result.connect(results.append)
-    w._run_velpos_autotune(sim, {})
+    w._run_velpos_autotune(sim, {"ramp_frac": 0.4})   # UI override path
     chk("glue: started emitted", len(started) == 1)
     need = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE", "BREAKAWAY", "UNIT_DIAG",
             "PROBE", "SIZING", "IDENT_KA", "IDENT_FRICTION", "DESIGN", "DONE"]
@@ -1660,6 +1690,9 @@ def _smoke_velpos(app, win):
         and abs(res_glue.ki_vel_hz / 10.70 - 1.0) <= 0.005
         and abs(res_glue.kp_pos / 85.2 - 1.0) <= 0.005)
     chk("glue: sim motor left OFF", sim.regs["MO"] == 0)
+    chk("glue: ramp_frac=0.4 flowed to kernel (i_cap evidence)",
+        res_glue is not None
+        and abs(res_glue.evidence["breakaway"]["i_cap_a"] - 0.4 * 21.2132) < 0.05)
 
     # ---- Part B: GUI handlers -----------------------------------------------------------
     ac = autotune_velpos
@@ -1668,6 +1701,10 @@ def _smoke_velpos(app, win):
     app.processEvents()
     chk("Run Phase 2 enabled on connect", win.btn_tune_vp.isEnabled())
     chk("Apply P2 disabled initially", not win.btn_tune_vp_apply.isEnabled())
+    chk("BA cap default = 0.2", abs(win._velpos_overrides()["ramp_frac"] - 0.2) < 1e-9)
+    win.cmb_ba_cap.setCurrentIndex(1)
+    chk("BA cap select -> 0.4", abs(win._velpos_overrides()["ramp_frac"] - 0.4) < 1e-9)
+    win.cmb_ba_cap.setCurrentIndex(0)
     win._on_velpos_started()
     chk("Abort enabled while running", win.btn_tune_abort.isEnabled())
     chk("stage 3 active on start", "◆" in win.tune_stage_lbls[3].text())
