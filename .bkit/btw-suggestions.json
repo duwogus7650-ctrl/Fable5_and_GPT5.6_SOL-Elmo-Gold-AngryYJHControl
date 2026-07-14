@@ -119,6 +119,17 @@
       "priority": null,
       "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
     }
+    {
+      "id": "btw-011",
+      "timestamp": "2026-07-14T03:20:00Z",
+      "suggestion": "방향 반전 수리: 사용자가 EAS Feedback Sensor Parameters의 'Direction: Non Invert→Invert'(=CA[54], 센서/엔코더 방향)를 찾음. 이걸로도 +TC→+v 정렬됨(재커뮤 필수). 단 PX/VX 부호가 전역 반전(EnDat datum 부호 뒤집힘). fable-physics 권장은 CA[25](스테퍼각/상순서 반전, PX 부호 보존)였으나 GUI 접근성상 Sensor Direction Invert가 실용적. 둘 다 재커뮤+SV 필요. 우리 앱은 어느쪽이든 +TC→+v면 통과.",
+      "context": { "file": "EAS Feedback Sensor Direction(CA[54]) vs Motor CA[25]", "pdcaPhase": null, "feature": "commutation direction fix" },
+      "category": "documentation",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
   ],
-  "stats": { "total": 10, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+  "stats": { "total": 11, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
 }

@@ -181,6 +181,8 @@ UM3_FOLLOW_MIN = 0.9      # follow ratio |dPX|/(revs*CA[18]/CA[19]) threshold
 UM3_EARLY_CHECK_EREV = 0.5  # HIGH-2: effectiveness check point [elec rev]
 UM3_EARLY_MIN_FRAC = 0.2  # PX response must exceed this frac of commanded travel
 KT_NOMINAL = 0.12         # N*m/A — message annotation only, not a gate
+DIR_FIX_MSG = ("수리: MO=0 → CA[25]=1 → 재커뮤테이션 → SV"
+               " (묵시적 부호보정 금지 — 반전 상태 게인 적용은 폭주)")
 SEG_TIMEBOX_S = 5.0
 TOTAL_BUDGET_S = 120.0
 JV_SETTLE_S = 0.8
@@ -382,6 +384,13 @@ def design_vp_gains(k_a: float, d_visc: float, ts_s: float,
     and delta RATIOS are kept, so KI[2]/KP[3] rescale with wcv).
     kp1/ki1_hz = the drive's CURRENT-loop gains as read at P1 (H_ci model).
     Returns {ok, kp2, ki2, kp3, wcv, margins, iters}."""
+    if not (isinstance(k_a, (int, float)) and math.isfinite(k_a) and k_a > 0):
+        # 보강4 (fable-physics §3): a direction-reversed identification must
+        # NEVER be sign-corrected into the gain design (wcv/K_a<0 -> negative
+        # KP[2] -> runaway on a healthy drive).  Fix the direction first.
+        raise ValueError("design_vp_gains: K_a는 양수여야 함 (방향 반전 식별의"
+                         " 부호보정 유입 금지 — CA[25] 수리 후 재식별): %r"
+                         % (k_a,))
     if params.wcv_override_hz:
         wcv = 2 * math.pi * float(params.wcv_override_hz)
     else:
@@ -902,7 +911,8 @@ def _probe_ka(ctx: _Ctx, rec: dict, i_probe: float):
     noise_sd = float(np.std(v[:n_pre])) if len(v) > n_pre else 0.0
     moved = vpk > max(500.0, 8.0 * noise_sd)
     if moved and a_on < 0:                           # §1-3 sign gate (40 ms window)
-        raise AbortError("커뮤 부호 이상: sign(v̇)≠sign(TC) — 즉시 중단")
+        raise AbortError("방향 반전(유효-역방향 커뮤테이션) — sign(v̇)≠sign(TC),"
+                         " 즉시 중단. " + DIR_FIX_MSG)
     k_last = int(np.flatnonzero(m_on)[-1])
     # CONTIGUOUS coast segment only: a threshold mask alone lets post-stiction
     # noise samples (|noise| > threshold, scattered far in time) leverage the
@@ -1171,6 +1181,8 @@ def _breakaway_ramp(ctx: _Ctx):
     px_prev = px0
     lash_events = []
     tc = 0.0
+    ba_direction = 0                    # +1/-1 at the i_ba latch (0 = unknown)
+    ba_dir_basis = None                 # signed-motion evidence for the verdict
     for k in range(1, steps + 1):
         tc = i_cap * k / steps
         fast = tc > RAMP_FAST_POLL_ABOVE_A
@@ -1196,7 +1208,8 @@ def _breakaway_ramp(ctx: _Ctx):
                         if px_f is not None and px_prev is not None else 0.0)
             if px_f is not None:
                 px_prev = px_f
-        vxa = abs(float(vx)) if isinstance(vx, (int, float)) else 0.0
+        vx_raw = float(vx) if isinstance(vx, (int, float)) else 0.0
+        vxa = abs(vx_raw)
         moved = dpx_step > p.detect_dpx or vxa > p.detect_vx
         hits = hits + 1 if moved else 0
         trace.append((round(tc, 4), round(dpx_step, 1), round(vxa, 1),
@@ -1221,6 +1234,8 @@ def _breakaway_ramp(ctx: _Ctx):
             # HOLD window entirely (real serial latency lets speed grow
             # 400..1100 rpm per poll)
             i_ba = tc
+            ba_direction = 1 if vx_raw > 0 else -1     # 보강1: sign at latch
+            ba_dir_basis = "signed VX(INSTANT)=%.0f cnt/s" % vx_raw
             trace.append((round(tc, 4), round(dpx_step, 1), round(vxa, 1),
                           "INSTANT"))
             break
@@ -1233,8 +1248,10 @@ def _breakaway_ramp(ctx: _Ctx):
         px_detect = px_f
         stall = 0
         cum = 0.0
+        cum_signed = 0.0
         vx_max = 0.0
         vxa2 = 0.0
+        vx2_raw = 0.0
         sustained = False
         collapsed = False
         # 개정6 AND-rule: SUSTAIN = cum > max(floor 13000, 2*lash실측)
@@ -1259,9 +1276,11 @@ def _breakaway_ramp(ctx: _Ctx):
                       if px2_f is not None and px_prev is not None else 0.0)
             if px2_f is not None:
                 px_prev = px2_f
-            vxa2 = abs(float(vx2)) if isinstance(vx2, (int, float)) else 0.0
+            vx2_raw = float(vx2) if isinstance(vx2, (int, float)) else 0.0
+            vxa2 = abs(vx2_raw)
             if px2_f is not None and px_detect is not None:
-                cum = abs(px2_f - px_detect)
+                cum_signed = px2_f - px_detect
+                cum = abs(cum_signed)
             vx_max = max(vx_max, vxa2)
             moving = step_d > p.detect_dpx or vxa2 > p.detect_vx
             stall = 0 if moving else stall + 1
@@ -1281,6 +1300,14 @@ def _breakaway_ramp(ctx: _Ctx):
         ctx.guard_vx_only = prev_mode
         if sustained:
             i_ba = tc               # frozen detection current = true breakaway
+            # 보강1: motion SIGN at the latch — the +TC ramp must produce
+            # +feedback; reversal is decided here, BEFORE any diagnostic pulse
+            if abs(cum_signed) > p.detect_dpx:
+                ba_direction = 1 if cum_signed > 0 else -1
+                ba_dir_basis = "signed dpx(HOLD)=%.0f cnt" % cum_signed
+            elif abs(vx2_raw) > p.detect_vx:
+                ba_direction = 1 if vx2_raw > 0 else -1
+                ba_dir_basis = "signed VX(HOLD)=%.0f cnt/s" % vx2_raw
             break
         # finite/decaying travel = backlash traversal: record + resume ramp
         lash_events.append({"tc_a": round(tc, 4), "travel_cnt": round(cum, 1),
@@ -1326,11 +1353,20 @@ def _breakaway_ramp(ctx: _Ctx):
         "hold_polls_max": HOLD_POLLS_MAX,
         "sustain_dpx_cnt": p.sustain_dpx_cnt,
         "sustain_vx_end_frac": SUSTAIN_VX_END_FRAC,
+        "direction": ba_direction, "direction_basis": ba_dir_basis,
         "note": "i_ba=브레이크어웨이 전류(정지마찰 전류등가 상계) — B·I_c 식별"
                 " 선험치로 evidence 보존; probe=clip(k·i_ba, probe_i_a,"
                 " 0.2·CL[1]); 검출=폴 간 델타 2연속 + HOLD-CONFIRM 지속확인"
                 " (유격통과=거리유한→실속분류·램프재개, 진짜 이탈=토크유지 시"
-                " 거리무한→지속검출; lash_events=유격 이벤트 기록)"}
+                " 거리무한→지속검출; lash_events=유격 이벤트 기록;"
+                " direction=+TC 램프에 대한 피드백 부호(래치 시점)"}
+    if i_ba is not None and ba_direction < 0:
+        # 보강1 (fable-physics §3): 유효-역방향 커뮤테이션은 램프 trace에 이미
+        # 드러난다 — 진단펄스 통전 전에 조기중단 (live: unit-diag가 19,571 cnt
+        # 역회전을 돌린 뒤에야 B1에서 죽었음)
+        raise AbortError(
+            "방향 반전(유효-역방향 커뮤테이션) — +TC 램프에 음의 피드백 (%s):"
+            " 진단펄스 통전 전 조기중단. %s" % (ba_dir_basis, DIR_FIX_MSG))
     if i_ba is None:
         if iq_cap is None:
             # hardening #3: no false "IQ witnessed the torque" claim — the
@@ -1622,6 +1658,13 @@ def _unit_diag_pulse(ctx: _Ctx, i_diag: float, escal: list):
     a_pos = 2.0 * float(qc[0])
     i_w = float(np.mean(i_act[w]))
     ka_pos = a_pos / i_w if i_w else float("nan")
+    if math.isfinite(ka_pos) and ka_pos <= 0.0:
+        # 보강2 (fable-physics §3): the live run PASSED the hard gate with a
+        # NEGATIVE K_a (ka_pos=-5.5e5; ka_dev compares magnitude-consistency
+        # only) — a +i_diag pulse must accelerate POSITIVE.  Terminal RED.
+        raise AbortError(
+            "방향 반전(유효-역방향 커뮤테이션) — +%.2fA 펄스에 음의 가속"
+            " (Position-fit K_a=%.3g ≤ 0). %s" % (i_diag, ka_pos, DIR_FIX_MSG))
 
     # ---- adopt corrections (§9 decision table, sequential (1)->(2)) --------------------
     verdicts = []

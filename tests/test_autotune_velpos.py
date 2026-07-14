@@ -480,11 +480,19 @@ def test_commutation_config_change_red(tmp_path):
 
 
 def test_commutation_sign_fault_aborts(tmp_path):
-    """§1-3: sign(dv/dt) != sign(TC) during the probe -> immediate abort RED,
-    with the TC-segment chain order TC=0 -> MO=0."""
+    """[방향보강1] effective-reverse commutation (+TC -> -feedback) must RED
+    at the RAMP LATCH — BEFORE any diagnostic pulse (the live run spun the
+    rotor 19,571 cnt backwards through unit-diag before B1 caught it).
+    Message carries the exact repair path (CA[25]=1 + 재커뮤테이션); the
+    abort chain order TC=0 -> MO=0 stays intact."""
     drive = VPSim(commut_sign=-1.0)
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
-    assert res.status == RED and "부호" in res.reason
+    assert res.status == RED
+    assert "방향 반전" in res.reason and "CA[25]" in res.reason
+    assert "unit_diag" not in res.evidence      # 진단펄스 통전 전 조기중단
+    ba = res.evidence["breakaway"]
+    assert ba["direction"] == -1
+    assert ba["direction_basis"]                # signed-motion evidence recorded
     cmds = [c.replace(" ", "") for c, _ in drive.log]
     i_tc = next(i for i, c in enumerate(cmds) if c == "TC=0" and i > 5)
     i_mo = next(i for i, c in enumerate(cmds) if i > i_tc and c == "MO=0")
@@ -1500,6 +1508,52 @@ def test_ca7_other_motor_no_false_alarm(tmp_path):
                                                expected_ca7=438.0))
     assert res2.status == RED and "커뮤 변경감지" in res2.reason
     assert all("=" not in c for c, _ in drive2.log)     # pre-power, read-only
+
+
+class FlipAfterRampSim(VPSim):
+    """direction flips AFTER the ramp (post-re-mesh reversal analogue): the
+    ramp latches a healthy +direction i_ba, but the diag pulse accelerates
+    NEGATIVE — the ka_pos>0 assertion (defense-in-depth behind the ramp
+    gate) must catch what the live run missed: the hard gate PASSED with
+    ka_pos=-5.5e5 because ka_dev only compares magnitude consistency."""
+
+    def _write(self, name, v):
+        out = VPSim._write(self, name, v)
+        if name == "TC" and v == 0.0:
+            self.commut_sign = -1.0              # flip at ramp end
+        return out
+
+
+def test_unit_diag_negative_ka_direction_red(tmp_path):
+    """[방향보강2] a +i_diag pulse with NEGATIVE position-fit acceleration
+    must be a terminal 방향 RED (never a gate pass, never escalation)."""
+    drive = FlipAfterRampSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "방향 반전" in res.reason and "CA[25]" in res.reason
+    assert "K_a" in res.reason                   # the negative ka_pos is named
+    assert res.evidence["breakaway"]["direction"] == 1   # ramp was healthy
+    assert drive.regs["MO"] == 0
+
+
+def test_design_vp_gains_rejects_negative_ka():
+    """[방향보강4] a negative K_a must never enter the gain design (wcv/K_a<0
+    -> negative KP[2] -> runaway): ValueError, no silent sign correction."""
+    with pytest.raises(ValueError):
+        design_vp_gains(-5.79e6, 0.58, TS_US * 1e-6, AutotuneVPParams(),
+                        KP1_EAS, KI1_EAS)
+    with pytest.raises(ValueError):
+        design_vp_gains(0.0, 0.58, TS_US * 1e-6, AutotuneVPParams(),
+                        KP1_EAS, KI1_EAS)
+
+
+def test_direction_positive_recorded(green_run):
+    """[방향보강3] healthy forward unit: direction=+1 with its signed-motion
+    basis recorded in the breakaway evidence (and the run is unaffected)."""
+    _, _, res = green_run
+    ba = res.evidence["breakaway"]
+    assert ba["direction"] == 1
+    assert ba["direction_basis"]
 
 
 def test_ramp_frac_above_abs_max_is_preflight_red(tmp_path):
