@@ -108,6 +108,17 @@
       "priority": "high",
       "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
     }
+    {
+      "id": "btw-010",
+      "timestamp": "2026-07-14T02:40:00Z",
+      "suggestion": "UI 재디자인이 HTML 프리뷰(Artifact)에만 적용됐고 실제 PyQt6 앱 QSS 테마엔 미반영 — 사용자가 앱이 그대로라 '바꾼거 맞아?' 물음. btw-005의 '앱 QSS 반영은 별도' 그 부분이 미완. 요청 시 앱 테마(main.py QSS theme_qdd)에 프리미엄 팔레트·깊이감·헤어라인 반영(Qt QSS는 웹CSS보다 제한적—애니/일부 글로우 불가, 색/깊이/그라디언트는 가능).",
+      "context": { "file": "main.py QSS theme (theme_qdd)", "pdcaPhase": null, "feature": "apply premium redesign to actual app QSS" },
+      "category": "improvement",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
   ],
-  "stats": { "total": 9, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+  "stats": { "total": 10, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
 }
