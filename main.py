@@ -400,7 +400,7 @@ class MainWindow(QtWidgets.QMainWindow):
         col = QtWidgets.QVBoxLayout(); col.setSpacing(4)
         col.addWidget(brand); col.addWidget(made)
         h.addLayout(col)
-        bird = self._img_label("angry_bird.png", 78)
+        bird = self._img_label("angry_bird.png", 112)
         if bird is not None:
             h.addWidget(bird)
         h.addStretch(1)
