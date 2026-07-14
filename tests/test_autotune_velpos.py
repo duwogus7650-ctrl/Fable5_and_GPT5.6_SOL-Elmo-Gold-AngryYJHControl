@@ -1483,6 +1483,25 @@ def test_late_landing_with_noise_rejected_by_lsq_tail(tmp_path):
     assert drive.regs["MO"] == 0
 
 
+def test_ca7_other_motor_no_false_alarm(tmp_path):
+    """Multi-motor workflow: CA[7] is a PER-MOTOR commutation value — a
+    different motor (CA[7]=272) must NOT trip the preflight (the old
+    hardcoded 438 expectation killed the run); CA[7] stays recorded in
+    evidence and the CA[17]==5 config gate still owns validity."""
+    drive = VPSim(ca7=272.0)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW), (res.status, res.reason)
+    assert "커뮤 변경감지" not in res.reason
+    assert res.evidence["readings"]["CA[7]"] == 272.0   # still recorded
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02
+    # opt-in pin still gates (explicit expected_ca7 keeps its teeth)
+    drive2 = VPSim(ca7=272.0)
+    res2 = run_velpos_autotune(drive2, _params(drive2, tmp_path / "pin",
+                                               expected_ca7=438.0))
+    assert res2.status == RED and "커뮤 변경감지" in res2.reason
+    assert all("=" not in c for c, _ in drive2.log)     # pre-power, read-only
+
+
 def test_ramp_frac_above_abs_max_is_preflight_red(tmp_path):
     """0.6*CL automatic ramping is FORBIDDEN: ramp_frac beyond the 0.4 abs max
     -> pre-power RED (operator-approval constant, never a parameter path)."""

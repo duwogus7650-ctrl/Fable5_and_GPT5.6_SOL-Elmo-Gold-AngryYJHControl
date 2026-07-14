@@ -75,6 +75,39 @@
       "priority": null,
       "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
     }
+    {
+      "id": "btw-007",
+      "timestamp": "2026-07-14T01:20:00Z",
+      "suggestion": "극쌍수 자동식별 기능 필요(btw-001 재확인). 원인 확정: 사용자가 16극 다른 모터를 같은 Elmo 드라이브로 EAS 튜닝 → 드라이브가 16극 설정 전체 보유(CA[19]=16, CA[7]=272 커뮤테이션, 게인 KP[3]=180/KI[2]=21.8). 우리 21극 모터 연결됐으나 드라이브는 16극용. 우리 프로그램은 CA[19]를 있는그대로 쓰고 극쌍 식별 안 함 → '16 설정인데 실제 21'을 못 잡음. Phase 1은 극쌍 무관(R/L만 측정)이라 16으로도 정상 튜닝됨(오해 소지). CA[7] 가드는 커뮤 변경 정확히 잡음(272≠438). 근본해결=극쌍 식별+커뮤테이션을 우리 프로그램에 넣어 EAS 의존 제거(공유 드라이브 2모터 워크플로우).",
+      "context": { "file": "autotune_velpos.py G0 preflight(CA[7]/CA[17] 가드), main.py Motor Settings", "pdcaPhase": null, "feature": "pole-pair identification + commutation in-app" },
+      "category": "skill-request",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-008",
+      "timestamp": "2026-07-14T01:40:00Z",
+      "suggestion": "극쌍수 정체 뒤집힘(중대): 세션 시작 EAS 팝업=identified 21 vs defined 16(→우리가 21로 감). 지금 EAS 팝업(사용자가 프로그램·EAS 동일모터로 통일 후, defined 21)=identified 16. 같은 모터에 EAS가 21→16 상반 식별 = EAS 극쌍식별이 이 셋업(감속기 백래시?)에서 불안정하거나 그간 물리적 다른모터였음. EAS 식별값만으론 확신 불가 — 우리 '21' 근거도 첫 식별 하나였음. 확실한 답=모터 명판/데이터시트 극수. 드라이브 현재 16극설정(CA[19]=16,CA[7]=272)·EAS R/L(0.124Ω/37.3µH)은 우리 Phase1(0.139Ω/40.8µH)과 근사. 우리 CA[7]=438 하드코딩 가드는 적응형으로 고쳐야(btw-007과 함께).",
+      "context": { "file": "autotune_velpos.py G0 CA[7] 가드, 모터 명판 확인 필요", "pdcaPhase": null, "feature": "pole-pair ground truth (nameplate) + adaptive commutation guard" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-009",
+      "timestamp": "2026-07-14T02:00:00Z",
+      "suggestion": "극쌍수 정체 최종확정: 이 모터=16극쌍(32극), 21 아님. 근거: 16 설정 시 EAS 경고없이 튜닝완료(identified=defined=16), 21 설정 시 identified 16 경고. EAS 물리식별 일관 16. 세션 시작의 '21'은 오식별/모터혼동이었고 우리가 CA[19]=21로 잘못 감. 중대함의: 지난 Phase 2 백래시 사가 전체가 CA[19]=21·CA[7]=438(21극 커뮤테이션)으로 = 16극 모터를 21극으로 잘못 커뮤테이션 → 전기각 21/16배 어긋남 → 토크 오생성 → 브레이크어웨이 실패의 (주된) 원인일 가능성 큼. fable-physics '커뮤테이션 토크효율 저하 미배제'가 정확히 이것. 교훈: EAS 식별값 하나 맹신 금물(명판/재확인 필요), 우리 프로그램에 극쌍 식별 필수(btw-001/007). 드라이브 현재 EAS가 16극으로 깨끗이 튜닝(R0.127Ω/L38.1µH).",
+      "context": { "file": "전체 Phase 2 재해석; autotune_velpos CA[7] 가드", "pdcaPhase": null, "feature": "motor identity FINAL = 16 pole pairs; Phase 2 re-run with correct commutation" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
   ],
-  "stats": { "total": 6, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+  "stats": { "total": 9, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
 }

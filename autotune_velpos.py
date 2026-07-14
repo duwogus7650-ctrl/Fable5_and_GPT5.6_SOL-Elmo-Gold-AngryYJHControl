@@ -238,7 +238,13 @@ class AutotuneVPParams:
     rec_dt_s: float = 400e-6            # recorder sample time (tres = rec_dt/TS)
     wcv_override_hz: Optional[float] = None
     expected_ca17: int = 5              # commutation config guard (G0)
-    expected_ca7: Optional[float] = 438.0   # None = skip the CA[7] value check
+    # CA[7] is a PER-MOTOR commutation value (multi-motor workflow: the same
+    # drive alternates between motors with different pole pairs) — a hardcoded
+    # expectation false-alarms on every other motor.  Default None = no value
+    # gate: CA[7] is recorded in evidence + emitted informationally only.
+    # Commutation-CONFIG validity is owned by the motor-independent CA[17]==5
+    # check.  Set a value explicitly to pin one motor (opt-in gate).
+    expected_ca7: Optional[float] = None
     # --- injection points (headless tests replace sleep_fn with the sim clock) -------
     sleep_fn: Callable[[float], None] = time.sleep
     snapshot_dir: str = os.path.join(".omc", "state")
@@ -1718,7 +1724,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         raise PreflightError("커뮤 변경감지: CA[17]=%r (기대 %d) — CS/CA[7] 쓰기 금지,"
                              " 수동 확인 필요" % (r.get("CA[17]"), p.expected_ca17))
     if p.expected_ca7 is not None and r.get("CA[7]") != p.expected_ca7:
-        raise PreflightError("커뮤 변경감지: CA[7]=%r (기대 %s)"
+        raise PreflightError("커뮤 변경감지: CA[7]=%r (명시 고정값 %s와 불일치 —"
+                             " 다른 모터 장착?)"
                              % (r.get("CA[7]"), p.expected_ca7))
     for wsk in ("WS[28]", "WS[55]"):
         if isinstance(r.get(wsk), (int, float)) and r[wsk] != ts:
@@ -1738,7 +1745,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     kp1 = r.get("KP[1]") if isinstance(r.get("KP[1]"), (int, float)) else 0.07177
     ki1 = r.get("KI[1]") if isinstance(r.get("KI[1]"), (int, float)) else 812.939
     _emit(ctx, "VALIDATE", "G0 통과: TS=%dµs UM=5 GS[2]=0 CA[17]=%d, CL[1]=%.2fA"
-          % (int(ts), p.expected_ca17, ctx.cl1))
+          " (CA[7]=%s — 모터별 커뮤값, 정보성 기록)"
+          % (int(ts), p.expected_ca17, ctx.cl1, r.get("CA[7]")))
 
     # ---- P4 (read-only) then P3 snapshot -----------------------------------------------
     _resolve_signals(ctx)
