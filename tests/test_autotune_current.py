@@ -1407,6 +1407,30 @@ def test_cancel_fn_exception_is_not_a_cancel(tmp_path):
 # ======================================================================================
 # E3/E4 separate operator actions
 # ======================================================================================
+class SilentGainStoreDrive(SimDrive):
+    """Drive parser fault model: accept a write but silently store another value."""
+
+    def __init__(self, silent_store, **kwargs):
+        super().__init__(**kwargs)
+        self.silent_store = dict(silent_store)
+
+    def _write(self, name, value):
+        return super()._write(name, self.silent_store.get(name, value))
+
+
+class GainReadbackTimeoutDrive(SimDrive):
+    """The write reaches RAM, but its immediate verification query times out."""
+
+    def __init__(self, timeout_name, **kwargs):
+        super().__init__(**kwargs)
+        self.timeout_name = timeout_name
+
+    def _query(self, name):
+        if name == self.timeout_name:
+            raise TimeoutError("simulated readback timeout")
+        return super()._query(name)
+
+
 def test_apply_gains_writes_when_motor_off(tmp_path):
     drive = SimDrive()
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
@@ -1415,6 +1439,81 @@ def test_apply_gains_writes_when_motor_off(tmp_path):
     assert drive.regs["KP[1]"] == pytest.approx(0.0712)
     assert drive.regs["KI[1]"] == pytest.approx(812.9)
     assert not any(c == "SV" for c, _ in drive.log)   # I4: no SV unless persist
+
+
+def test_apply_gains_wire_literals_drive_safe():
+    """Every Phase-1 gain uses the proven EAS-safe plain-decimal envelope."""
+    drive = SimDrive()
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.07123456789,
+                         ki_hz=812.9391234)
+    ok, msg = apply_gains(drive, res)
+    assert ok, msg
+    writes = [c for c, _ in drive.log
+              if c.startswith(("KP[1]=", "KI[1]="))]
+    assert writes == ["KP[1]=0.071235", "KI[1]=812.939123"]
+    for command in writes:
+        literal = command.split("=", 1)[1]
+        assert "e" not in literal.lower(), command
+        fraction = literal.split(".", 1)[1] if "." in literal else ""
+        assert len(fraction) <= 6, command
+
+
+def test_apply_gains_incident_silent_zero_blocks_persist():
+    """Accepted-but-stored-as-zero must fail honestly and never reach SV."""
+    drive = SilentGainStoreDrive({"KP[1]": 0.0})
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg = apply_gains(drive, res, persist=True)
+    assert not ok, msg
+    assert "KP[1]" in msg and "readback" in msg and "SV not executed" in msg
+    assert "observed RAM: KP[1]=0" in msg and "DO NOT ENABLE" in msg
+    assert drive.regs["KP[1]"] == 0.0
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_apply_gains_late_readback_mismatch_exposes_partial_apply():
+    """A bad KI readback leaves KP in RAM but must suppress persistence."""
+    drive = SilentGainStoreDrive({"KI[1]": 800.0})
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg = apply_gains(drive, res, persist=True)
+    assert not ok, msg
+    assert "KI[1]" in msg and "mismatch" in msg and "KP[1]" in msg
+    assert "SV not executed" in msg
+    assert "observed RAM: KI[1]=800" in msg and "DO NOT ENABLE" in msg
+    assert drive.regs["KP[1]"] == pytest.approx(0.0712)
+    assert drive.regs["KI[1]"] == pytest.approx(800.0)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_apply_gains_readback_timeout_reports_unknown_ram_state():
+    drive = GainReadbackTimeoutDrive("KP[1]")
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg = apply_gains(drive, res, persist=True)
+    assert not ok, msg
+    assert drive.regs["KP[1]"] == pytest.approx(0.0712)  # write did reach RAM
+    assert "RAM state UNKNOWN: KP[1]" in msg and "DO NOT ENABLE" in msg
+    assert "verified prior RAM: none" in msg and "SV not executed" in msg
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_apply_gains_verified_persist_runs_single_sv():
+    drive = SimDrive()
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg = apply_gains(drive, res, persist=True)
+    assert ok, msg
+    assert "readback" in msg and "SV" in msg
+    assert sum(1 for c, _ in drive.log if c == "KP[1]") == 1
+    assert sum(1 for c, _ in drive.log if c == "KI[1]") == 1
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+
+
+def test_apply_gains_refuses_gain_that_vanishes_on_wire():
+    drive = SimDrive()
+    res = AutotuneResult(status=GREEN, kp_v_per_a=1e-8, ki_hz=812.9)
+    ok, msg = apply_gains(drive, res, persist=True)
+    assert not ok, msg
+    assert "KP[1]" in msg and "round" in msg and "SV not executed" in msg
+    assert not any(c.startswith("KP[1]=") for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
 
 
 def test_apply_gains_refuses_motor_on():
