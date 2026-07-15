@@ -66,6 +66,8 @@ class DriveWorker(QtCore.QThread):
     velpos_progress = QtCore.pyqtSignal(str, str)         # (phase_code, human detail)
     velpos_result = QtCore.pyqtSignal(object)             # autotune_velpos.AutotuneVPResult
     velpos_applied = QtCore.pyqtSignal(bool, str)         # (ok, message) for KP[2..3] apply
+    verify_started = QtCore.pyqtSignal()                  # F2/G5 verification run
+    verify_result = QtCore.pyqtSignal(object)             # AutotuneVPResult (verify)
     encoder_maint_result = QtCore.pyqtSignal(bool, str)   # (ok, drive-response text)
     stopped = QtCore.pyqtSignal()
 
@@ -109,6 +111,12 @@ class DriveWorker(QtCore.QThread):
         """Queue writing a GREEN/YELLOW Phase-2 result's KP[2]/KI[2]/KP[3]
         (MO=0 gated; FF[1] is never written)."""
         self._jobs.append(("velpos_apply", (result, bool(persist))))
+
+    def start_verify_vp(self, kw: dict):
+        """Queue the F2/G5 gain-acceptance run (ROTATES the motor: JV steps
+        300->900 rpm — the caller shows the rotation warning gate first)."""
+        self._cancel_at = False
+        self._jobs.append(("verify_vp", dict(kw)))
 
     def encoder_maintenance(self, cmds, persist: bool):
         """Queue encoder-maintenance command(s) (TW[18]/TW[19]/TW[20]) in order.
@@ -198,6 +206,8 @@ class DriveWorker(QtCore.QThread):
                             pass
                     elif kind == "velpos":
                         self._run_velpos_autotune(link, payload)
+                    elif kind == "verify_vp":
+                        self._run_verify_vp(link, payload)
                     elif kind == "velpos_apply":
                         result, persist = payload
                         try:
@@ -285,6 +295,25 @@ class DriveWorker(QtCore.QThread):
             self.tuning_gains.emit(link.read_tuning_gains())
         except Exception:
             pass
+
+    def _run_verify_vp(self, link, kw: dict):
+        """Run the F2/G5 verification in this thread (mirror of
+        _run_velpos_autotune): sleep_fn -> msleep, progress -> the shared
+        velpos_progress stream, cancel -> the operator-abort flag.  The
+        module never raises (RED result) and runs the JV abort chain
+        (JV=0 -> BG -> ST -> MO=0) on cancel."""
+        self.verify_started.emit()
+        params = autotune_velpos.AutotuneVPParams(
+            sleep_fn=lambda s: self.msleep(int(max(s, 0.0) * 1000)),
+            progress_fn=lambda code, detail: self.velpos_progress.emit(str(code), str(detail)),
+            cancel_fn=lambda: self._cancel_at,
+            **kw)
+        try:
+            res = autotune_velpos.verify_run_vp(link, params)
+        except Exception as e:                       # module shouldn't raise; be safe
+            res = autotune_velpos.AutotuneVPResult(
+                status=autotune_velpos.RED, reason="verify worker 예외: %r" % e)
+        self.verify_result.emit(res)
 
 
 # ---------------------------------------------------------------------------------------
@@ -831,8 +860,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_apply.clicked.connect(self._apply_autotune_clicked)
         self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → Drive"); self.btn_tune_vp_apply.setEnabled(False)
         self.btn_tune_vp_apply.clicked.connect(self._apply_velpos_clicked)
+        self.btn_tune_verify = QtWidgets.QPushButton("Run Verify (게인 검증런)")
+        self.btn_tune_verify.setEnabled(False)
+        self.btn_tune_verify.clicked.connect(self._run_verify_clicked)
         for b in (self.btn_tune, self.btn_tune_vp, self.btn_tune_abort,
-                  self.btn_tune_apply, self.btn_tune_vp_apply):
+                  self.btn_tune_apply, self.btn_tune_vp_apply,
+                  self.btn_tune_verify):
             btnrow.addWidget(b)
         v.addLayout(btnrow)
         note = QtWidgets.QLabel("ⓘ 우리 자체 오토튠 — EAS 내부 알고리즘 재현이 아니라, 드라이브 명령으로 "
@@ -1028,8 +1061,54 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.apply_velpos_gains(r, persist=True)
             self._flash("Phase 2 게인 적용 전송 중…")
 
+    def _run_verify_clicked(self):
+        if not (self.worker and self.worker.isRunning()):
+            self._flash("연결 후 사용하세요."); return
+        btn = QtWidgets.QMessageBox.warning(
+            self, "게인 검증런 실행 확인 (⚠ 실제 회전)",
+            "⚠ F2 검증런은 모터를 실제로 회전시킵니다 (JV 스텝 300 → 900 rpm).\n\n"
+            "• 적용된 KP[2]/KI[2]/KP[3] 게인의 스텝응답을 드라이브 레코더로 캡처해\n"
+            "  오버슈트(<25%)·지속발진·정상상태 전류/속도를 자동 판정합니다.\n"
+            "• 축이 자유롭게, 안전하게 돌 수 있어야 합니다 — 부하·치구·손·케이블 확인.\n"
+            "• 과속 시 자동 정지(1200rpm SW 가드), 언제든 Abort로 안전 중단됩니다.\n"
+            "• 무인 실행 금지 — 감독 하에서만 실행하세요.\n\n"
+            "축이 자유회전 가능함을 확인했고, 실행할까요?",
+            QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if btn != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        self.worker.start_verify_vp({})           # kernel defaults (300, 900)
+
+    def _on_verify_started(self):
+        for b in (self.btn_tune, self.btn_tune_vp, self.btn_tune_verify,
+                  self.btn_tune_apply, self.btn_tune_vp_apply):
+            b.setEnabled(False)
+        self.btn_tune_abort.setEnabled(True)
+        self.tune_status.setText("▶ 검증런(F2) 시작 — JV 스텝 사다리…")
+
+    def _on_verify_result(self, res):
+        self.btn_tune_abort.setEnabled(False)
+        on = bool(self.worker and self.worker.isRunning())
+        self.btn_tune.setEnabled(on); self.btn_tune_vp.setEnabled(on)
+        self.btn_tune_verify.setEnabled(on)
+        steps = (res.evidence or {}).get("verify", {}).get("steps", [])
+        parts = ["%.0frpm: OS %.1f%% 정착 %s I_ss %.3fA %s"
+                 % (s["rpm"], 100 * s["overshoot_frac"],
+                    ("%.0fms" % (1e3 * s["t_settle_s"])
+                     if s.get("t_settle_s") is not None else "—"),
+                    s["i_ss"], "✓" if s["pass"] else "✗") for s in steps]
+        path = (res.evidence or {}).get("result_path")
+        self.tune_status.setText(
+            "검증런(F2) %s%s%s%s"
+            % (res.status,
+               (" — " + " | ".join(parts)) if parts else "",
+               (" — %s" % res.reason) if res.reason else "",
+               ("  ·  저장: %s" % path) if path else ""))
+        self._flash("검증런 %s" % res.status)
+
     def _on_velpos_started(self):
         self.btn_tune.setEnabled(False); self.btn_tune_vp.setEnabled(False)
+        self.btn_tune_verify.setEnabled(False)
         self.btn_tune_abort.setEnabled(True)
         self.btn_tune_vp_apply.setEnabled(False)
         self._set_tune_stage(3, done_upto=-1)
@@ -1058,6 +1137,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_abort.setEnabled(False)
         on = bool(self.worker and self.worker.isRunning())
         self.btn_tune.setEnabled(on); self.btn_tune_vp.setEnabled(on)
+        self.btn_tune_verify.setEnabled(on)
         self._vp_result = res
         self._vp_result_path = self._dump_velpos_result(res)
         # RED/aborted must never leave a previous run's Apply enabled (Phase-1 fix)
@@ -1146,6 +1226,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.velpos_progress.connect(self._on_velpos_progress)
         self.worker.velpos_result.connect(self._on_velpos_result)
         self.worker.velpos_applied.connect(self._on_velpos_applied)
+        self.worker.verify_started.connect(self._on_verify_started)
+        self.worker.verify_result.connect(self._on_verify_result)
         self.worker.encoder_maint_result.connect(self._on_encoder_maint_result)
         self.worker.stopped.connect(self._on_stopped)
         self.worker.start()
@@ -1431,6 +1513,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_tune.setEnabled(on)
         if hasattr(self, "btn_tune_vp"):
             self.btn_tune_vp.setEnabled(on)
+        if hasattr(self, "btn_tune_verify"):
+            self.btn_tune_verify.setEnabled(on)
         if not on:
             for b in ("btn_tune_abort", "btn_tune_apply", "btn_tune_vp_apply"):
                 if hasattr(self, b):
@@ -1676,7 +1760,15 @@ def _smoke_velpos(app, win):
     w.velpos_started.connect(lambda: started.append(1))
     w.velpos_progress.connect(lambda c, d: codes.append(c))
     w.velpos_result.connect(results.append)
+    # LIVE-BASELINE TRIPWIRE (2026-07-14 x3 incident): this smoke previously
+    # overwrote .omc/state/autotune_ka_baseline.json with its synthetic K_a
+    # (5.77e6) — the kernel now quarantines VPSim (is_synthetic) persistence
+    # into .omc/state/synthetic; assert the LIVE file is untouched.
+    _bl_path = os.path.join(".omc", "state", "autotune_ka_baseline.json")
+    _bl_before = open(_bl_path, "rb").read() if os.path.exists(_bl_path) else None
     w._run_velpos_autotune(sim, {"ramp_frac": 0.4})   # UI override path
+    _bl_after = open(_bl_path, "rb").read() if os.path.exists(_bl_path) else None
+    chk("synthetic run leaves LIVE baseline untouched", _bl_before == _bl_after)
     chk("glue: started emitted", len(started) == 1)
     need = ["P0", "VALIDATE", "SNAPSHOT", "ENABLE", "BREAKAWAY", "UNIT_DIAG",
             "PROBE", "SIZING", "IDENT_KA", "IDENT_FRICTION", "DESIGN", "DONE"]
@@ -1693,9 +1785,41 @@ def _smoke_velpos(app, win):
     chk("glue: ramp_frac=0.4 flowed to kernel (i_cap evidence)",
         res_glue is not None
         and abs(res_glue.evidence["breakaway"]["i_cap_a"] - 0.4 * 21.2132) < 0.05)
+    chk("glue: persistence quarantined (synthetic evidence)",
+        res_glue is not None
+        and str(res_glue.evidence.get("synthetic_quarantine", ""))
+        .endswith(autotune_velpos.SYNTHETIC_SUBDIR))
+
+    # ---- Part A2: F2/G5 verify-run worker glue ------------------------------------------
+    sim2 = VPSim()
+    w2 = GlueWorker(sim2)
+    v_started, v_results = [], []
+    w2.verify_started.connect(lambda: v_started.append(1))
+    w2.verify_result.connect(v_results.append)
+    w2._run_verify_vp(sim2, {})
+    _bl_after2 = (open(_bl_path, "rb").read()
+                  if os.path.exists(_bl_path) else None)
+    chk("verify glue: started emitted", len(v_started) == 1)
+    res_v = v_results[0] if v_results else None
+    chk("verify glue: GREEN on nominal plant", res_v is not None
+        and res_v.status == autotune_velpos.GREEN)
+    chk("verify glue: ladder 300+900 both ran", res_v is not None
+        and [s["rpm"] for s in res_v.evidence["verify"]["steps"]]
+        == [300.0, 900.0])
+    chk("verify glue: overshoot in design band (<15%)", res_v is not None
+        and all(s["overshoot_frac"] < 0.15
+                for s in res_v.evidence["verify"]["steps"]))
+    chk("verify glue: motor left OFF", sim2.regs["MO"] == 0)
+    chk("verify glue: result json quarantined", res_v is not None
+        and autotune_velpos.SYNTHETIC_SUBDIR in res_v.evidence["result_path"])
+    chk("verify glue: LIVE baseline still untouched", _bl_before == _bl_after2)
 
     # ---- Part B: GUI handlers -----------------------------------------------------------
     ac = autotune_velpos
+    # smoke-only: synthetic Part-B results must not pollute the LIVE result
+    # snapshots (.omc/state/autotune_vp_result_*.json) — stub the dump on this
+    # window instance (GUI logic itself unchanged)
+    win._dump_velpos_result = lambda res: None
     win._nav_to(3)                                    # Tuning page
     win._set_connected_ui(True)
     app.processEvents()
@@ -1749,6 +1873,24 @@ def _smoke_velpos(app, win):
     chk("Apply P2 disabled after RED", not win.btn_tune_vp_apply.isEnabled())
     chk("status shows RED reason", "RED" in win.tune_status.text()
         and "G4" in win.tune_status.text())
+
+    # ---- Part B2: verify-run handlers ----------------------------------------------------
+    win._set_connected_ui(True)                   # re-ground: connected state
+    chk("Run Verify enabled on connect", win.btn_tune_verify.isEnabled())
+    win._on_verify_started()
+    chk("verify: run buttons locked while running",
+        not win.btn_tune_verify.isEnabled() and not win.btn_tune_vp.isEnabled()
+        and not win.btn_tune.isEnabled())
+    chk("verify: Abort enabled while running", win.btn_tune_abort.isEnabled())
+    win._on_verify_result(res_v)
+    app.processEvents()
+    chk("verify: status shows verdict+metrics",
+        "GREEN" in win.tune_status.text() and "OS" in win.tune_status.text()
+        and "I_ss" in win.tune_status.text())
+    chk("verify: Abort disabled after result",
+        not win.btn_tune_abort.isEnabled())
+    # (button re-enable follows worker liveness — same convention as Phase 2;
+    # headless smoke has no live worker, so no assertion on the enabled state)
 
     out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
                        "media", "smoke_velpos.png")

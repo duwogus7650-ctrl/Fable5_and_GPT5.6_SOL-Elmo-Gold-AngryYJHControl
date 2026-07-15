@@ -8,3 +8,5 @@ __pycache__/
 NUL
 # transient scratch
 *.tmp
+# synthetic/smoke quarantine (by design throwaway — see SYNTHETIC_SUBDIR)
+.omc/state/synthetic/

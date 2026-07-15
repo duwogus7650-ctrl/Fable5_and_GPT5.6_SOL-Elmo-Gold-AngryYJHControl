@@ -1,5 +1,5 @@
 {
-  "updatedAt": "2026-07-13T01:59:11.574Z",
+  "updatedAt": "2026-07-15T08:00:38.556Z",
   "missions": [
     {
       "id": "session:7b5159aa-6fd3-4cd8-8cc1-b03222133913:none",
@@ -7,15 +7,15 @@
       "name": "none",
       "objective": "Session mission",
       "createdAt": "2026-07-12T06:36:45.835Z",
-      "updatedAt": "2026-07-13T01:59:11.574Z",
-      "status": "done",
-      "workerCount": 8,
+      "updatedAt": "2026-07-15T08:00:38.556Z",
+      "status": "running",
+      "workerCount": 17,
       "taskCounts": {
-        "total": 8,
+        "total": 17,
         "pending": 0,
         "blocked": 0,
-        "inProgress": 0,
-        "completed": 8,
+        "inProgress": 1,
+        "completed": 16,
         "failed": 0
       },
       "agents": [
@@ -98,40 +98,122 @@
           "latestUpdate": "completed",
           "completedSummary": null,
           "updatedAt": "2026-07-12T23:41:05.936Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-critic:ab699c9",
+          "role": "parallel-agent-fable-5:fable-critic",
+          "ownership": "ab699c9d0accda91b",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-13T05:40:04.717Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-physics:a08e28d",
+          "role": "parallel-agent-fable-5:fable-physics",
+          "ownership": "a08e28d772dd3ab05",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-14T01:50:55.963Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-critic:a76ec27",
+          "role": "parallel-agent-fable-5:fable-critic",
+          "ownership": "a76ec27d184eb9769",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-13T07:21:04.409Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-critic:af4d7f3",
+          "role": "parallel-agent-fable-5:fable-critic",
+          "ownership": "af4d7f3f2f1fab989",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-13T10:29:01.079Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-critic:a3732e8",
+          "role": "parallel-agent-fable-5:fable-critic",
+          "ownership": "a3732e88eafc9a020",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-13T11:52:07.285Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-driver:a25af3b",
+          "role": "parallel-agent-fable-5:fable-driver",
+          "ownership": "a25af3bbde64d676d",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-13T23:14:55.916Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-critic:aabc4a7",
+          "role": "parallel-agent-fable-5:fable-critic",
+          "ownership": "aabc4a769bfb2397b",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-13T23:31:34.349Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-physics:ad5192e",
+          "role": "parallel-agent-fable-5:fable-physics",
+          "ownership": "ad5192e7cbf82bb7d",
+          "status": "done",
+          "currentStep": null,
+          "latestUpdate": "completed",
+          "completedSummary": null,
+          "updatedAt": "2026-07-15T07:46:19.914Z"
+        },
+        {
+          "name": "parallel-agent-fable-5:fable-driver:acc1643",
+          "role": "parallel-agent-fable-5:fable-driver",
+          "ownership": "acc1643c912b8e04e",
+          "status": "running",
+          "currentStep": null,
+          "latestUpdate": null,
+          "completedSummary": null,
+          "updatedAt": "2026-07-15T08:00:38.556Z"
         }
       ],
       "timeline": [
         {
-          "id": "session-start:aef277ad570823cb2:2026-07-12T23:30:57.127Z",
-          "at": "2026-07-12T23:30:57.127Z",
+          "id": "session-start:ad5192e7cbf82bb7d:2026-07-15T07:41:09.870Z",
+          "at": "2026-07-15T07:41:09.870Z",
           "kind": "update",
-          "agent": "parallel-agent-fable-5:fable-physics:aef277a",
-          "detail": "started parallel-agent-fable-5:fable-physics:aef277a",
-          "sourceKey": "session-start:aef277ad570823cb2"
+          "agent": "parallel-agent-fable-5:fable-physics:ad5192e",
+          "detail": "started parallel-agent-fable-5:fable-physics:ad5192e",
+          "sourceKey": "session-start:ad5192e7cbf82bb7d"
         },
         {
-          "id": "session-stop:aef277ad570823cb2:2026-07-12T23:41:05.936Z",
-          "at": "2026-07-12T23:41:05.936Z",
+          "id": "session-stop:ad5192e7cbf82bb7d:2026-07-15T07:46:19.914Z",
+          "at": "2026-07-15T07:46:19.914Z",
           "kind": "completion",
-          "agent": "parallel-agent-fable-5:fable-physics:aef277a",
+          "agent": "parallel-agent-fable-5:fable-physics:ad5192e",
           "detail": "completed",
-          "sourceKey": "session-stop:aef277ad570823cb2"
+          "sourceKey": "session-stop:ad5192e7cbf82bb7d"
         },
         {
-          "id": "session-start:af4f67ace67dde9a9:2026-07-13T01:45:11.900Z",
-          "at": "2026-07-13T01:45:11.900Z",
+          "id": "session-start:acc1643c912b8e04e:2026-07-15T08:00:38.556Z",
+          "at": "2026-07-15T08:00:38.556Z",
           "kind": "update",
-          "agent": "parallel-agent-fable-5:fable-driver:af4f67a",
-          "detail": "started parallel-agent-fable-5:fable-driver:af4f67a",
-          "sourceKey": "session-start:af4f67ace67dde9a9"
-        },
-        {
-          "id": "session-stop:af4f67ace67dde9a9:2026-07-13T01:59:11.574Z",
-          "at": "2026-07-13T01:59:11.574Z",
-          "kind": "completion",
-          "agent": "parallel-agent-fable-5:fable-driver:af4f67a",
-          "detail": "completed",
-          "sourceKey": "session-stop:af4f67ace67dde9a9"
+          "agent": "parallel-agent-fable-5:fable-driver:acc1643",
+          "detail": "started parallel-agent-fable-5:fable-driver:acc1643",
+          "sourceKey": "session-start:acc1643c912b8e04e"
         }
       ]
     }

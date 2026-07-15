@@ -90,7 +90,14 @@ class VPSim:
         self.integ = 0.0             # velocity-PI integrator
         self.mode = "tc"             # UM=5: last command wins (TC torque / JV vel)
         self.tc = 0.0
-        self.jv = 0.0
+        # REAL JV semantics (live finding 2026-07-14): JV rides the AC/DC
+        # PROFILER — the loop reference self.jv RAMPS toward jv_target at
+        # regs["AC"] cnt/s^2 (900 rpm = 983,040/1e6 = 0.983 s ramp).  The old
+        # instant-step model is exactly why the capture-window artifact was
+        # never caught in sim.
+        self.jv = 0.0                # profiled reference fed to the vel PI
+        self.jv_target = 0.0         # profiler endpoint (set on BG)
+        self.jv_pending = None       # CR p175: JV is ARMED, applied on BG
         self.v_meas = 0.0
         self.regs = {"TS": ts_us, "UM": um, "MF": mf, "SR": 0,
                      "GS[0]": 0, "GS[1]": 0, "GS[2]": gs2,
@@ -98,6 +105,8 @@ class VPSim:
                      "KI[1]": KI1_EAS, "KI[2]": ki2,
                      "CA[7]": ca7, "CA[17]": ca17, "CA[18]": CA18, "CA[19]": 21,
                      "PA": 0.0,
+                     "CA[25]": 0, "CA[54]": 0,   # invert/commut-feedback info
+                     "CA[16]": 0,                # commut search per MO: OFF
                      "CA[41]": 30, "CA[42]": 0, "CA[43]": 0, "CA[44]": 0,
                      "CL[1]": CL1, "PL[1]": 70.7107, "MC": 140,
                      "VH[2]": 3.93e6, "VH[3]": 0, "VL[3]": 0,
@@ -115,8 +124,15 @@ class VPSim:
         self._rec = None
         self.record_calls = 0
         self.log = []
+        # live-incident knob (2026-07-14): drive SILENTLY stores a different
+        # value than requested (KP[2]=0.000166142303 -> stored 0, no error);
+        # {"KP[2]": 0.0} makes any KP[2]= write land as 0.0 with "" response
+        self.write_silent_store = {}
 
     is_connected = True
+    is_synthetic = True     # kernel quarantines ALL persistence (snapshot +
+                            # K_a baseline) into snapshot_dir/synthetic — a
+                            # sim GREEN must never re-baseline a live unit
 
     def recorder_signals(self):
         return list(self.signals)
@@ -126,6 +142,13 @@ class VPSim:
         if self.regs["MO"] != 1:
             return 0.0
         if self.mode == "jv":
+            # AC/DC profiler: ramp the reference toward the target
+            rate = float(self.regs.get("AC", 1e6)) * self.dt
+            d = self.jv_target - self.jv
+            if abs(d) <= rate:
+                self.jv = self.jv_target
+            else:
+                self.jv += math.copysign(rate, d)
             e = self.jv - self.v_meas
             u_p = self.regs["KP[2]"] * e
             u = u_p + self.regs["KP[2]"] * self.integ
@@ -241,6 +264,8 @@ class VPSim:
                     raise IOError("cannot enable: fault present")
                 regs["MO"] = 1
                 self.tc, self.jv, self.integ = 0.0, 0.0, 0.0
+                self.jv_target = 0.0
+                self.jv_pending = None
                 self.mode = "tc"
             else:
                 regs["MO"] = 0
@@ -253,7 +278,11 @@ class VPSim:
         if name == "JV":
             if abs(v) > regs["VH[2]"]:
                 raise IOError("JV exceeds VH[2]")
-            self.jv, self.mode = v, "jv"
+            # REAL CR semantics (CR p175, live D1 failure 2026-07-14): JV is
+            # only ARMED here — the velocity motion begins on the next BG.
+            # A code path that writes JV without BG gets NO motion (mode
+            # stays as-is, v_ss decays to noise) — the exact live bug.
+            self.jv_pending = v
             return ""
         if name == "UM":
             if regs["MO"] == 1:
@@ -268,6 +297,9 @@ class VPSim:
             return ""
         if name in ("HL[2]", "LL[2]") and not self.hl_writable:
             raise IOError("%s write refused (U-P4 tooth)" % name)
+        if name in self.write_silent_store:      # silent truncation/refusal
+            regs[name] = self.write_silent_store[name]
+            return ""
         regs[name] = v
         return ""
 
@@ -289,12 +321,23 @@ class VPSim:
                 self.p += (v - old_pa) * (regs["CA[18]"] / (pp * 512.0))
         self.pa_pending = None
 
+    def _apply_jv(self):
+        """BG: apply the armed JV — velocity motion starts only now, and the
+        reference RAMPS to the target at AC (profiler semantics)."""
+        v = getattr(self, "jv_pending", None)
+        if v is None:
+            return
+        self.jv_target, self.mode = v, "jv"
+        self.jv = self.v_meas        # profiler starts from current velocity
+        self.jv_pending = None
+
     def _query(self, name):
-        if name == "BG":                        # arm/apply the pending PA
+        if name == "BG":                        # apply the pending PA and/or JV
             self._apply_pa()
+            self._apply_jv()
             return ""
         if name == "ST":                        # motion-gated stop (query form)
-            self.jv = 0.0
+            self.jv, self.jv_target = 0.0, 0.0  # authoritative stop (no ramp)
             if self.mode != "jv":
                 self.mode = "jv"                # decel via velocity loop to zero
             return ""
@@ -376,6 +419,228 @@ def test_t3_one_sided_ka_tooth(green_run):
         assert naive_bias >= 0.08, \
             "one-sided K_a should be biased low (got %+.1f%%)" % (-100 * naive_bias)
         assert abs(run["k_a_diff"] / KA_TRUTH - 1.0) <= 0.02
+
+
+# ======================================================================================
+# D1 JV: BG (begin motion) contract — live 2026-07-14 failure regression
+# ======================================================================================
+def test_d1_every_jv_write_followed_by_bg(green_run):
+    """CR p175: JV takes effect only on the next BG.  EVERY JV= write in the
+    pipeline (segment speeds AND the JV=0 stop latch) must be immediately
+    followed by BG; the abort chain is exempt (ST is authoritative there)."""
+    drive, _, _ = green_run
+    cmds = [c.replace(" ", "") for c, _ in drive.log]
+    jv_idx = [i for i, c in enumerate(cmds) if c.startswith("JV=")]
+    assert jv_idx, "green run must exercise the D1 JV segment"
+    for i in jv_idx:
+        assert cmds[i + 1] == "BG", \
+            "JV write %r at log[%d] not followed by BG (got %r)" % (
+                cmds[i], i, cmds[i + 1])
+
+
+def test_d1_jv_vss_sign_and_magnitude(green_run):
+    """D1 steady states actually track the command: +-300 rpm -> v_ss ~=
+    +-327,680 cnt/s (CA[18]*rpm/60), correct sign, within 2% (velocity PI
+    integrator kills the DC error; only noise-mean residual remains)."""
+    _, _, res = green_run
+    pts = res.evidence["jv"]["points"]
+    assert len(pts) >= 2
+    for q in pts:
+        expect = CA18 * q["rpm"] / 60.0
+        assert q["v_ss"] * expect > 0, "sign mismatch @%.0frpm" % q["rpm"]
+        assert abs(q["v_ss"] / expect - 1.0) <= 0.02, \
+            "v_ss=%.0f vs %.0f cnt/s @%.0frpm" % (q["v_ss"], expect, q["rpm"])
+        if abs(q["rpm"]) == 300.0:
+            assert abs(abs(q["v_ss"]) - 327680.0) <= 0.02 * 327680.0
+
+
+def test_d1_without_bg_fails_like_live(tmp_path):
+    """Regression tooth for the live 2026-07-14 D1 RED: if the code path
+    writes JV but the BG never reaches the drive, NO velocity motion starts
+    -> v_ss is record noise -> the D1 commutation sign check (or a downstream
+    JV gate) must go RED.  Encoded by DROPPING BG at the transport, which is
+    exactly what the pre-fix code did (it never sent BG)."""
+    class BGDropSim(VPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            if cmd.replace(" ", "").upper() == "BG":
+                self.log.append((cmd, allow_motion))   # swallowed by "wire"
+                return ""
+            return VPSim.command(self, cmd, timeout_ms=timeout_ms,
+                                 allow_motion=allow_motion)
+
+    drive = BGDropSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED, (res.status, res.reason)
+    assert "JV" in res.reason, res.reason
+    assert drive.regs["MO"] == 0                     # safed
+
+
+def test_d1_partial_jv_points_saved_on_abort(tmp_path):
+    """AbortError mid-D1 must still leave the already-collected JV points in
+    evidence (fable-physics 2026-07-14): the 1500 rpm second point trips the
+    SW guard AFTER the 300 rpm point was captured."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path,
+                                             jv_speeds_rpm=(300.0, 1500.0)))
+    assert res.status == RED
+    jv = res.evidence.get("jv")
+    assert jv is not None and jv.get("partial") is True
+    assert len(jv["points"]) >= 1
+    assert jv["points"][0]["rpm"] == 300.0
+    expect = CA18 * 300.0 / 60.0
+    assert abs(jv["points"][0]["v_ss"] / expect - 1.0) <= 0.02
+
+
+def test_p1_optional_commutation_readings(green_run):
+    """CA[25]/CA[54] are read into evidence; CA[55..57] absent on this sim ->
+    recorded as None (fail-open, never a run-killer)."""
+    _, _, res = green_run
+    rd = res.evidence["readings"]
+    assert rd["CA[25]"] == 0 and rd["CA[54]"] == 0
+    for k in ("CA[55]", "CA[56]", "CA[57]"):
+        assert k in rd and rd[k] is None
+    assert rd["CA[16]"] == 0                    # δ 복권 스위치 OFF 확인
+    assert not any("CA[16]" in w for w in res.warnings)
+
+
+def test_ca16_search_on_every_mo_warns(tmp_path):
+    """CA[16]=1 (commutation search on EVERY MO) -> warning: δ is a power-
+    session RAM state and this re-lotteries it per MO (fable-physics)."""
+    drive = VPSim()
+    drive.regs["CA[16]"] = 1
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == YELLOW, (res.status, res.reason)
+    assert any("CA[16]=1" in w and "복권" in w for w in res.warnings)
+    assert res.evidence["readings"]["CA[16]"] == 1
+
+
+# ======================================================================================
+# Commutation-degradation early detection (fable-physics 2026-07-14)
+# live incident replay: K_a 3.82e5 = 0.27 x last-GREEN 1.42e6 (delta~75 deg e),
+# i0 floor at 8.485 A = 0.4*CL — every LOCAL gate passed on the polluted plant
+# ======================================================================================
+import json as _json
+
+
+def _write_baseline(dirpath, k_a):
+    # VPSim runs are synthetic-quarantined: their baseline lives under
+    # snapshot_dir/synthetic (the live-pollution fix, 2026-07-14)
+    d = os.path.join(str(dirpath), vp.SYNTHETIC_SUBDIR)
+    os.makedirs(d, exist_ok=True)
+    fp = os.path.join(d, vp.KA_BASELINE_FILE)
+    with open(fp, "w", encoding="utf-8") as f:
+        _json.dump({"k_a": k_a, "ts_us": TS_US, "t": 0.0}, f)
+    return fp
+
+
+def _read_baseline(dirpath):
+    with open(os.path.join(str(dirpath), vp.SYNTHETIC_SUBDIR,
+                           vp.KA_BASELINE_FILE), encoding="utf-8") as f:
+        return _json.load(f)
+
+
+def test_pulse_target_cap_frac_lowered(green_run):
+    """Sizing target capped at 0.5*cut = 360 rpm (cut-asymmetry fix)."""
+    assert vp.PULSE_TARGET_CAP_FRAC == 0.5
+    _, _, res = green_run
+    assert res.evidence["sizing"]["target_rpm_eff"] == pytest.approx(
+        0.5 * vp.MAINPULSE_STOP_FRAC * vp.GUARD_RPM)      # = 360 rpm
+
+
+def test_ka_drop_vs_baseline_red_and_no_rebaseline(tmp_path):
+    """Live-incident replay: measured K_a = 0.27 x baseline -> RED with the
+    commutation-degradation verdict + delta~74 deg e estimate, motor safed,
+    and the baseline file is NOT overwritten by the RED run."""
+    fp = _write_baseline(tmp_path, KA_TRUTH)          # last GREEN = truth
+    drive = VPSim(k_a=0.27 * KA_TRUTH)                # polluted plant (Kt x0.27)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == RED, (res.status, res.reason)
+    assert "커뮤테이션 열화" in res.reason and "재커뮤" in res.reason
+    assert "급락" in res.reason
+    kb = res.evidence["ka_baseline"]
+    assert kb["verdict"] == "RED"
+    assert abs(kb["ratio"] - 0.27) <= 0.02            # measured/baseline
+    assert abs(kb["delta_e_deg_est"] - 74.0) <= 3.0   # acos(0.27) ~ 74.3 deg e
+    assert drive.regs["MO"] == 0                      # abort chain safed
+    saved = _read_baseline(tmp_path)                  # oracle rule: unchanged
+    assert saved["k_a"] == KA_TRUTH and saved["t"] == 0.0
+    assert os.path.exists(fp)
+
+
+def test_ka_baseline_match_passes_and_green_rebaselines(tmp_path):
+    """K_a ~= baseline -> gate PASS, GREEN finish re-writes the baseline with
+    the fresh measurement (GREEN-only update)."""
+    _write_baseline(tmp_path, KA_TRUTH)
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, (res.status, res.reason, res.warnings)
+    kb = res.evidence["ka_baseline"]
+    assert kb["verdict"] == "PASS" and abs(kb["ratio"] - 1.0) <= 0.03
+    saved = _read_baseline(tmp_path)
+    assert saved["k_a"] == res.k_a and saved["t"] > 0.0   # refreshed
+    assert kb.get("saved_path")
+
+
+def test_ka_baseline_absent_skips_and_green_creates(green_run):
+    """No baseline file -> gate SKIP (fail-open); the GREEN run then creates
+    the baseline seeded with its own K_a."""
+    _, params, res = green_run
+    kb = res.evidence["ka_baseline"]
+    assert kb["verdict"].startswith("SKIP")
+    saved = _read_baseline(params.snapshot_dir)
+    assert saved["k_a"] == res.k_a and saved["ts_us"] == TS_US
+
+
+def test_synthetic_run_never_touches_root_baseline(tmp_path):
+    """LIVE-POLLUTION regression (2026-07-14 x3): a synthetic (VPSim) GREEN
+    run must write its baseline + P3 snapshot ONLY under
+    snapshot_dir/synthetic — the root (= live) baseline path must not even be
+    created."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, (res.status, res.reason)
+    root_bl = os.path.join(str(tmp_path), vp.KA_BASELINE_FILE)
+    quar_bl = os.path.join(str(tmp_path), vp.SYNTHETIC_SUBDIR,
+                           vp.KA_BASELINE_FILE)
+    assert not os.path.exists(root_bl), "synthetic run polluted the live path"
+    assert os.path.exists(quar_bl)                    # logic still exercised
+    assert res.evidence["synthetic_quarantine"].endswith(vp.SYNTHETIC_SUBDIR)
+    assert vp.SYNTHETIC_SUBDIR in res.evidence["snapshot_path"]
+
+
+def test_explicit_real_run_writes_root_baseline(tmp_path):
+    """params.synthetic=False (the real-hardware declaration) overrides the
+    link's is_synthetic marker: baseline + snapshot land at the root path —
+    pins that LIVE runs still persist after the quarantine fix."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, synthetic=False))
+    assert res.status == GREEN, (res.status, res.reason)
+    root_bl = os.path.join(str(tmp_path), vp.KA_BASELINE_FILE)
+    with open(root_bl, encoding="utf-8") as f:
+        assert _json.load(f)["k_a"] == res.k_a
+    assert "synthetic_quarantine" not in res.evidence
+    assert vp.SYNTHETIC_SUBDIR not in res.evidence["snapshot_path"]
+
+
+def test_high_i0_and_high_iba_warnings(tmp_path):
+    """i0 floor above 0.25*CL (live: 8.485 A = 0.4*CL) and i_ba > 4 A ->
+    ADVISORY warnings (YELLOW), never a hard stop; identification proceeds."""
+    drive = HiStictionLowRunSim(i_s=7.0, i_c=1.0)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.4))
+    assert res.status == YELLOW, (res.status, res.reason, res.warnings)
+    assert any("고전류 식별" in w for w in res.warnings), res.warnings
+    assert any("브레이크어웨이 과대" in w for w in res.warnings), res.warnings
+    assert res.evidence["sizing"]["i0_a"] > 0.25 * CL1
+    assert res.evidence["breakaway"]["i_ba_a"] > 4.0
+    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02      # run still identifies
+
+
+def test_low_i0_no_high_current_warning(green_run):
+    """Healthy low-friction run (i0 = 0.10*CL = 2.12 A): no advisory."""
+    _, _, res = green_run
+    assert res.evidence["sizing"]["i0_a"] <= 0.25 * CL1
+    assert not any("고전류 식별" in w for w in res.warnings)
+    assert not any("브레이크어웨이 과대" in w for w in res.warnings)
 
 
 def test_t3_safety_sizing_and_rotation(green_run):
@@ -483,12 +748,19 @@ def test_commutation_sign_fault_aborts(tmp_path):
     """[방향보강1] effective-reverse commutation (+TC -> -feedback) must RED
     at the RAMP LATCH — BEFORE any diagnostic pulse (the live run spun the
     rotor 19,571 cnt backwards through unit-diag before B1 caught it).
-    Message carries the exact repair path (CA[25]=1 + 재커뮤테이션); the
-    abort chain order TC=0 -> MO=0 stays intact."""
+    Message carries the CORRECT repair path (재커뮤 + 서명 게이트; the old
+    CA[25]=1 advice was the OPPOSITE prescription — fable-physics 2-layer
+    model: δ is power-session RAM, CA[7]/CA[25] do not decide commutation);
+    the abort chain order TC=0 -> MO=0 stays intact."""
     drive = VPSim(commut_sign=-1.0)
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == RED
-    assert "방향 반전" in res.reason and "CA[25]" in res.reason
+    assert "방향 반전" in res.reason
+    assert "CA[25]" not in res.reason           # retired (opposite) advice
+    assert "재커뮤테이션" in res.reason         # signature-gate procedure
+    assert "서명 게이트" in res.reason and "0.9±0.4A" in res.reason
+    assert "폐루프" in res.reason and "재추첨" in res.reason
+    assert "폭주" in res.reason                 # the accurate warning KEPT
     assert "unit_diag" not in res.evidence      # 진단펄스 통전 전 조기중단
     ba = res.evidence["breakaway"]
     assert ba["direction"] == -1
@@ -1530,7 +1802,9 @@ def test_unit_diag_negative_ka_direction_red(tmp_path):
     drive = FlipAfterRampSim()
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == RED
-    assert "방향 반전" in res.reason and "CA[25]" in res.reason
+    assert "방향 반전" in res.reason
+    assert "CA[25]" not in res.reason            # retired (opposite) advice
+    assert "서명 게이트" in res.reason           # correct procedure attached
     assert "K_a" in res.reason                   # the negative ka_pos is named
     assert res.evidence["breakaway"]["direction"] == 1   # ramp was healthy
     assert drive.regs["MO"] == 0
@@ -1622,6 +1896,118 @@ def test_apply_gains_vp_writes_when_motor_off(tmp_path):
     assert not any(c == "SV" for c, _ in drive.log)
 
 
+def test_apply_gains_vp_incident_silent_zero_blocked():
+    """LIVE INCIDENT REPLAY (2026-07-14): drive silently stores 0 for
+    KP[2]=0.000166142303, answers no error -> apply must FAIL with the
+    request/readback pair spelled out and SV must NOT run (the old code
+    reported success and PERSISTED a zero velocity P-gain)."""
+    drive = VPSim()
+    drive.write_silent_store = {"KP[2]": 0.0}
+    res = AutotuneVPResult(status=GREEN, kp_vel=0.000166142303,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert not ok, msg
+    assert "KP[2]" in msg and "0.000166142" in msg and "SV 미실행" in msg
+    assert "0/음수" in msg                            # the exact fingerprint
+    assert not any(c == "SV" for c, _ in drive.log)   # NEVER persisted
+    assert drive.regs["KP[2]"] == 0.0                 # RAM state told honestly
+
+
+def test_apply_gains_vp_ki_truncation_blocked():
+    """A later parameter (KI[2]) silently truncated to a nonzero wrong value:
+    caught by the 0.1% readback comparison; SV suppressed; message notes the
+    already-applied KP[2]."""
+    drive = VPSim()
+    drive.write_silent_store = {"KI[2]": 10.0}        # 10.7 -> 10.0 (-6.5%)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert not ok, msg
+    assert "KI[2]" in msg and "불일치" in msg and "SV 미실행" in msg
+    assert "10.7" in msg and "10" in msg              # request vs readback
+    assert "KP[2]" in msg                             # partial-apply visibility
+    assert not any(c == "SV" for c, _ in drive.log)
+    assert drive.regs["KP[2]"] == pytest.approx(8.0e-5)   # already in RAM
+    assert drive.regs["KP[3]"] == pytest.approx(85.2)     # untouched default
+
+
+def test_apply_gains_vp_verified_persist_single_sv():
+    """Healthy path: all three readbacks verify -> success message carries
+    the readbacks, SV exactly once."""
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert ok, msg
+    assert "되읽기" in msg and "SV" in msg
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    assert drive.regs["KP[2]"] == pytest.approx(8.0e-5)
+    assert drive.regs["KI[2]"] == pytest.approx(10.7)
+    assert drive.regs["KP[3]"] == pytest.approx(85.2114)
+
+
+def test_apply_gains_vp_wire_format_kp2_six_decimals():
+    """ROOT-CAUSE fix (CR p178-179): the literal that actually hits the wire
+    for kp_vel=1.66142303e-4 must be exactly 'KP[2]=0.000166' — plain decimal,
+    <=6 fractional digits (the '%.9g' 12-fractional-digit literal was silently
+    stored as 0 by the firmware parser)."""
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=1.66142303e-4,
+                           ki_vel_hz=10.6999833, kp_pos=85.2113988)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert ok, msg
+    writes = [c for c, _ in drive.log if c.startswith("KP[2]=")]
+    assert writes == ["KP[2]=0.000166"], writes
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    assert drive.regs["KP[2]"] == pytest.approx(0.000166)
+
+
+def test_apply_gains_vp_all_wire_literals_drive_safe():
+    """Every gain write is a PLAIN decimal (no scientific notation — drive
+    INPUT acceptance unverified) with <= 6 fractional digits."""
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=1.66142303e-4,
+                           ki_vel_hz=10.6999833, kp_pos=85.2113988)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert ok, msg
+    gw = [c for c, _ in drive.log
+          if c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))]
+    assert len(gw) == 3
+    for c in gw:
+        lit = c.split("=", 1)[1]
+        assert "e" not in lit.lower(), c              # no scientific notation
+        frac = lit.split(".", 1)[1] if "." in lit else ""
+        assert len(frac) <= vp.GAIN_DECIMALS_MAX, c   # <=6 fractional digits
+    assert gw[1] == "KI[2]=10.699983" and gw[2] == "KP[3]=85.211399"
+
+
+def test_apply_gains_vp_vanishing_gain_refused_before_send():
+    """A sub-1e-6 gain would round to '0' at 6 fractional digits — the exact
+    silent-zero accident class: refuse BEFORE transmission, no gain write on
+    the wire, no SV."""
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=1e-8,
+                           ki_vel_hz=10.7, kp_pos=85.2)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert not ok, msg
+    assert "소멸" in msg and "SV 미실행" in msg and "KP[2]" in msg
+    assert not any(c.startswith("KP[2]=") for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_apply_gains_vp_excess_rounding_loss_refused():
+    """A gain whose 6-decimal rounding costs >0.5% (outside the PM<0.1 deg
+    budget) is refused honestly instead of silently degraded."""
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=1.7e-6,   # ->0.000002 = +17.6%
+                           ki_vel_hz=10.7, kp_pos=85.2)
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+    assert not ok, msg
+    assert "반올림 오차" in msg and "SV 미실행" in msg
+    assert not any(c.startswith("KP[2]=") for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
 def test_apply_gains_vp_refuses_motor_on():
     drive = VPSim(mo0=1)
     ok, msg = apply_gains_vp(drive, AutotuneVPResult(
@@ -1629,6 +2015,140 @@ def test_apply_gains_vp_refuses_motor_on():
     assert not ok and "MO=1" in msg
 
 
-def test_verify_run_vp_is_honest_stub():
-    res = verify_run_vp(VPSim())
-    assert res.status == RED and "F2" in res.reason and "실기" in res.reason
+# ======================================================================================
+# F2/G5 verification run (JV step-response acceptance) — stub replaced 2026-07-14
+# ======================================================================================
+class OscSim(VPSim):
+    """Sustained 60 Hz torque disturbance in JV mode — limit-cycle analogue
+    (overshoot stays healthy ~8%; ONLY the oscillation gate may catch it)."""
+    def __init__(self, amp=1.0, **kw):
+        VPSim.__init__(self, **kw)
+        self.osc_amp = float(amp)
+
+    def _cmd_current(self):
+        u = VPSim._cmd_current(self)
+        if self.mode == "jv" and self.regs["MO"] == 1:
+            u += self.osc_amp * math.sin(2 * math.pi * 60.0 * self.t)
+        return u
+
+
+def test_verify_nominal_green_ladder(tmp_path):
+    """(a) our gains (PM 68 deg design) -> GREEN; overshoot in the expected
+    5-10% band, both ladder speeds run, evidence complete, motor safed."""
+    drive = VPSim()
+    res = verify_run_vp(drive, _params(drive, tmp_path))
+    assert res.status == GREEN, (res.status, res.reason, res.warnings)
+    steps = res.evidence["verify"]["steps"]
+    assert [s["rpm"] for s in steps] == [300.0, 900.0]
+    for s in steps:
+        assert s["pass"] and s["overshoot_frac"] < 0.15
+        assert abs(s["v_ss"] / s["jv_cnt_s"] - 1.0) <= 0.05
+        assert s["t_settle_s"] is not None and s["t_settle_s"] <= 0.06
+        assert s["v_curve"] and s["i_curve"]          # captured waveforms
+    assert abs(steps[0]["v_ss"] - 327680.0) <= 0.05 * 327680.0
+    assert drive.regs["MO"] == 0
+    # persistence: result json in the SYNTHETIC quarantine (invariant kept)
+    rp = res.evidence["result_path"]
+    assert vp.SYNTHETIC_SUBDIR in rp and os.path.exists(rp)
+    assert not os.path.exists(os.path.join(str(tmp_path),
+                                           vp.KA_BASELINE_FILE))
+
+
+def test_verify_overshoot_red(tmp_path):
+    """(b) hot integrator (KI x20 -> 36% overshoot) -> RED at the first rung;
+    ladder stops (900 rpm never attempted); motor safed."""
+    drive = VPSim(ki2=KI2_ORACLE * 20)
+    res = verify_run_vp(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "오버슈트" in res.reason and "@300rpm" in res.reason
+    steps = res.evidence["verify"]["steps"]
+    assert len(steps) == 1 and steps[0]["overshoot_frac"] > 0.25
+    assert drive.regs["MO"] == 0
+
+
+def test_verify_sustained_oscillation_red(tmp_path):
+    """(c) non-decaying steady-tail oscillation (60 Hz, ~8.7k cnt/s RMS) ->
+    RED '지속 발진' even though overshoot (~8%) passes."""
+    drive = OscSim(amp=1.0)
+    res = verify_run_vp(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "지속 발진" in res.reason
+    s0 = res.evidence["verify"]["steps"][0]
+    assert s0["overshoot_frac"] < 0.25              # oscillation gate did it
+    assert s0["osc_rms_2nd"] > vp.VERIFY_OSC_FLOOR_FRAC * abs(s0["v_ss"])
+    assert drive.regs["MO"] == 0
+
+
+def test_verify_iss_hard_red_and_window_yellow(tmp_path):
+    """(d) |I_ss| above 0.10*CL -> HARD RED; healthy current OUTSIDE the
+    unit expectation window -> YELLOW advisory only."""
+    d1 = VPSim(i_c=3.0)
+    r1 = verify_run_vp(d1, _params(d1, tmp_path))
+    assert r1.status == RED and "무부하전류" in r1.reason
+    assert d1.regs["MO"] == 0
+    d2 = VPSim()                                    # i_ss ~0.23 A
+    r2 = verify_run_vp(d2, _params(d2, tmp_path,
+                                   verify_iss_expect_a=(0.4, 0.6)))
+    assert r2.status == YELLOW, (r2.status, r2.reason)
+    assert any("기대창" in w for w in r2.warnings)
+    assert all(s["pass"] for s in r2.evidence["verify"]["steps"])
+
+
+def test_verify_without_bg_fails(tmp_path):
+    """(e) BG never reaches the drive -> JV unlatched -> v_ss = noise ->
+    steady-state gate RED (same regression family as the D1 fix)."""
+    class BGDrop(VPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            if cmd.replace(" ", "").upper() == "BG":
+                self.log.append((cmd, allow_motion))
+                return ""
+            return VPSim.command(self, cmd, timeout_ms=timeout_ms,
+                                 allow_motion=allow_motion)
+
+    drive = BGDrop()
+    res = verify_run_vp(drive, _params(drive, tmp_path))
+    assert res.status == RED
+    assert "정상상태" in res.reason and "@300rpm" in res.reason
+    assert drive.regs["MO"] == 0
+
+
+def test_verify_abort_button_safes_motor(tmp_path):
+    """(f) operator abort during the JV step -> AbortError -> JV abort chain
+    JV=0 -> BG -> ST -> MO=0 (exact order on the wire), limits restored."""
+    drive = VPSim()
+    trip = {"armed": False}
+
+    def progress(code, detail):
+        if code == "VERIFY_STEP":
+            trip["armed"] = True                    # abort during the step
+
+    res = verify_run_vp(drive, _params(drive, tmp_path,
+                                       progress_fn=progress,
+                                       cancel_fn=lambda: trip["armed"]))
+    assert res.status == RED and "중단" in res.reason
+    assert drive.regs["MO"] == 0
+    cmds = [c.replace(" ", "") for c, _ in drive.log]
+    i_jv0 = len(cmds) - 1 - cmds[::-1].index("JV=0")
+    i_bg = next(i for i, c in enumerate(cmds) if i > i_jv0 and c == "BG")
+    i_st = next(i for i, c in enumerate(cmds) if i > i_bg and c == "ST")
+    i_mo = next(i for i, c in enumerate(cmds) if i > i_st and c == "MO=0")
+    assert i_jv0 < i_bg < i_st < i_mo
+    assert drive.regs["SD"] == pytest.approx(1e6)   # limits restored
+
+
+def test_verify_refuses_motor_on(tmp_path):
+    """(g) MO=1 at entry -> preflight RED, nothing written, no motion."""
+    drive = VPSim(mo0=1)
+    res = verify_run_vp(drive, _params(drive, tmp_path))
+    assert res.status == RED and "MO=1" in res.reason
+    assert not any(c.startswith("JV") for c, _ in drive.log)
+
+
+def test_verify_rejects_speed_at_guard(tmp_path):
+    """Ladder speeds >= the 1200 rpm guard are refused BEFORE power-on."""
+    drive = VPSim()
+    res = verify_run_vp(drive, _params(drive, tmp_path,
+                                       verify_speeds_rpm=(300.0, 1200.0)))
+    assert res.status == RED and "가드" in res.reason
+    assert drive.regs["MO"] == 0
+    assert not any(c == "MO=1" for c, _ in drive.log)

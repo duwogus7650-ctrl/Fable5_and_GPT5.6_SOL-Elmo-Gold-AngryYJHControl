@@ -130,6 +130,149 @@
       "priority": null,
       "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
     }
+    {
+      "id": "btw-012",
+      "timestamp": "2026-07-14T03:50:00Z",
+      "suggestion": "비전 확인: 지금은 EAS를 오라클(검증 기준)로 삼아 자체 튜닝(Phase1 전류·Phase2 속도/위치)을 그라운딩. 목표=EAS 완전 독립 스탠드얼론. 남은 핵심 갭=커뮤테이션 식별(극쌍 ID+전기각 오프셋+방향)—현재 이것만 EAS 의존(오늘의 극수 21/16·방향 반전 사가가 전부 이 의존 때문). 커뮤 ID는 알려진 알고리즘(무부하 개루프 회전→기계1회전당 전기주기 카운트=극쌍, 오프셋 탐색, 부호 결정)이라 구현 가능=다음 대형 피처. 넣으면 진짜 EAS 대체 완성. btw-001/007과 동일 방향.",
+      "context": { "file": "commutation identification module (신규)", "pdcaPhase": null, "feature": "EAS-independent standalone: in-app commutation ID" },
+      "category": "skill-request",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-013",
+      "timestamp": "2026-07-14T05:10:00Z",
+      "suggestion": "Phase 2 JV RED 근본원인 확정(fable-physics): 방향 반전 아님. 방향(TC↔위치)은 CA[54]=Invert로 이미 정상(이번 실기 런에서 Commutation GREEN+B1 통과가 증거 — non-invert면 B1에서 멈춤). 진짜 원인=D1 코드가 JV 쓰고 BG(begin motion) 미발행(autotune_velpos.py:2014/2029) → Elmo에선 JV가 '다음 BG에서 발효'라 모터 안 움직임 → v_ss 노이즈 → sign(v)≠sign(JV) 랜덤 실패. mock(test:253)이 JV를 BG 없이 즉시 적용해 은폐(PA는 이미 BG필수로 고쳐놨는데 JV만 누락 — P2 1600Hz와 동일 '실기 첫 노출' 패턴). 패리티 모델 확정: TC↔위치 레버=CA[54] 단독(w·(-1)^CA54, w=-1, 3상태 전량정합), CA[25]는 이 장비서 무효(무시 또는 EAS 재커뮤가 되씀). 수리=BG추가+mock BG게이트+abort시 jv_pts보존+preflight에 CA[25]/CA[54] 추가. K_a는 S2에서 식별완료(r²0.9999, 1.42~1.47e6). 이후 D1통과→마찰산정→게인산출 기대.",
+      "context": { "file": "autotune_velpos.py D1(2011-2029), tests/test_autotune_velpos.py(253), .omc/state/autotune_vp_result_1783995297763.json(S2)", "pdcaPhase": null, "feature": "Phase 2 D1 BG-missing bug fix; direction confirmed correct via CA[54]" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-014",
+      "timestamp": "2026-07-14T06:30:00Z",
+      "suggestion": "상태 메모: 사용자가 21극쌍 자리 다른 모터를 같은 드라이브(COM3)로 EAS 튜닝하러 자리 비움. 결과: 우리 16극 모터용 드라이브 설정(CA[19]=16, 커뮤 CA[7], 오늘 잡은 CA[54]=Invert 방향수정, 게인)이 전부 덮어써짐. 복귀 후 우리 모터 재실행 전 복원 필요: CA[19]=16 → CA[54]=Invert → 재커뮤 1회 → SV → Connect → Run Phase 2. 안전(무손실): 오늘 런 데이터(파일)·K_a 수리(코드)는 드라이브 무관. 진행 중: fable-physics가 G1b 20% K_a 반복성 RED 확정분석 중(조기중단 비대칭/0.4CL 포화 의심). 이 덮어쓰기 반복이 btw-007/012(인앱 극쌍ID+커뮤) 필요성의 재확인.",
+      "context": { "file": "shared-drive 2-motor workflow; autotune_velpos.py K_a G1b", "pdcaPhase": null, "feature": "drive config overwrite on motor swap; K_a repeatability fix pending" },
+      "category": "general",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-015",
+      "timestamp": "2026-07-14T07:00:00Z",
+      "suggestion": "G1b K_a 반복성 RED 근본원인 확정(fable-physics) + 내 이전 CA[25]=1 안내 정정. 원인=커뮤테이션 열화(CA[25]=1로 확립된 커뮤가 오프셋오차 δ≈75°e → 유효 Kt=Kt·cosδ ×0.27 붕괴 → K_a 3.82e5=오염값). 진단지문: 3개 독립 전류경로(K_a·I_c·i_ba) 전부 ×0.27, 그러나 가속도-단위 마찰 K_a·I_c는 불변(×1.10) → 관성·마찰토크 그대로, 토크/암페어만 붕괴. 신뢰 K_a=S2의 1.42e6(r²0.9999). 포화 배제(저전류 JV 무부하전류까지 같은 배율). 모델정정: '재커뮤=방향불변'은 건강커뮤(δ≈0)에서만 성립; CA[25]=1 확립 커뮤는 재커뮤마다 부호 복불복(S3 δ115°/이번 δ75°), CA[25]=0의 S1·S2는 둘다 건강. **정정된 건강상태=CA[54]=1(Invert)+CA[25]=0**(내가 이전에 CA[25]=1 시킨 게 오염원). 복귀 재설정: CA[19]=16→CA[25]=0→CA[54]=1→재커뮤1회→SV. 예전 'i_ba>4.24A 감속기' 관측도 오염 아티팩트(건강 i_ba=2.03A). 코드하드닝(fable-driver): PULSE_TARGET_CAP_FRAC 0.8→0.5, K_a<0.5×lastGREEN→RED, i0>0.25CL→warning.",
+      "context": { "file": "autotune_velpos.py:133 PULSE_TARGET_CAP_FRAC, K_a baseline 게이트; 드라이브 CA[25]/CA[54]", "pdcaPhase": null, "feature": "K_a G1b root cause = commutation δ≈75° pollution; CA[25]=1 guidance corrected to CA[25]=0" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-016",
+      "timestamp": "2026-07-14T07:40:00Z",
+      "suggestion": "버그: --smoke-velpos(합성 GREEN 스모크)가 자기 synthetic K_a를 실제 .omc/state/autotune_ka_baseline.json(snapshot_dir 기본값)에 써서 커뮤열화 게이트 baseline을 오염시킴. fable-driver 하드닝 검증 중 스모크가 k_a=5.77e6(≈FF[1] 함의값, fable-physics 신뢰금지)을 실baseline에 남김 — 이대로면 건강 재실행(K_a≈1.42e6)이 5.77e6의 0.25배라 열화 게이트가 건강 런을 거짓 RED로 차단. 수동으로 S2 신뢰값 1.42e6으로 재시딩함. 근본수리 필요: 스모크가 격리된 tmp snapshot_dir을 쓰거나 스모크 경로에서 _save_ka_baseline 스킵(합성런은 실baseline 갱신 금지). 재발조건: 향후 --smoke-velpos를 프로젝트 dir에서 실행 시 또 덮어씀.",
+      "context": { "file": "autotune_velpos.py smoke 경로 _save_ka_baseline, snapshot_dir; .omc/state/autotune_ka_baseline.json", "pdcaPhase": null, "feature": "smoke test pollutes real K_a baseline — isolate snapshot_dir" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-017",
+      "timestamp": "2026-07-14T08:20:00Z",
+      "suggestion": "검증 성과(EAS 독립 방향): 드라이브 미수리 상태로 Phase 2 재실행 시, UM3 드래그 판별기가 커뮤테이션 열화를 앱 내부에서 독립 진단함 — RED 'UM3 드래그 추종 1.00≥0.9: 기계 ≤0.72N·m 구동 정상 — UM=5 8.49A 브레이크어웨이 실패 = 커뮤 토크효율<70% 의심: EAS 커뮤 재실행/CA[7] 확인(전류 더 올리지 말 것)'. 이는 fable-physics의 δ≈75°(K_a·I_c 불변식) 진단을 두번째 독립경로로 확증(UM3 순수기계 vs UM5 실커뮤 대조). 도구가 원인+처방+금지(전류상향)까지 정확히 제시 = EAS 없이 '커뮤가 문제'를 스스로 짚음. 결론: 드라이브 수리(CA[25]=0+CA[54]=1+재커뮤+SV)가 유효게인 유일경로임이 실측 확정, 소프트 우회 불가. 도구 진단설계(UM3 판별+K_a baseline 게이트) 실기 검증 완료.",
+      "context": { "file": "autotune_velpos.py UM3 _um3_drag 판별, K_a baseline 게이트; 드라이브 CA[25]/CA[54]/CA[7]", "pdcaPhase": null, "feature": "in-app UM3 discriminant independently confirmed commutation degradation (EAS-independence progress)" },
+      "category": "general",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-018",
+      "timestamp": "2026-07-15T00:10:00Z",
+      "suggestion": "마일스톤: Phase 2 첫 건강 완주 + 게인 전량 산출. 커뮤 수리(CA[25]=0 되돌림+재커뮤, CA[7]=123)로 6단계 전량 GREEN·YELLOW(자문2건만). K_a=2.77e6·I_c=0.47A·G1b반복성0.56%(오염20%→)·r²0.9999·JV±0.5A대칭. 게인 PM_vel68.4°/GM15.5dB/PM_pos81.7° 마진우수. K_a 신뢰: 오염↔healthy 비율이 K_a·I_c 양쪽 δ≈82° 일치. 커뮤 수리 절차 확정(앱Disconnect→터미널CA[25]=0→EAS Commutation재실행→SV→Connect→RunPhase2; CA[54]는 숫자1 아니면 Drive Error 19). 터미널 함정: 'Invert' 문자 안먹음(숫자만). 다음: fable-physics Apply go-no-go(백그라운드)→Apply P2→Drive 감독→실구동. 남은 개선: 조기중단이 저전류(2.12A)서도 나는 건 PULSE_TARGET 0.5로도 건강모터 가속이 빨라 컷 도달 — 사이징 추가 여유 검토(무해하나 YELLOW 유발).",
+      "context": { "file": "autotune_velpos.py Phase2 파이프라인 완주; 드라이브 CA[25]=0/CA[7]=123 healthy 커뮤", "pdcaPhase": null, "feature": "Phase 2 first healthy completion + gains; commutation repair procedure finalized" },
+      "category": "general",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-019",
+      "timestamp": "2026-07-15T00:40:00Z",
+      "suggestion": "fable-physics 최종판정: K_a=2.77e6 신뢰확정(δ 3경로 82° 수렴+플랜트불변량+cosδ≤1 하한논증), Apply=조건부GO. 정정2건: ①kp2_vs_drive=0.0507은 비율아닌 편차 → 우리 속도게인(1.65e-4)이 EAS KP[2](1.57e-4)와 5.1% 일치(과보수/굼뜸 아님, 사실상 EAS 재현). 내가 '20배 낮음'으로 오독했던 것 정정. ②방향반전 사가 전체 재해석(fable-physics 1차 패리티모델 폐기): '방향반전'은 CA[54]/CA[25] 배선 아니라 이 기어드유닛 정지마찰로 EAS 재커뮤가 매번 큰 δ 랜덤착지→sign(cosδ)였음(S1δ116/S2δ59/S3δ115/오염82/이번≈0). CA는 재커뮤 방아쇠로만 상관. 실무규칙=재커뮤후 반드시 i_ba(~0.9A)·K_a 서명검증(ka_baseline 게이트가 그 방어선). Apply 5조건: (1)다음세션 시작 스팟체크(CA[7]=123/CA[25]=0 readback+JV300rpm i_ss≈0.46A OR i_ba≈0.9A; i_ba>2A면 재오염→Apply중단·Phase2재실행) (2)감독Apply KP[2]/KI[2]/KP[3]만(전류루프·FF[1] 금지, FF단위 미확정) (3)수락=JV300rpm스텝 오버슈트<25%·i_ss≈0.46A·무발진→900rpm (4)Apply후 재커뮤/CA변경 금지 (5)baseline 2.77e6 갱신[완료]. 미확정: FF[1] ×2 계통편차(SW매뉴얼 FF절로 판별), 현 δ가 정확히 0인지(참값 상향≤×2, 안정무해). 선택: PULSE_TARGET_CAP_FRAC 0.5→0.4(조기중단 여유, 무해·필수아님).",
+      "context": { "file": ".omc/state/autotune_ka_baseline.json(2.77e6 갱신완료); autotune_velpos.py:133; Apply 절차", "pdcaPhase": null, "feature": "Apply conditional-GO verdict; kp2 misread corrected (matches EAS 5%); direction saga = commutation delta not wiring" },
+      "category": "documentation",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-020",
+      "timestamp": "2026-07-15T01:10:00Z",
+      "suggestion": "버그(사용자 발견, 2026-07-15): 앱이 포트 단절을 감지하지 못해 거짓 ONLINE 상태를 유지. 재현=USB를 뽑았다 다시 꽂음(사용자가 '포트 바뀌어도 자동인식 하는지' 테스트) → 실제 .NET 라이브러리 포트 핸들은 죽었는데 UI는 Disconnect 버튼+펌웨어 정보+우측상단 ONLINE 초록불을 그대로 유지 → Encoder Maintenance 클릭 시에야 '엔코더 정비 실패: drive/library error on MO: Library Error: 포트가 닫혀 있습니다'로 노출. 즉 (a) 포트 자동재인식 없음(Connect 시 1회 오픈, 재연결 감지 안 함) (b) 죽은 포트를 살아있다고 표시(stale state). 우회=Disconnect→Connect. **안전 함의(중요): 튜닝 중 모터 통전 상태에서 USB가 빠지면 abort 체인의 MO=0도 전송 실패 → 모터가 통전된 채 남을 수 있음.** 개선: 텔레메트리 폴링(매 주기 PX/VX/MO 읽기) 실패 시 즉시 연결끊김 판정 → ONLINE→OFFLINE(빨강) 전환 + 오토튠 진행 중이면 안전 중단 표시. 선택: 포트 목록 자동 갱신/재연결 시도.",
+      "context": { "file": "main.py 연결상태/ONLINE 배지, _TELEMETRY/read_telemetry 폴링 루프, elmo_link 예외처리; autotune abort 체인", "pdcaPhase": null, "feature": "stale connection state — detect port loss on telemetry failure, flip OFFLINE, safe-abort tuning" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-021",
+      "timestamp": "2026-07-15T01:40:00Z",
+      "suggestion": "함정 실증(1사이클 손실): SV(Drive Save) 누락 → 전원 사이클에 건강 커뮤 전량 소실. 2026-07-14 세션에서 CA[25]=0+CA[54]=1+재커뮤로 건강커뮤 확보(K_a=2.77e6·I_c=0.47A·전단계 GREEN)했으나 SV 미실행 → 전원 off/on 후 readback이 CA[25]=1·CA[54]=0·CA[7]=298(지난 건강값 123 아님)로 **마지막 저장된 오염설정 복귀**. Phase 2 재실행이 즉시 RED(UM3 추종 1.002=기계 완벽, UM=5 8.49A 브레이크어웨이 실패=커뮤 효율<70%)로 잡음 — Apply 전 스팟체크 게이트가 설계대로 잘못된 게인 주입을 차단(성공). 교훈: 커뮤 수리 절차의 마지막 SV는 선택 아닌 필수이며, SV 후 CA[25]/CA[54]/CA[7] readback 눈확인까지가 절차. **개선안: 앱이 Connect 시 CA[25]/CA[54]/CA[7]을 마지막 GREEN 런의 값과 대조해 다르면 '커뮤 설정이 지난 건강상태와 다름(SV 누락 의심) — Phase 2 재실행 필요' 경고 표시.** ka_baseline 게이트처럼 커뮤 설정 baseline도 저장.",
+      "context": { "file": ".omc/state/autotune_vp_result_1784093989058.json(readings CA[25]=1/CA[54]=0/CA[7]=298); main.py Connect 시 커뮤 설정 대조 경고(신규 제안)", "pdcaPhase": null, "feature": "SV-missing trap → commutation lost on power cycle; propose commutation-config baseline warning at Connect" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-022",
+      "timestamp": "2026-07-15T02:30:00Z",
+      "suggestion": "실기 사고(안전): Apply P2가 KP[2]를 0으로 저장하고 '성공' 반환 + SV까지 함. apply_gains_vp(autotune_velpos.py:2302)가 `link.command('KP[2]=%.9g' % kp_vel)`로 '0.000166142303' 전송 → 드라이브가 0 저장 → KI[2]=10.7·KP[3]=85.2114는 정상 저장 → SV. **함수가 쓰기-되읽기 대조를 안 해서**(예외 없으면 성공 반환) 무성 실패가 통과, 사용자가 속도루프 비례게인 0인 채 구동할 뻔함(설계 PM 68° 무효). Apply 전 드라이브는 KP[2]=0.000157(EAS값) 보유 → 파라미터가 1.6e-4를 담을 수 있음은 확인됨. 원인 후보: %.9g의 12자리 소수가 드라이브 파서 한계 초과 / KI[2] 쓰기가 KP[2] 리셋하는 상호작용(쓰기 순서 KP[2]→KI[2]→KP[3]) / 단위·포맷. **Opus 오류 2건: (1) 'Apply가 되읽어 대조한다'고 사용자에게 잘못 설명(실제로는 표시용 readback만) (2) 그 잘못된 전제로 Apply GO를 냄.** 수리: fable-driver에 되읽기 검증(불일치/0/음수→실패, 검증 전 SV 금지) 위임, fable-physics에 원인·복구·위험도 위임. 교훈: 드라이브 쓰기는 반드시 readback 대조, 특히 SV 전에.",
+      "context": { "file": "autotune_velpos.py:2302 apply_gains_vp(검증 누락), main.py _on_tuning_gains/_fmt(정수 0이 '0'으로 표시돼 발각)", "pdcaPhase": null, "feature": "Apply write-verification gap — silent KP[2]=0 persisted via SV" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-023",
+      "timestamp": "2026-07-15T03:30:00Z",
+      "suggestion": "수리 완료 보고(btw-016/022 해결, 150 pytest GREEN). ①**되읽기 검증**: apply_gains_vp가 각 게인 쓰기 직후 되읽어 대조(전송값 기준 0.1% rtol + ≤0 절대게이트), 전량 통과 후에만 SV, 부분실패 시 'SV 미실행—전원 재투입 시 이전 저장값 복귀 (RAM 반영분: …)' 명시. 이빨: 수리 전 코드로 사고 재생 시 ok=True+SV실행+KP[2]=0 저장 재현, 수리 후 ok=False+SV 0회. ②**와이어 포맷 소수 ≤6자리 고정**(_fmt_gain, GAIN_DECIMALS_MAX=6): `KP[2]=0.000166` / `KI[2]=10.699983` / `KP[3]=85.211399`. 과학표기 금지(구 %.9g는 극소게인에 `KP[2]=1e-08` 전송하던 추가 지뢰 — 이빨 증명 중 부수 발견). 반올림 후 0소멸 또는 오차>0.5%면 전송 전 정직 실패(나쁜 리터럴이 와이어에 안 나감). ③**합성런 격리**(btw-016 3회 재발 종결): SYNTHETIC_SUBDIR + 링크 is_synthetic 자동감지로 스모크가 snapshot_dir/synthetic 으로만 쓰기, 실 baseline·result json 무오염(실측 result 114→114 불변). main.py _smoke_velpos에 라이브 baseline 바이트 대조 트립와이어 내장(격리 깨지면 스모크 자체가 RED). 시딩 후 스모크 재실행에도 k_a=2770000.0 생존 실증. **ka_baseline 확정 시드=2.77e6**(실기 3회 재현 평균). 남은 것: 사용자 드라이브 수동 복구(KP[2]=0.000166+SV) → Phase 2 재실행 → Apply(이제 검증 경유) → 구동시험. Phase 1 apply 경로(KP[1]/KI[1])에 같은 포맷 위험 점검은 미착수(다음 후보).",
+      "context": { "file": "autotune_velpos.py apply_gains_vp/_fmt_gain/SYNTHETIC_SUBDIR, main.py _smoke_velpos 트립와이어, tests/test_autotune_velpos.py(80)", "pdcaPhase": null, "feature": "Apply hardening complete: readback verify + wire format + synthetic isolation" },
+      "category": "improvement",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": null,
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
+    {
+      "id": "btw-024",
+      "timestamp": "2026-07-15T05:00:00Z",
+      "suggestion": "**모델 파괴 실측: 전원 사이클이 저장된 CA[7]과 무관하게 커뮤테이션을 새로 착지시킨다**(사용자가 전원 OFF/ON 확인). 대조: healthy런(result_1784094269345) CA[7]=174·CA[25]=1·CA[54]=0·CA[17]=5·CA[19]=16, 방향+, i_ba=0.887A, K_a=2.7537e6 → **전원 사이클 1회** → RED런(result_1784099728324) **CA[7]=174 등 저장 파라미터 비트단위 동일**인데 방향−(signed dpx=−14074), **i_ba=4.05A(×4.57)** → cos δ≈−0.219 → **δ≈103°**(healthy는 δ≈0). CA[17]=5(직렬 절대엔코더 커뮤)면 전기각=f(절대위치,CA[7],p)로 결정론적이어야 하는데 아님. **함의: '재커뮤로 좋은 값 잡아 SV하면 유지된다'는 전제가 이 장비에서 거짓.** **어제 btw-021의 'SV 누락으로 소실' 판정은 오진 가능성 — 실제 기전은 SV 무관·전원사이클마다 재추첨일 수 있음**(단 어제는 CA[7]=298로 달랐고 오늘은 174로 같은 비대칭은 미설명). **잠정 운영규칙: 한 전원 세션 안에서 재커뮤→Phase 2 서명검증(방향+·i_ba≈0.9A·K_a≈2.77e6)→Verify까지 완결, 전원 끄면 처음부터.** 안전: 현재 드라이브에 우리 게인 SV된 채 커뮤 δ≈103° = 속도루프 걸면 양의 피드백 폭주 → 구동 금지 유지. fable-driver의 i_ba>4A 경고가 정상 발화(4.05A) — 유용성 실증. 기전·운영규칙·안전은 fable-physics 확정 대기. **또한 코드 버그: 방향반전 RED 메시지가 낡은 조언('CA[25]=1 → 재커뮤')을 그대로 출력 — CA[25] 무관 확정됐으므로 수정 필요.**",
+      "context": { "file": ".omc/state/autotune_vp_result_1784094269345.json(healthy) vs _1784099728324.json(RED, 같은 CA[7]=174); autotune_velpos.py DIR_FIX_MSG(낡은 CA[25] 조언)", "pdcaPhase": null, "feature": "power cycle re-rolls commutation despite identical CA[7]; DIR_FIX_MSG stale advice" },
+      "category": "bug-pattern",
+      "status": "pending",
+      "promotedTo": null,
+      "priority": "high",
+      "teamContext": { "isTeamSession": false, "phase": null, "role": "user", "pattern": null }
+    }
   ],
-  "stats": { "total": 11, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
+  "stats": { "total": 24, "promoted": 0, "dismissed": 0, "lastAnalyzed": null }
 }

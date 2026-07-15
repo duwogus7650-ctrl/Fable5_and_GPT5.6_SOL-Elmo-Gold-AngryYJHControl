@@ -1,0 +1,6 @@
+{
+ "k_a": 2770000.0,
+ "ts_us": 100,
+ "t": 0,
+ "note": "seed = confirmed healthy K_a — mean of 3 independent live reproductions (2.7733e6/2.7537e6/2.7607e6, spread 0.7%), i_ba=0.887A, I_c~0.47-0.48A, G1b=0.68%. fable-physics verdict: trusted true value. Do not let smoke runs reseed this."
+}

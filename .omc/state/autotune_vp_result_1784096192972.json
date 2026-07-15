@@ -1,0 +1,19 @@
+{
+ "status": "RED",
+ "reason": "G4 실패 (모의)",
+ "kp_vel": null,
+ "ki_vel_hz": null,
+ "kp_pos": null,
+ "ff1_advisory": null,
+ "k_a": null,
+ "b_visc": null,
+ "i_c": null,
+ "d_inv_s": null,
+ "wcv_rad_s": null,
+ "pm_vel_deg": null,
+ "gm_db": null,
+ "pm_pos_deg": null,
+ "ts_us": null,
+ "evidence": {},
+ "warnings": []
+}

@@ -1,0 +1,19 @@
+{
+ "status": "GREEN",
+ "reason": "",
+ "kp_vel": 7.888e-05,
+ "ki_vel_hz": 10.7,
+ "kp_pos": 85.211,
+ "ff1_advisory": null,
+ "k_a": 5799800.0,
+ "b_visc": 9.986e-08,
+ "i_c": 0.2003,
+ "d_inv_s": null,
+ "wcv_rad_s": null,
+ "pm_vel_deg": 67.66,
+ "gm_db": 15.04,
+ "pm_pos_deg": 81.66,
+ "ts_us": null,
+ "evidence": {},
+ "warnings": []
+}

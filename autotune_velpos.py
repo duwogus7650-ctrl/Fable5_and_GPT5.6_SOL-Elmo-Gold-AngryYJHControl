@@ -67,7 +67,7 @@ import math
 import os
 import re
 import time
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace as _dc_replace
 from typing import Callable, Optional, Sequence
 
 import numpy as np
@@ -130,8 +130,13 @@ MAINPULSE_STOP_FRAC = 0.6   # main-pulse motion early-stop at 0.6*guard
                           # 400..1100 rpm per REAL poll, so the cut->guard band
                           # must be wide; the sizing TARGET is clamped below
                           # the cut so correct pulses are never truncated)
-PULSE_TARGET_CAP_FRAC = 0.8  # effective sizing target <= 0.8*cut (=576 rpm):
+PULSE_TARGET_CAP_FRAC = 0.5  # effective sizing target <= 0.5*cut (=360 rpm):
                           # target must sit UNDER the runtime cut by margin
+                          # (fable-physics 2026-07-14: 0.8 let the FAST(+)
+                          # direction graze the 720 rpm cut while the slow(-)
+                          # direction didn't -> cut asymmetry polluted the +-
+                          # difference; 0.5 absorbs the probe's one-direction
+                          # sizing optimism so BOTH pulses stay cut-free)
 PULSE_CUT_POLL_S = 0.01   # VX-only cut poll during main pulses (10 ms: worst
                           # per-poll rise stays under the cut->guard band)
 # --- raised-cap ramp (fable-physics 2026-07-13: live unit shows NO breakaway
@@ -169,6 +174,26 @@ JV_NOLOAD_IBA_FRAC = 1.2  # D1 no-load current gate = max(0.10*CL, 1.2*i_ba):
                           # and would kill a geared run AFTER K_a succeeded
 PULSE_FRAC_ABS_MAX = 0.4  # main-pulse i0 ceiling (0.2 cap RETIRED: a geared
                           # unit with i_ba>4.24 A cannot be measured at 2.12 A)
+# --- commutation-degradation early detection (fable-physics 2026-07-14) ------
+# Live incident: commutation established under CA[25]=1 left an offset error
+# delta~75 deg e -> effective Kt x0.27 -> K_a collapsed 1.42e6 -> 3.82e5 and
+# every LOCAL gate still passed on the polluted plant; the i0 floor riding up
+# to 8.49 A (0.4*CL) was the fingerprint.  Advisories + a baseline drop gate:
+HIGH_I0_WARN_FRAC = 0.25  # advisory: main-pulse i0 above this frac of CL[1]
+IBA_COMMUT_WARN_A = 4.0   # advisory: breakaway current above this [A]
+                          # (healthy S2 run: i_ba=2.03 A; polluted: >4.24 A —
+                          # NEVER a hard stop: high i_ba alone is ambiguous)
+KA_BASELINE_DROP_FRAC = 0.5     # HARD RED: K_a < 0.5 x last-GREEN baseline
+KA_BASELINE_FILE = "autotune_ka_baseline.json"  # in params.snapshot_dir
+SYNTHETIC_SUBDIR = "synthetic"  # quarantine for sim/smoke persistence
+                                # (2026-07-14 incident x3: --smoke-velpos wrote
+                                # its synthetic K_a 5.77e6 into the LIVE
+                                # baseline; live healthy K_a=2.77e6 -> ratio
+                                # 0.48 < 0.5 = the safety gate would FALSE-RED
+                                # a healthy live run.  INVARIANT: only real-
+                                # hardware runs may touch the live baseline/
+                                # snapshots; a link with is_synthetic=True is
+                                # auto-quarantined into this subdir)
 NET_FRICTION_FRAC = 0.75  # tp sizing net current: i_net = i0 - 0.75*i_ba
 WINDUP_LEVELS_A = (1.0, 2.0, 4.0, 6.0, 8.0)   # windup-curve capture currents
 # --- PART B: UM=3 low-speed drag discrimination (commutation-agnostic) -------
@@ -181,7 +206,18 @@ UM3_FOLLOW_MIN = 0.9      # follow ratio |dPX|/(revs*CA[18]/CA[19]) threshold
 UM3_EARLY_CHECK_EREV = 0.5  # HIGH-2: effectiveness check point [elec rev]
 UM3_EARLY_MIN_FRAC = 0.2  # PX response must exceed this frac of commanded travel
 KT_NOMINAL = 0.12         # N*m/A — message annotation only, not a gate
-DIR_FIX_MSG = ("수리: MO=0 → CA[25]=1 → 재커뮤테이션 → SV"
+# --- 2-LAYER COMMUTATION MODEL (fable-physics 확정 2026-07-14 — 오해 금지) ----
+# 유효 전기각 δ = "전원 세션" 스코프의 RAM 상태다: 전원 사이클마다 재추첨되고
+# (실측: 저장 파라미터 비트단위 동일(CA[7]/CA[25]/CA[54])인데 전원 1회로
+# δ 0°→103°, i_ba 0.887→4.05 A·방향 반전), 같은 세션 내 MO 사이클엔 불변.
+# CA[7]은 위저드 실행 "기록"일 뿐 커뮤를 결정하지 않는다.  CA[25]=1은 이
+# 유닛에서 순기능이 실증된 적 없는 방향수리 잔재이자 전원 복권의 유력 원인
+# (확립/복원 경로가 거울반전을 비일관 적용) — 절대 권하지 말 것.  CA[54]도
+# 무관(패리티 레버 모델 폐기: 방향 반전은 sign(cos δ)였을 뿐).
+DIR_FIX_MSG = ("수리 절차: ① 재커뮤테이션(EAS 위저드) → ② 서명 게이트 확인:"
+               " i_ba=0.9±0.4A AND +TC→+dpx → ③ 불합격이면 재커뮤 반복"
+               "(healthy 착지 ~17%/회) → ④ 서명 GREEN 전 폐루프(JV/조그/"
+               "위치이동) 절대 금지 → ⑤ 전원 사이클하면 δ 재추첨 = ①부터."
                " (묵시적 부호보정 금지 — 반전 상태 게인 적용은 폭주)")
 SEG_TIMEBOX_S = 5.0
 TOTAL_BUDGET_S = 120.0
@@ -190,6 +226,22 @@ JV_RECORD_S = 0.5
 JV_STOP_RPM = 30.0
 JV_STOP_TIMEOUT_S = 2.0
 DECEL_TAIL_S = 0.25       # post-pulse coast captured for the regression
+# --- F2/G5 verification run (JV step-response acceptance, 2026-07-14) -------------------
+# Acceptance authority = fable-physics live criteria; the SPEC §6 G5 numbers
+# (overshoot<=15%, settle<=60 ms) are TIGHTER and demoted to YELLOW advisories
+# with the delta reported (JV steps ride the AC/DC profiler on the real drive,
+# so command-to-band settle can legitimately exceed 60 ms without a fault).
+VERIFY_SPEEDS_RPM = (300.0, 900.0)   # ladder: next step only after a pass
+VERIFY_RECORD_S = 0.6     # per-step capture (transient + steady tail)
+VERIFY_PRE_S = 0.05       # quiet pre-roll before the JV step
+VERIFY_OVERSHOOT_MAX = 0.25   # HARD RED (design PM 68.4 deg expects ~5-10%)
+VERIFY_OVERSHOOT_SPEC = 0.15  # SPEC §6 figure -> YELLOW advisory band
+VERIFY_SETTLE_SPEC_S = 0.060  # SPEC §6 figure -> YELLOW advisory
+VERIFY_SETTLE_MAX_S = 0.5     # HARD RED (loop is not doing its job)
+VERIFY_BAND_FRAC = 0.05   # +-5% settle band
+VERIFY_VSS_TOL = 0.05     # steady-state magnitude tolerance (HARD)
+VERIFY_OSC_DECAY = 0.8    # steady-tail 2nd-half RMS must be <= 0.8x 1st half
+VERIFY_OSC_FLOOR_FRAC = 0.02  # ...unless below 2% of v_ss (noise floor)
 # explicit limit set (SPEC §4 — default limits are not trusted)
 LIMIT_WRITES = (("SD", 4e6), ("HL[2]", 1.97e6), ("LL[2]", -1.97e6),
                 ("ER[2]", 3.3e5))
@@ -250,6 +302,17 @@ class AutotuneVPParams:
     # --- injection points (headless tests replace sleep_fn with the sim clock) -------
     sleep_fn: Callable[[float], None] = time.sleep
     snapshot_dir: str = os.path.join(".omc", "state")
+    # synthetic-run marker: None = auto-detect from link.is_synthetic (mock
+    # drives set it True); True forces quarantine (snapshot_dir/synthetic for
+    # ALL persistence); False asserts "this is real hardware" (baseline unit
+    # tests use it against tmp dirs).  See SYNTHETIC_SUBDIR.
+    synthetic: Optional[bool] = None
+    # --- F2/G5 verification run -----------------------------------------------------
+    verify_speeds_rpm: Sequence[float] = VERIFY_SPEEDS_RPM
+    # unit-specific no-load steady-current window [A] (live: +0.477/+0.524 A);
+    # None = generic 0.10*CL[1] hard gate only.  Outside the window = YELLOW
+    # (friction drifts with temperature), above the hard gate = RED.
+    verify_iss_expect_a: Optional[Sequence[float]] = None
     poll_s: float = 0.01
     progress_fn: Callable[[str, str], None] = _noop_progress
     cancel_fn: Callable[[], bool] = _never_cancel
@@ -389,8 +452,8 @@ def design_vp_gains(k_a: float, d_visc: float, ts_s: float,
         # NEVER be sign-corrected into the gain design (wcv/K_a<0 -> negative
         # KP[2] -> runaway on a healthy drive).  Fix the direction first.
         raise ValueError("design_vp_gains: K_a는 양수여야 함 (방향 반전 식별의"
-                         " 부호보정 유입 금지 — CA[25] 수리 후 재식별): %r"
-                         % (k_a,))
+                         " 부호보정 유입 금지 — 재커뮤+서명 게이트 통과 후"
+                         " 재식별): %r" % (k_a,))
     if params.wcv_override_hz:
         wcv = 2 * math.pi * float(params.wcv_override_hz)
     else:
@@ -773,6 +836,10 @@ def _do_abort(ctx: _Ctx, reason: str):
     if ctx.segment == "jv":
         _try("A1 JV=0", lambda: ctx.link.command("JV=0", timeout_ms=1000,
                                                  allow_motion=True))
+        # CR p175: JV latches on BG — make the zero command effective (decel)
+        # BEFORE ST; ST stays the authoritative stop right after (U-P6)
+        _try("A1a BG", lambda: ctx.link.command("BG", timeout_ms=1000,
+                                                allow_motion=True))
         _try("A1b ST", lambda: ctx.link.command("ST", timeout_ms=1000,
                                                 allow_motion=True))
         stop_cnt = ctx.ca18 * JV_STOP_RPM / 60.0
@@ -808,6 +875,43 @@ def _red(ctx: _Ctx, reason: str) -> AutotuneVPResult:
     return AutotuneVPResult(status=RED, reason=reason,
                             ts_us=ctx.readings.get("TS"),
                             evidence=ctx.evidence, warnings=ctx.warnings)
+
+
+# ======================================================================================
+# K_a baseline (commutation-degradation early gate, fable-physics 2026-07-14)
+# ======================================================================================
+def _ka_baseline_path(ctx: _Ctx) -> str:
+    return os.path.join(ctx.params.snapshot_dir, KA_BASELINE_FILE)
+
+
+def _load_ka_baseline(ctx: _Ctx):
+    """Last-GREEN K_a for THIS unit, or None (fail-open: no file / bad file
+    just skips the gate — the baseline is an extra tripwire, never a lock)."""
+    try:
+        with open(_ka_baseline_path(ctx), encoding="utf-8") as f:
+            d = json.load(f)
+        v = d.get("k_a")
+        return float(v) if isinstance(v, (int, float)) and v > 0 else None
+    except Exception:
+        return None
+
+
+def _save_ka_baseline(ctx: _Ctx, k_a: float):
+    """Persist the K_a fingerprint — called ONLY on a GREEN finish (RED and
+    YELLOW runs never re-baseline; oracle discipline)."""
+    try:
+        os.makedirs(ctx.params.snapshot_dir, exist_ok=True)
+        with open(_ka_baseline_path(ctx), "w", encoding="utf-8") as f:
+            json.dump({"k_a": k_a, "ts_us": ctx.readings.get("TS"),
+                       "t": time.time(),
+                       "note": "마지막 GREEN 런의 K_a [cnt/s²/A] — 커뮤 열화"
+                               " 조기검출 기준 (RED/YELLOW 런은 갱신 금지)"},
+                      f, ensure_ascii=False, indent=1)
+        ctx.evidence.setdefault("ka_baseline", {})["saved_path"] = \
+            _ka_baseline_path(ctx)
+    except Exception as e:
+        # post-status: must NOT mutate warnings (status already gated)
+        ctx.evidence["ka_baseline_save_error"] = repr(e)
 
 
 # ======================================================================================
@@ -1098,7 +1202,9 @@ def _drag_route(ctx: _Ctx, i_cap: float):
         raise AbortError(
             "UM3 드래그 추종(%.2f≥%.1f): 기계는 ≤%.2fN·m로 구동됨 — UM=5"
             " %.2fA로 브레이크어웨이 실패 = 커뮤테이션 토크효율<70%% 의심:"
-            " EAS 커뮤 재실행/CA[7] 확인 (전류 더 올리지 말 것)"
+            " 재커뮤테이션 후 서명 게이트(i_ba 0.9±0.4A·방향+) 확인, 불합격시"
+            " 재커뮤 반복 (전류 더 올리지 말 것; CA[7]은 위저드 기록일 뿐"
+            " 커뮤 결정자 아님)"
             % (drag["follow_ratio"], UM3_FOLLOW_MIN,
                KT_NOMINAL * UM3_DRAG_I_A, i_cap))
     raise AbortError(
@@ -1360,6 +1466,14 @@ def _breakaway_ramp(ctx: _Ctx):
                 " (유격통과=거리유한→실속분류·램프재개, 진짜 이탈=토크유지 시"
                 " 거리무한→지속검출; lash_events=유격 이벤트 기록;"
                 " direction=+TC 램프에 대한 피드백 부호(래치 시점)"}
+    if isinstance(i_ba, (int, float)) and i_ba > IBA_COMMUT_WARN_A:
+        # ADVISORY (fable-physics 2026-07-14): the polluted-commutation run
+        # inflated breakaway x3.5 (healthy S2: 2.03 A); high i_ba alone is
+        # ambiguous (real gearbox stiction vs Kt derating) -> warning only
+        ctx.warnings.append(
+            "브레이크어웨이 과대(i_ba=%.2fA > %.1fA) — 커뮤 재오염 가능성"
+            " (건강 기준 2.03A; 정보성, 하드게이트 아님)"
+            % (i_ba, IBA_COMMUT_WARN_A))
     if i_ba is not None and ba_direction < 0:
         # 보강1 (fable-physics §3): 유효-역방향 커뮤테이션은 램프 trace에 이미
         # 드러난다 — 진단펄스 통전 전에 조기중단 (live: unit-diag가 19,571 cnt
@@ -1711,6 +1825,13 @@ _P1_READS = (["TS", "UM", "MF", "SR", "GS[0]", "GS[1]", "GS[2]",
               "AC", "DC", "SD", "SP", "FF[1]", "FF[2]", "VX", "PX", "BV",
               "WS[28]", "WS[55]"])
 
+# informational commutation/feedback context (fable-physics 2026-07-14):
+# CA[25]=direction invert, CA[54..57]=commutation feedback config,
+# CA[16]=commutation search on every MO (1 = δ re-lottery per MO — worse).
+# Read BEST-EFFORT — some firmware/personality combos may not answer; a
+# missing key must never kill the run (recorded as None).
+_P1_READS_OPT = ("CA[25]", "CA[54]", "CA[55]", "CA[56]", "CA[57]", "CA[16]")
+
 
 def run_velpos_autotune(link, params: Optional[AutotuneVPParams] = None
                         ) -> AutotuneVPResult:
@@ -1722,7 +1843,18 @@ def run_velpos_autotune(link, params: Optional[AutotuneVPParams] = None
     shown) BEFORE calling this.  Never raises: failures return RED after the
     segment-appropriate abort chain."""
     params = params or AutotuneVPParams()
+    # synthetic-run quarantine (2026-07-14): a sim link (is_synthetic=True on
+    # the mock/smoke drive) or params.synthetic=True reroutes ALL persistence
+    # (P3 snapshot json + K_a baseline) into snapshot_dir/synthetic — a
+    # synthetic GREEN must NEVER re-baseline the live commutation fingerprint
+    synthetic = (params.synthetic if params.synthetic is not None
+                 else bool(getattr(link, "is_synthetic", False)))
+    if synthetic:
+        params = _dc_replace(params, snapshot_dir=os.path.join(
+            params.snapshot_dir, SYNTHETIC_SUBDIR))
     ctx = _Ctx(link, params)
+    if synthetic:
+        ctx.evidence["synthetic_quarantine"] = params.snapshot_dir
     try:
         return _pipeline(ctx)
     except PreflightError as e:
@@ -1748,6 +1880,16 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     # ---- P1 ---------------------------------------------------------------------------
     for c in _P1_READS:
         ctx.readings[c] = _cmd(ctx, c)
+    for c in _P1_READS_OPT:                     # informational, fail-open
+        try:
+            ctx.readings[c] = _cmd(ctx, c, retries=0)
+        except Exception:
+            ctx.readings[c] = None
+    if ctx.readings.get("CA[16]") in (1, 1.0):
+        # δ is a power-session RAM state (see the 2-layer model at
+        # DIR_FIX_MSG); CA[16]=1 re-lotteries it on EVERY MO — never set it
+        ctx.warnings.append("CA[16]=1 — 매 MO마다 커뮤 탐색: δ 복권이 MO"
+                            " 단위로 악화, 0 권장")
     ctx.evidence["readings"] = dict(ctx.readings)
 
     # ---- P2 / G0 (pre-power, SPEC §5) --------------------------------------------------
@@ -1914,6 +2056,19 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                          PULSE_TARGET_CAP_FRAC * MAINPULSE_STOP_FRAC * GUARD_RPM)
     target_cnt = ctx.ca18 * target_rpm_eff / 60.0
     tp = _size_tp(k_a_probe, _i_net(i0, i_ba_val), target_cnt)
+
+    def _warn_high_i0(cur_i0):
+        # fable-physics 2026-07-14: the live i0 floor riding to 8.485 A
+        # (0.4*CL) was the commutation-degradation fingerprint (delta~75 deg e
+        # -> Kt x0.27 -> breakaway/friction inflated -> floors dragged up).
+        # ADVISORY only — a healthy geared unit may legitimately sit here.
+        if cur_i0 > HIGH_I0_WARN_FRAC * ctx.cl1 \
+                and not any("고전류 식별" in w for w in ctx.warnings):
+            ctx.warnings.append(
+                "고전류 식별(i0=%.1fA > %.2f·CL=%.1fA) — Kt 저하/커뮤 열화"
+                " 의심, K_a 과소추정 가능"
+                % (cur_i0, HIGH_I0_WARN_FRAC, HIGH_I0_WARN_FRAC * ctx.cl1))
+    _warn_high_i0(i0)
     rev_est = (k_a_probe * i0) * tp * tp / ctx.ca18   # ~both pulses combined
     ctx.evidence["sizing"] = {"i0_a": i0, "tp_s": tp, "rev_est": rev_est,
                               "k_a_probe": k_a_probe, "i_mover_a": i_mover,
@@ -1966,6 +2121,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                                             " 재시도(%.2fA, Tp 재산정 %.0fms)"
                                             % (vpk_run, MOTION_MIN_RPM, i0,
                                                tp * 1e3))
+                        _warn_high_i0(i0)
                         continue
                     raise AbortError("모션부족 — I0=%.2fA에도 v_pk=%.0f cnt/s <"
                                      " %.0frpm (관성/마찰 과대 의심)"
@@ -1982,6 +2138,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         ctx.warnings.append("마찰비 %.2f>%.1f — I0 증액 재시도(%.2fA, Tp 재산정"
                             " %.0fms)" % (friction_ratio, FRICTION_RATIO_MAX,
                                           i0, tp * 1e3))
+        _warn_high_i0(i0)
     ctx.evidence["pulse_runs"] = runs
     k_a = 0.5 * (runs[0]["k_a_diff"] + runs[1]["k_a_diff"])
     _emit(ctx, "IDENT_KA", "K_a=%.4g cnt/s²/A (±펄스 차분, 런2회 평균)" % k_a)
@@ -1997,6 +2154,30 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                 " ([0.1,10]× 밖): 식별 오염 의심(유격/단위), 결과 신뢰불가"
                 % (k_a, ka_impl, ratio))
 
+    # ---- commutation-degradation early gate (fable-physics 2026-07-14) --------------
+    # The last-GREEN K_a is this unit's fingerprint: a >2x drop between runs
+    # is a commutation-health event, not a plant change (live: 3.82e5 =
+    # 0.27 x 1.42e6 with delta~75 deg e; every LOCAL gate passed).  RED fires
+    # BEFORE D1 so the motor is not spun further on a polluted commutation.
+    ka_base = _load_ka_baseline(ctx)
+    if ka_base is not None and 0 < k_a < KA_BASELINE_DROP_FRAC * ka_base:
+        ratio_b = k_a / ka_base
+        # cos(delta) = Kt_eff/Kt = K_a/baseline -> offset-angle estimate
+        delta_deg = math.degrees(math.acos(min(1.0, max(0.0, ratio_b))))
+        ctx.evidence["ka_baseline"] = {
+            "baseline_k_a": ka_base, "k_a": k_a, "ratio": ratio_b,
+            "delta_e_deg_est": delta_deg, "verdict": "RED",
+            "path": _ka_baseline_path(ctx)}
+        raise AbortError(
+            "K_a가 마지막 GREEN의 %.0f%%로 급락(%.3g vs %.3g cnt/s²/A) —"
+            " 커뮤테이션 열화 의심(δ≈%.0f°e), 재커뮤 필요"
+            % (100.0 * ratio_b, k_a, ka_base, delta_deg))
+    ctx.evidence["ka_baseline"] = {
+        "baseline_k_a": ka_base, "k_a": k_a,
+        "ratio": (k_a / ka_base) if ka_base else None,
+        "verdict": "PASS" if ka_base is not None else "SKIP(기준 없음)",
+        "path": _ka_baseline_path(ctx)}
+
     # ---- D1 JV steady states (method B friction + rotating commutation check) ---------
     jv_pts = []
     stop_cnt = ctx.ca18 * JV_STOP_RPM / 60.0
@@ -2008,10 +2189,20 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     i_ss_max = (max(0.10 * ctx.cl1, JV_NOLOAD_IBA_FRAC * float(i_ba_jv))
                 if isinstance(i_ba_jv, (int, float)) and i_ba_jv > 0
                 else 0.10 * ctx.cl1)
+    # partial-evidence hook (fable-physics 2026-07-14): jv_pts is registered
+    # BEFORE the loop so an AbortError mid-D1 still leaves the collected
+    # points in the result evidence (the dict holds the live list reference)
+    ctx.evidence["jv"] = {"points": jv_pts, "partial": True}
     for rpm in list(p.jv_speeds_rpm) + [-x for x in p.jv_speeds_rpm]:
         jv = ctx.ca18 * rpm / 60.0
         _seg(ctx, "jv")
         _write(ctx, "JV", jv, allow_motion=True)
+        # CR p175: JV only takes effect on the next BG (begin motion).
+        # Without BG the drive never starts the velocity move -> motor stays
+        # still -> v_ss = record noise -> random sign-check RED (the live
+        # Phase-2 D1 failure, 2026-07-14).  Same idiom as the UM=3 drag
+        # sweep (PA write + BG).
+        _cmd(ctx, "BG", allow_motion=True)
         _sleep(ctx, JV_SETTLE_S)
         _seg(ctx, "jv")                              # re-arm timebox per point
         _record_start(ctx, JV_RECORD_S)
@@ -2027,7 +2218,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                              " (게이트=max(0.10·CL, %.1f·i_ba))"
                              % (abs(i_ss), i_ss_max, JV_NOLOAD_IBA_FRAC))
     _write(ctx, "JV", 0.0, allow_motion=True)
-    _cmd(ctx, "ST", allow_motion=True)
+    _cmd(ctx, "BG", allow_motion=True)   # latch JV=0 (decel); ST remains the
+    _cmd(ctx, "ST", allow_motion=True)   # authoritative stop right after
     waited = 0.0
     while True:
         vx = _cmd(ctx, "VX")
@@ -2157,6 +2349,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         ctx.warnings.append("G3 오라클 이탈 — FF[1] 가정 반증 또는 관성 변경")
 
     status = YELLOW if ctx.warnings else GREEN
+    if status == GREEN:
+        _save_ka_baseline(ctx, k_a)     # GREEN-only re-baseline (oracle rule)
     m = des["margins"]
     _emit(ctx, "DESIGN", "KP[2]=%.4g KI[2]=%.3fHz KP[3]=%.2f | 속도 PM=%.1f° GM=%.1fdB"
           % (des["kp2"], des["ki2"], des["kp3"], m["pm_vel"], m["gm_db"] or -1))
@@ -2175,32 +2369,379 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
 # ======================================================================================
 # F1 / F2 — separate operator actions
 # ======================================================================================
+APPLY_READBACK_RTOL = 1e-3   # write-readback agreement (drive stores IEEE
+                             # floats; 0.1% catches truncation/quantize/refuse
+                             # while ignoring ASCII round-trip rounding)
+GAIN_DECIMALS_MAX = 6        # ROOT CAUSE (fable-physics, CR p178-179 / err162
+                             # p98): the firmware parser SILENTLY stores 0 for
+                             # decimals with >~7 fractional digits ("%.9g" on
+                             # 1.66e-4 -> "0.000166142303" = 12 fractional
+                             # digits -> stored 0, no error 162).  All
+                             # EAS-native observed values use <=6 fractional
+                             # digits (0.08444/747.328/0.000157/20.7/178) =
+                             # the proven-safe envelope.
+GAIN_ROUND_RTOL = 5e-3       # rounding-induced gain error budget (0.5% -> PM
+                             # shift <0.1 deg); beyond it: honest failure
+
+
+def _fmt_gain(v: float) -> str:
+    """Drive-safe gain literal: PLAIN decimal, <= GAIN_DECIMALS_MAX fractional
+    digits, trailing zeros stripped (the EAS-native wire format).  Scientific
+    notation is FORBIDDEN (drive output uses it, INPUT acceptance unverified).
+    0.000166142303 -> '0.000166'."""
+    s = "%.*f" % (GAIN_DECIMALS_MAX, float(v))
+    s = s.rstrip("0").rstrip(".")
+    return s if s and s not in ("-",) else "0"
+
+
 def apply_gains_vp(link, result: AutotuneVPResult, persist: bool = False):
     """F1: write KP[2]/KI[2]/KP[3] from a GREEN/YELLOW result (MO must be 0).
-    FF[1] is NEVER written (advisory only).  SV only on explicit persist."""
+    FF[1] is NEVER written (advisory only).  SV only on explicit persist.
+
+    LIVE INCIDENT 2026-07-14: the drive SILENTLY stored 0 for
+    KP[2]=0.000166142303 (no error response), the old code saw no exception,
+    ran SV, and reported success — a zero velocity P-gain was PERSISTED.
+    Hardening (root cause owned by fable-physics, independent of it):
+      * every write is READ BACK and compared (rtol 0.1%);
+      * readback <= 0 is an explicit failure (gains are positive by design);
+      * SV runs ONLY after ALL three readbacks verify — a partial failure
+        returns False with the request/readback pair spelled out and the
+        note that SV was NOT executed (power cycle restores saved gains)."""
     if result is None or result.status not in (GREEN, YELLOW) \
             or result.kp_vel is None:
         return False, "적용 불가: 결과 상태 %s" % (result.status if result else None)
     try:
         if _to_num(link.command("MO")) == 1:
             return False, "모터 ON(MO=1) — STOP 후 적용"
-        link.command("KP[2]=%.9g" % result.kp_vel)
-        link.command("KI[2]=%.9g" % result.ki_vel_hz)
-        link.command("KP[3]=%.9g" % result.kp_pos)
+        applied = []
+        for name, req in (("KP[2]", result.kp_vel), ("KI[2]", result.ki_vel_hz),
+                          ("KP[3]", result.kp_pos)):
+            req = float(req)
+            lit = _fmt_gain(req)                 # drive-safe wire literal
+            sent = float(lit)
+            tail = (" — SV 미실행: 전원 재투입 시 이전 저장값 복귀"
+                    " (RAM 반영분: %s)" % (", ".join(applied) or "없음"))
+            if sent <= 0.0:
+                # the exact silent-zero accident, caught BEFORE transmission:
+                # a sub-1e-6 gain vanishes at 6 fractional digits
+                return False, ("%s 전송 불가: 요청 %.9g가 소수 %d자리 반올림"
+                               "에서 %s로 소멸 (0 전송 금지)%s"
+                               % (name, req, GAIN_DECIMALS_MAX, lit, tail))
+            if abs(sent / req - 1.0) > GAIN_ROUND_RTOL:
+                return False, ("%s 전송 불가: 소수 %d자리 반올림 오차 %.2f%%"
+                               " > %.1f%% (요청 %.9g → 전송 %s)%s"
+                               % (name, GAIN_DECIMALS_MAX,
+                                  100.0 * abs(sent / req - 1.0),
+                                  100.0 * GAIN_ROUND_RTOL, req, lit, tail))
+            link.command("%s=%s" % (name, lit))
+            rb = _to_num(link.command(name))
+            # readback is compared against the SENT (rounded) value, not the
+            # raw design value — the rounding budget is owned by
+            # GAIN_ROUND_RTOL above, the wire integrity by this gate
+            if not isinstance(rb, (int, float)) or \
+                    (isinstance(rb, float) and math.isnan(rb)):
+                return False, "%s 되읽기 실패: 전송 %s → 응답 %r%s" % (
+                    name, lit, rb, tail)
+            if rb <= 0.0:
+                return False, ("%s 쓰기 실패: 요청 %.9g(전송 %s) → 드라이브"
+                               " %.9g (0/음수 — 무성 거부/절삭 의심)%s"
+                               % (name, req, lit, rb, tail))
+            if abs(rb - sent) > APPLY_READBACK_RTOL * abs(sent):
+                return False, ("%s 쓰기 불일치: 요청 %.9g(전송 %s) → 드라이브"
+                               " %.9g (편차 %.2f%% > %.1f%%)%s"
+                               % (name, req, lit, rb,
+                                  100.0 * abs(rb - sent) / sent,
+                                  100.0 * APPLY_READBACK_RTOL, tail))
+            applied.append("%s=%s(되읽기 %.6g)" % (name, lit, rb))
         if persist:
-            link.command("SV")
-        return True, "KP[2]=%.4g KI[2]=%.4g KP[3]=%.4g 적용%s (FF[1] 미변경)" % (
-            result.kp_vel, result.ki_vel_hz, result.kp_pos,
-            " + SV" if persist else "")
+            try:
+                link.command("SV")
+            except Exception as e:
+                return False, ("SV 실패: %s — 게인은 RAM 반영됨(%s), 영구저장"
+                               " 안 됨" % (e, ", ".join(applied)))
+        return True, "%s 적용·되읽기 검증 통과%s (FF[1] 미변경)" % (
+            ", ".join(applied), " + SV" if persist else "")
     except Exception as e:
-        return False, "적용 실패: %s" % e
+        return False, "적용 실패: %s — SV 미실행" % e
 
 
-def verify_run_vp(link):
-    """F2 stub: JV-step verification (overshoot<=15%, settle<=60 ms, no ring,
-    idx8 tracking — SPEC G5).  NOT implemented headless — requires live
-    hardware; returns an honest RED placeholder (Phase-1 E4 pattern)."""
-    return AutotuneVPResult(
-        status=RED,
-        reason="F2 검증런 미구현 — 실기 사용자 액션 대기 (SPEC §6 F2/G5)",
-        evidence={"todo": "B0 재통과 + JV스텝 cnt(300rpm) 기록 + G5 판정"})
+def verify_run_vp(link, params: Optional[AutotuneVPParams] = None
+                  ) -> AutotuneVPResult:
+    """F2/G5: JV step-response ACCEPTANCE run for the APPLIED gains.
+
+    Speed ladder (default 300 -> 900 rpm, next step only after a pass); each
+    step starts from rest, captures the full transient with the drive
+    recorder (record BEFORE the step so the rise is in-frame), and is judged
+    on: overshoot < 25% HARD (SPEC §6's 15% = YELLOW advisory), no sustained
+    oscillation (steady-tail RMS must decay or sit under the noise floor),
+    steady-state velocity sign+magnitude (+-5%), steady-state current under
+    max(0.10*CL[1]) HARD with an optional unit window as YELLOW.
+
+    SAFETY: real rotation — the CALLER owns the operator gate (free-rotation
+    confirm dialog; NEVER unattended).  Reuses the D1 machinery wholesale:
+    JV writes are latched with BG (CR p175), 1200 rpm VX guard + segment
+    timebox during every sleep, and the JV abort chain
+    (JV=0 -> BG -> ST -> wait |VX|<30rpm -> MO=0).  Never raises."""
+    params = params or AutotuneVPParams()
+    synthetic = (params.synthetic if params.synthetic is not None
+                 else bool(getattr(link, "is_synthetic", False)))
+    if synthetic:
+        params = _dc_replace(params, snapshot_dir=os.path.join(
+            params.snapshot_dir, SYNTHETIC_SUBDIR))
+    ctx = _Ctx(link, params)
+    if synthetic:
+        ctx.evidence["synthetic_quarantine"] = params.snapshot_dir
+    try:
+        return _verify_pipeline(ctx)
+    except PreflightError as e:
+        return _red(ctx, str(e))
+    except AbortError as e:
+        _do_abort(ctx, str(e))
+        return _red(ctx, str(e))
+    except Exception as e:
+        _do_abort(ctx, "내부 예외: %r" % (e,))
+        return _red(ctx, "내부 예외: %r" % (e,))
+
+
+_VERIFY_READS = ("TS", "UM", "MF", "GS[2]", "CA[18]", "CL[1]",
+                 "KP[2]", "KI[2]", "KP[3]",
+                 "VH[2]", "SD", "HL[2]", "LL[2]", "ER[2]", "AC", "DC")
+
+
+def _analyze_jv_step(ctx: _Ctx, rec: dict, rpm: float) -> dict:
+    """G5 metrics + verdict for one JV step capture.  Returns the step dict;
+    hard failures are listed in step['fails'], advisories in step['notes']."""
+    v, i, dt = rec["v"], rec["i"], float(rec["dt"])
+    n = len(v)
+    v_t = ctx.ca18 * rpm / 60.0
+    sgn = 1.0 if v_t >= 0 else -1.0
+    ss = slice(int(0.7 * n), n)                  # steady tail = last 30%
+    v_ss = float(np.mean(v[ss]))
+    i_ss = float(np.mean(i[ss]))
+    fails, notes = [], []
+    # -- steady-state sign + magnitude (HARD) ---------------------------------------
+    if v_ss * v_t <= 0:
+        fails.append("정상상태 부호 불일치: v_ss=%.0f vs JV=%.0f cnt/s"
+                     " (모션 미발효/커뮤 의심)" % (v_ss, v_t))
+    elif abs(v_ss / v_t - 1.0) > VERIFY_VSS_TOL:
+        fails.append("정상상태 크기 이탈: v_ss=%.0f vs %.0f cnt/s (%.1f%% > %.0f%%)"
+                     % (v_ss, v_t, 100 * abs(v_ss / v_t - 1.0),
+                        100 * VERIFY_VSS_TOL))
+    # -- overshoot (HARD 25%, SPEC 15% advisory) -------------------------------------
+    ref = abs(v_ss) if v_ss * v_t > 0 else abs(v_t)
+    os_frac = max(0.0, float(np.max(v * sgn)) / ref - 1.0) if ref > 0 else 0.0
+    if os_frac > VERIFY_OVERSHOOT_MAX:
+        fails.append("오버슈트 %.1f%% > %.0f%% (게인 과대/PM 부족 의심)"
+                     % (100 * os_frac, 100 * VERIFY_OVERSHOOT_MAX))
+    elif os_frac > VERIFY_OVERSHOOT_SPEC:
+        notes.append("오버슈트 %.1f%% — physics 25%% 이내 통과, SPEC §6 15%%"
+                     " 초과(advisory)" % (100 * os_frac))
+    # -- settle time (HARD 0.5 s, SPEC 60 ms advisory) --------------------------------
+    band = VERIFY_BAND_FRAC * max(ref, 1.0)
+    onset_idx = [k for k in range(n) if abs(v[k]) > max(band, 3000.0)]
+    k0 = onset_idx[0] if onset_idx else 0
+    out = [k for k in range(k0, n) if abs(v[k] * sgn - abs(v_ss)) > band]
+    settled = (not out) or (out[-1] < int(0.95 * n))
+    t_settle = ((out[-1] + 1 - k0) * dt if out else 0.0) if settled else None
+    if not settled:
+        fails.append("±%.0f%% 대역 미정착 (캡처 %.2fs 내)"
+                     % (100 * VERIFY_BAND_FRAC, n * dt))
+    elif t_settle > VERIFY_SETTLE_MAX_S:
+        fails.append("정착시간 %.0fms > %.0fms (HARD)"
+                     % (1e3 * t_settle, 1e3 * VERIFY_SETTLE_MAX_S))
+    elif t_settle > VERIFY_SETTLE_SPEC_S:
+        notes.append("정착 %.0fms — SPEC §6 60ms 초과(advisory: JV는 AC/DC"
+                     " 프로파일 경유라 지령-대역 정착이 60ms를 넘을 수 있음)"
+                     % (1e3 * t_settle))
+    # -- sustained oscillation (HARD): steady-tail residual must decay --------------
+    tail = v[ss] - v_ss
+    half = len(tail) // 2
+    rms1 = float(np.sqrt(np.mean(tail[:half] ** 2))) if half else 0.0
+    rms2 = float(np.sqrt(np.mean(tail[half:] ** 2))) if half else 0.0
+    osc_floor = VERIFY_OSC_FLOOR_FRAC * max(abs(v_ss), 1.0)
+    sustained = rms2 > osc_floor and rms2 > VERIFY_OSC_DECAY * rms1
+    if sustained:
+        fails.append("지속 발진: 정착후 잔진동 RMS %.0f→%.0f cnt/s 비감쇠"
+                     " (>%.0f 노이즈층, 한계주기/게인과대 의심)"
+                     % (rms1, rms2, osc_floor))
+    # -- steady-state current (HARD generic + optional unit window YELLOW) ----------
+    iss_max = 0.10 * ctx.cl1
+    if abs(i_ss) > iss_max:
+        fails.append("무부하전류 과대 |I_ss|=%.2fA > %.2fA (0.10·CL)"
+                     % (abs(i_ss), iss_max))
+    exp = ctx.params.verify_iss_expect_a
+    if exp is not None and len(exp) == 2 and not fails:
+        lo, hi = float(exp[0]), float(exp[1])
+        if not (lo <= abs(i_ss) <= hi):
+            notes.append("I_ss=%.3fA가 유닛 기대창 [%.2f, %.2f]A 밖 —"
+                         " 마찰 변화/온도 확인(advisory)" % (abs(i_ss), lo, hi))
+    return {"rpm": rpm, "jv_cnt_s": v_t, "v_ss": round(v_ss, 1),
+            "i_ss": round(i_ss, 4), "overshoot_frac": round(os_frac, 4),
+            "t_settle_s": (round(t_settle, 4) if t_settle is not None
+                           else None),
+            "osc_rms_1st": round(rms1, 1), "osc_rms_2nd": round(rms2, 1),
+            "dt_s": dt, "n_samples": n,
+            "v_curve": [round(float(x), 1) for x in v[::max(1, n // 300)]],
+            "i_curve": [round(float(x), 4) for x in i[::max(1, n // 300)]],
+            "fails": fails, "notes": notes, "pass": not fails}
+
+
+def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
+    p = ctx.params
+    # ---- P0 (mirror of the main pipeline) ----------------------------------------------
+    if not getattr(ctx.link, "is_connected", False):
+        raise PreflightError("드라이브 미연결")
+    if _cmd(ctx, "MO") == 1:
+        raise PreflightError("모터 ON(MO=1) — STOP 후 재시도 (자동 disable 금지)")
+    _emit(ctx, "P0", "F2 검증런: 연결 확인, MO=0 게이트 통과")
+    for c in _VERIFY_READS:
+        ctx.readings[c] = _cmd(ctx, c)
+    ctx.evidence["readings"] = dict(ctx.readings)
+    r = ctx.readings
+    ts = r["TS"]
+    if not isinstance(ts, (int, float)) or not (40 <= ts <= 200):
+        raise PreflightError("TS=%r 비정상" % (ts,))
+    ctx.ts_s = ts * 1e-6
+    if r.get("UM") != 5:
+        raise PreflightError("UM=%r (5 필요)" % (r.get("UM"),))
+    if not isinstance(r.get("MF"), (int, float)) or r["MF"] != 0:
+        raise PreflightError("모터 폴트 MF=%r" % (r.get("MF"),))
+    if r.get("GS[2]") not in (0, 0.0):
+        raise PreflightError("게인 스케줄링 활성(GS[2]=%r) — 검증 무의미" %
+                             (r.get("GS[2]"),))
+    cl1 = r.get("CL[1]")
+    if not isinstance(cl1, (int, float)) or cl1 <= 0:
+        raise PreflightError("CL[1]=%r 비정상" % (cl1,))
+    ctx.cl1 = float(cl1)
+    ca18 = r.get("CA[18]")
+    ctx.ca18 = float(ca18) if isinstance(ca18, (int, float)) and ca18 > 0 \
+        else 65536.0
+    ctx.vx_guard_cnt = ctx.ca18 * GUARD_RPM / 60.0
+    for rpm in p.verify_speeds_rpm:
+        if abs(rpm) >= GUARD_RPM:
+            raise PreflightError("검증속도 %.0frpm ≥ 가드 %.0frpm — 사다리 부적합"
+                                 % (rpm, GUARD_RPM))
+    _emit(ctx, "VALIDATE", "게인 하 검증: KP[2]=%s KI[2]=%s KP[3]=%s |"
+          " 사다리 %s rpm" % (r.get("KP[2]"), r.get("KI[2]"), r.get("KP[3]"),
+                              list(p.verify_speeds_rpm)))
+    # ---- signals + snapshot (quarantine-aware dir) --------------------------------------
+    _resolve_signals(ctx)
+    ctx.snapshot = dict(ctx.readings)
+    os.makedirs(p.snapshot_dir, exist_ok=True)
+    ctx.snapshot_path = os.path.join(
+        p.snapshot_dir, "verify_vp_snapshot_%d.json" % int(time.time() * 1000))
+    with open(ctx.snapshot_path, "w", encoding="utf-8") as fj:
+        json.dump({"t": time.time(), "readings": ctx.snapshot}, fj,
+                  ensure_ascii=False, indent=1)
+    ctx.evidence["snapshot_path"] = ctx.snapshot_path
+    _emit(ctx, "SNAPSHOT", "스냅숏 저장: %s" % ctx.snapshot_path)
+    # ---- explicit limits (same discipline as the main pipeline, U-P4) ------------------
+    limit_rb = {}
+    for cmd, val in LIMIT_WRITES:
+        try:
+            _write(ctx, cmd, val)
+            limit_rb[cmd] = _cmd(ctx, cmd)
+        except Exception as e:
+            ctx.warnings.append("리밋 %s 쓰기 거부(%s) — SW가드로 보완(U-P4)"
+                                % (cmd, e))
+    ctx.evidence["limits"] = limit_rb
+    # ---- enable ------------------------------------------------------------------------
+    _cmd(ctx, "MO=1", allow_motion=True)
+    ctx.motor_on = True
+    waited = 0.0
+    while _cmd(ctx, "SO") != 1:
+        if waited >= 2.0:
+            raise AbortError("SO!=1 (2s) — 서보온 실패")
+        _sleep(ctx, p.poll_s)
+        waited += p.poll_s
+    _emit(ctx, "ENABLE", "MO=1 통전 — JV 스텝 사다리 시작")
+    # ---- JV step ladder ------------------------------------------------------------------
+    steps = []
+    ctx.evidence["verify"] = {"speeds_rpm": list(p.verify_speeds_rpm),
+                              "steps": steps, "criteria": {
+                                  "overshoot_max": VERIFY_OVERSHOOT_MAX,
+                                  "overshoot_spec": VERIFY_OVERSHOOT_SPEC,
+                                  "settle_spec_s": VERIFY_SETTLE_SPEC_S,
+                                  "settle_max_s": VERIFY_SETTLE_MAX_S,
+                                  "vss_tol": VERIFY_VSS_TOL,
+                                  "band_frac": VERIFY_BAND_FRAC,
+                                  "osc_decay": VERIFY_OSC_DECAY,
+                                  "osc_floor_frac": VERIFY_OSC_FLOOR_FRAC,
+                                  "iss_max_a": 0.10 * ctx.cl1,
+                                  "iss_expect_a": (list(p.verify_iss_expect_a)
+                                                   if p.verify_iss_expect_a
+                                                   else None)}}
+    stop_cnt = ctx.ca18 * JV_STOP_RPM / 60.0
+
+    def _stop_and_wait():
+        _write(ctx, "JV", 0.0, allow_motion=True)
+        _cmd(ctx, "BG", allow_motion=True)       # latch JV=0 (decel)
+        _cmd(ctx, "ST", allow_motion=True)
+        w = 0.0
+        while True:
+            vx = _cmd(ctx, "VX")
+            if isinstance(vx, (int, float)) and abs(vx) < stop_cnt:
+                return
+            if w >= JV_STOP_TIMEOUT_S:
+                raise AbortError("JV 정지 대기 실패 (|VX|=%.0f)" % abs(vx))
+            _sleep(ctx, 0.05)
+            w += 0.05
+    failed_step = None
+    for rpm in p.verify_speeds_rpm:
+        _seg(ctx, "jv")
+        # each step starts FROM REST (ladder contract)
+        w = 0.0
+        while True:
+            vx = _cmd(ctx, "VX")
+            if isinstance(vx, (int, float)) and abs(vx) < stop_cnt:
+                break
+            if w >= JV_STOP_TIMEOUT_S:
+                raise AbortError("스텝 전 정지 미확인 (|VX|=%.0f)" % abs(vx))
+            _sleep(ctx, 0.05)
+            w += 0.05
+        _emit(ctx, "VERIFY_STEP", "JV 스텝 %.0frpm (기록 %.1fs)"
+              % (rpm, VERIFY_RECORD_S))
+        _record_start(ctx, VERIFY_RECORD_S)      # arm FIRST: rise in-frame
+        _sleep(ctx, VERIFY_PRE_S)
+        jv = ctx.ca18 * rpm / 60.0
+        _write(ctx, "JV", jv, allow_motion=True)
+        _cmd(ctx, "BG", allow_motion=True)       # CR p175: JV latches on BG
+        _sleep(ctx, VERIFY_RECORD_S + 0.02)
+        rec = _record_fetch(ctx)
+        _seg(ctx, "jv")                          # re-arm timebox for the stop
+        _stop_and_wait()
+        step = _analyze_jv_step(ctx, rec, rpm)
+        steps.append(step)
+        for nt in step["notes"]:
+            ctx.warnings.append("F2 @%.0frpm: %s" % (rpm, nt))
+        if not step["pass"]:
+            failed_step = step
+            break                                # ladder stops at first fail
+    _seg(ctx, "idle")
+    _cmd(ctx, "MO=0")
+    ctx.motor_on = False
+    _restore_limits(ctx)
+    # ---- verdict + persistence -----------------------------------------------------------
+    result_path = os.path.join(
+        p.snapshot_dir, "verify_vp_result_%d.json" % int(time.time() * 1000))
+    if failed_step is not None:
+        status, reason = RED, ("G5 실패 @%.0frpm: %s"
+                               % (failed_step["rpm"],
+                                  "; ".join(failed_step["fails"])))
+    else:
+        status = YELLOW if ctx.warnings else GREEN
+        reason = "" if status == GREEN else "; ".join(ctx.warnings)
+    ctx.evidence["verify"]["verdict"] = status
+    try:
+        with open(result_path, "w", encoding="utf-8") as fj:
+            json.dump({"t": time.time(), "status": status, "reason": reason,
+                       "verify": ctx.evidence["verify"],
+                       "readings": ctx.readings,
+                       "warnings": ctx.warnings}, fj,
+                      ensure_ascii=False, indent=1)
+        ctx.evidence["result_path"] = result_path
+    except Exception as e:
+        ctx.warnings.append("검증결과 저장 실패: %s" % e)
+    _emit(ctx, "DONE", "F2 검증런 완료 — %s" % status)
+    return AutotuneVPResult(status=status, reason=reason, ts_us=int(ts),
+                            evidence=ctx.evidence, warnings=ctx.warnings)
