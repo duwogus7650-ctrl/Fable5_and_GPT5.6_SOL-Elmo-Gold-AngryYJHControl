@@ -2033,18 +2033,33 @@ class OscSim(VPSim):
 
 
 def test_verify_nominal_green_ladder(tmp_path):
-    """(a) our gains (PM 68 deg design) -> GREEN; overshoot in the expected
-    5-10% band, both ladder speeds run, evidence complete, motor safed."""
+    """(a) our gains (PM 68 deg design) -> GREEN with the AC-profiler mock;
+    LIVE-INCIDENT REPLAY (2026-07-14): 900 rpm ramps 0.983 s at AC=1e6 —
+    the ADAPTIVE window (~1.38 s) must pass it (the old fixed 0.6 s window
+    produced 3 phantom hard REDs).  300 rpm total settle ~0.295 s must match
+    the live measurement (= the profiler ramp, NOT loop dynamics)."""
     drive = VPSim()
     res = verify_run_vp(drive, _params(drive, tmp_path))
     assert res.status == GREEN, (res.status, res.reason, res.warnings)
+    assert res.evidence["verify"]["ac_cnt_s2"] == pytest.approx(1e6)
     steps = res.evidence["verify"]["steps"]
     assert [s["rpm"] for s in steps] == [300.0, 900.0]
     for s in steps:
         assert s["pass"] and s["overshoot_frac"] < 0.15
         assert abs(s["v_ss"] / s["jv_cnt_s"] - 1.0) <= 0.05
-        assert s["t_settle_s"] is not None and s["t_settle_s"] <= 0.06
+        # settle gates judge the POST-RAMP part (loop responsibility)
+        assert s["t_settle_post_s"] is not None and s["t_settle_post_s"] <= 0.06
+        assert s["settle_includes_ramp"] is True
         assert s["v_curve"] and s["i_curve"]          # captured waveforms
+    # 300 rpm: total settle ~= ramp time (the live 0.2948 s finding)
+    assert steps[0]["t_ramp_s"] == pytest.approx(327680.0 / 1e6, rel=0.01)
+    assert steps[0]["t_settle_s"] == pytest.approx(0.295, abs=0.05)
+    # 900 rpm: adaptive window covers ramp 0.983 s + tail (~1.38 s)
+    assert steps[1]["t_ramp_s"] == pytest.approx(983040.0 / 1e6, rel=0.01)
+    assert steps[1]["record_s_used"] >= 1.3
+    # (d) the ramp slope is NOT read as oscillation: post-ramp tail RMS sits
+    # at the true noise floor, 48x below the old mid-ramp artifact
+    assert steps[1]["osc_rms_2nd"] < vp.VERIFY_OSC_FLOOR_FRAC * abs(steps[1]["v_ss"])
     assert abs(steps[0]["v_ss"] - 327680.0) <= 0.05 * 327680.0
     assert drive.regs["MO"] == 0
     # persistence: result json in the SYNTHETIC quarantine (invariant kept)
@@ -2054,10 +2069,52 @@ def test_verify_nominal_green_ladder(tmp_path):
                                            vp.KA_BASELINE_FILE))
 
 
+def test_verify_fixed_window_artifact_gated_honestly(tmp_path):
+    """The artifact class itself: if the window CANNOT cover the ramp (fixed
+    0.6 s at 900 rpm), the verdict must be the explicit capture-shortfall
+    RED — never the old phantom trio (mid-ramp v_ss / 미정착 / ramp-slope
+    'oscillation')."""
+    drive = VPSim()
+    old = vp.VERIFY_SETTLE_TAIL_S
+    vp.VERIFY_SETTLE_TAIL_S = -1e9          # force max() -> fixed 0.6 s
+    try:
+        res = verify_run_vp(drive, _params(drive, tmp_path,
+                                           verify_speeds_rpm=(900.0,)))
+    finally:
+        vp.VERIFY_SETTLE_TAIL_S = old
+    assert res.status == RED
+    assert "정상상태 미도달" in res.reason and "창 부족" in res.reason
+    assert "지속 발진" not in res.reason    # phantom oscillation banished
+    assert "크기 이탈" not in res.reason    # phantom mid-ramp v_ss banished
+    assert drive.regs["MO"] == 0
+
+
+def test_verify_ac_read_failure_falls_back(tmp_path):
+    """(c) AC unreadable -> fail-open: fixed 0.6 s window + warning; 300 rpm
+    (ramp 0.33 s < 0.6 s) still passes as YELLOW."""
+    class NoAC(VPSim):
+        def _query(self, name):
+            if name in ("AC", "DC"):
+                raise IOError("no AC")
+            return VPSim._query(self, name)
+
+    drive = NoAC()
+    res = verify_run_vp(drive, _params(drive, tmp_path,
+                                       verify_speeds_rpm=(300.0,)))
+    assert res.status == YELLOW, (res.status, res.reason)
+    assert any("AC 판독불가" in w for w in res.warnings)
+    s0 = res.evidence["verify"]["steps"][0]
+    assert s0["pass"] and s0["record_s_used"] == pytest.approx(0.6)
+    assert s0["t_ramp_s"] is None
+    assert res.evidence["verify"]["ac_cnt_s2"] is None
+
+
 def test_verify_overshoot_red(tmp_path):
-    """(b) hot integrator (KI x20 -> 36% overshoot) -> RED at the first rung;
-    ladder stops (900 rpm never attempted); motor safed."""
-    drive = VPSim(ki2=KI2_ORACLE * 20)
+    """(b) hot integrator -> overshoot RED at the first rung; ladder stops
+    (900 rpm never attempted); motor safed.  KI x40 with the AC-profiler
+    mock (the ramped reference smooths KI x20 to ~1% — profiler semantics
+    moved the knob; 35.1% measured at x40)."""
+    drive = VPSim(ki2=KI2_ORACLE * 40)
     res = verify_run_vp(drive, _params(drive, tmp_path))
     assert res.status == RED
     assert "오버슈트" in res.reason and "@300rpm" in res.reason

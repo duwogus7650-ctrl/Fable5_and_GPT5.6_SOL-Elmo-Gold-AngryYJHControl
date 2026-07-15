@@ -232,7 +232,15 @@ DECEL_TAIL_S = 0.25       # post-pulse coast captured for the regression
 # with the delta reported (JV steps ride the AC/DC profiler on the real drive,
 # so command-to-band settle can legitimately exceed 60 ms without a fault).
 VERIFY_SPEEDS_RPM = (300.0, 900.0)   # ladder: next step only after a pass
-VERIFY_RECORD_S = 0.6     # per-step capture (transient + steady tail)
+VERIFY_RECORD_S = 0.6     # per-step capture FLOOR — the actual window is
+                          # ADAPTIVE: max(this, t_ramp + VERIFY_SETTLE_TAIL_S)
+                          # where t_ramp = |jv|/AC (live artifact 2026-07-14:
+                          # AC=1e6 -> 900 rpm ramps 0.983 s > the old fixed
+                          # 0.6 s window -> mid-ramp read as steady state,
+                          # ramp slope read as sustained oscillation = 3
+                          # phantom hard REDs; 300 rpm "settle 0.295 s" was
+                          # in fact the profiler ramp 0.328 s, not the loop)
+VERIFY_SETTLE_TAIL_S = 0.4    # post-ramp capture margin (steady evidence)
 VERIFY_PRE_S = 0.05       # quiet pre-roll before the JV step
 VERIFY_OVERSHOOT_MAX = 0.25   # HARD RED (design PM 68.4 deg expects ~5-10%)
 VERIFY_OVERSHOOT_SPEC = 0.15  # SPEC §6 figure -> YELLOW advisory band
@@ -2193,8 +2201,20 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     # BEFORE the loop so an AbortError mid-D1 still leaves the collected
     # points in the result evidence (the dict holds the live list reference)
     ctx.evidence["jv"] = {"points": jv_pts, "partial": True}
+    # ADAPTIVE settle (profiler-mock finding 2026-07-14, same family as the
+    # verify-run capture artifact): JV rides the AC profiler, so a speed
+    # TRANSITION takes |jv_new - jv_prev|/AC — the worst default rung
+    # (+900 -> -300 rpm) is 1.31 s at AC=1e6, LONGER than the fixed 0.8 s
+    # settle -> the record window catches mid-ramp and poisons the friction
+    # fit (live runs were saved only by serial-latency-stretched sleeps).
+    ac_d1 = ctx.readings.get("AC")
+    ac_d1_ok = isinstance(ac_d1, (int, float)) and ac_d1 > 0
+    jv_prev = 0.0
     for rpm in list(p.jv_speeds_rpm) + [-x for x in p.jv_speeds_rpm]:
         jv = ctx.ca18 * rpm / 60.0
+        settle_s = (max(JV_SETTLE_S, abs(jv - jv_prev) / float(ac_d1) + 0.3)
+                    if ac_d1_ok else JV_SETTLE_S)
+        jv_prev = jv
         _seg(ctx, "jv")
         _write(ctx, "JV", jv, allow_motion=True)
         # CR p175: JV only takes effect on the next BG (begin motion).
@@ -2203,7 +2223,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         # Phase-2 D1 failure, 2026-07-14).  Same idiom as the UM=3 drag
         # sweep (PA write + BG).
         _cmd(ctx, "BG", allow_motion=True)
-        _sleep(ctx, JV_SETTLE_S)
+        _sleep(ctx, settle_s)
         _seg(ctx, "jv")                              # re-arm timebox per point
         _record_start(ctx, JV_RECORD_S)
         _sleep(ctx, JV_RECORD_S + 0.02)
@@ -2505,68 +2525,105 @@ def verify_run_vp(link, params: Optional[AutotuneVPParams] = None
 
 _VERIFY_READS = ("TS", "UM", "MF", "GS[2]", "CA[18]", "CL[1]",
                  "KP[2]", "KI[2]", "KP[3]",
-                 "VH[2]", "SD", "HL[2]", "LL[2]", "ER[2]", "AC", "DC")
+                 "VH[2]", "SD", "HL[2]", "LL[2]", "ER[2]")
+_VERIFY_READS_OPT = ("AC", "DC")     # profiler limits: FAIL-OPEN (a missing
+                                     # AC falls back to the fixed window)
 
 
-def _analyze_jv_step(ctx: _Ctx, rec: dict, rpm: float) -> dict:
+def _analyze_jv_step(ctx: _Ctx, rec: dict, rpm: float,
+                     t_ramp: Optional[float] = None,
+                     record_s: float = VERIFY_RECORD_S) -> dict:
     """G5 metrics + verdict for one JV step capture.  Returns the step dict;
-    hard failures are listed in step['fails'], advisories in step['notes']."""
+    hard failures are listed in step['fails'], advisories in step['notes'].
+
+    PROFILER-AWARE (live artifact fix 2026-07-14): JV rides the AC/DC
+    profiler, so the first t_ramp = |jv|/AC of the response is a commanded
+    RAMP, not loop dynamics.  Steady-state / oscillation judgments use only
+    the POST-RAMP region, and the settle time is split into total (ramp
+    included — that is what the operator sees) and post-ramp (what the loop
+    is responsible for; the gates judge THIS)."""
     v, i, dt = rec["v"], rec["i"], float(rec["dt"])
     n = len(v)
     v_t = ctx.ca18 * rpm / 60.0
     sgn = 1.0 if v_t >= 0 else -1.0
-    ss = slice(int(0.7 * n), n)                  # steady tail = last 30%
+    fails, notes = [], []
+    band_ref = abs(v_t)
+    # onset = first sample with commanded motion visible (post pre-roll)
+    onset = [k for k in range(n)
+             if abs(v[k]) > max(VERIFY_BAND_FRAC * band_ref, 3000.0)]
+    k0 = onset[0] if onset else 0
+    k_end = (min(n, k0 + int(math.ceil(t_ramp / dt)))
+             if t_ramp is not None else None)
+    if k_end is not None and k_end >= int(0.9 * n):
+        # the artifact class itself, gated honestly: never judge a ramp
+        fails.append("정상상태 미도달: 캡처 %.2fs < 프로파일러 램프 %.3fs+여유"
+                     " — 창 부족(아티팩트 방지 게이트)" % (n * dt, t_ramp))
+    # steady window = last 30%, but never earlier than ramp end + 50 ms
+    ss_start = int(0.7 * n)
+    if k_end is not None:
+        ss_start = min(max(ss_start, k_end + int(0.05 / dt)), int(0.9 * n))
+    ss = slice(ss_start, n)
     v_ss = float(np.mean(v[ss]))
     i_ss = float(np.mean(i[ss]))
-    fails, notes = [], []
-    # -- steady-state sign + magnitude (HARD) ---------------------------------------
-    if v_ss * v_t <= 0:
-        fails.append("정상상태 부호 불일치: v_ss=%.0f vs JV=%.0f cnt/s"
-                     " (모션 미발효/커뮤 의심)" % (v_ss, v_t))
-    elif abs(v_ss / v_t - 1.0) > VERIFY_VSS_TOL:
-        fails.append("정상상태 크기 이탈: v_ss=%.0f vs %.0f cnt/s (%.1f%% > %.0f%%)"
-                     % (v_ss, v_t, 100 * abs(v_ss / v_t - 1.0),
-                        100 * VERIFY_VSS_TOL))
+    short = bool(fails)                          # capture-shortfall gate hit
+    # -- steady-state sign + magnitude (HARD; skipped on shortfall: a mid-
+    #    ramp mean is not a steady state, judging it would stack phantoms) ---
+    if not short:
+        if v_ss * v_t <= 0:
+            fails.append("정상상태 부호 불일치: v_ss=%.0f vs JV=%.0f cnt/s"
+                         " (모션 미발효/커뮤 의심)" % (v_ss, v_t))
+        elif abs(v_ss / v_t - 1.0) > VERIFY_VSS_TOL:
+            fails.append("정상상태 크기 이탈: v_ss=%.0f vs %.0f cnt/s"
+                         " (%.1f%% > %.0f%%)"
+                         % (v_ss, v_t, 100 * abs(v_ss / v_t - 1.0),
+                            100 * VERIFY_VSS_TOL))
     # -- overshoot (HARD 25%, SPEC 15% advisory) -------------------------------------
     ref = abs(v_ss) if v_ss * v_t > 0 else abs(v_t)
     os_frac = max(0.0, float(np.max(v * sgn)) / ref - 1.0) if ref > 0 else 0.0
-    if os_frac > VERIFY_OVERSHOOT_MAX:
-        fails.append("오버슈트 %.1f%% > %.0f%% (게인 과대/PM 부족 의심)"
-                     % (100 * os_frac, 100 * VERIFY_OVERSHOOT_MAX))
-    elif os_frac > VERIFY_OVERSHOOT_SPEC:
-        notes.append("오버슈트 %.1f%% — physics 25%% 이내 통과, SPEC §6 15%%"
-                     " 초과(advisory)" % (100 * os_frac))
-    # -- settle time (HARD 0.5 s, SPEC 60 ms advisory) --------------------------------
+    if not short:
+        if os_frac > VERIFY_OVERSHOOT_MAX:
+            fails.append("오버슈트 %.1f%% > %.0f%% (게인 과대/PM 부족 의심)"
+                         % (100 * os_frac, 100 * VERIFY_OVERSHOOT_MAX))
+        elif os_frac > VERIFY_OVERSHOOT_SPEC:
+            notes.append("오버슈트 %.1f%% — physics 25%% 이내 통과, SPEC §6"
+                         " 15%% 초과(advisory)" % (100 * os_frac))
+    # -- settle time: TOTAL includes the profiler ramp (what the operator
+    #    sees); the gates judge the POST-RAMP part (what the loop owns) ------
     band = VERIFY_BAND_FRAC * max(ref, 1.0)
-    onset_idx = [k for k in range(n) if abs(v[k]) > max(band, 3000.0)]
-    k0 = onset_idx[0] if onset_idx else 0
     out = [k for k in range(k0, n) if abs(v[k] * sgn - abs(v_ss)) > band]
     settled = (not out) or (out[-1] < int(0.95 * n))
     t_settle = ((out[-1] + 1 - k0) * dt if out else 0.0) if settled else None
-    if not settled:
-        fails.append("±%.0f%% 대역 미정착 (캡처 %.2fs 내)"
-                     % (100 * VERIFY_BAND_FRAC, n * dt))
-    elif t_settle > VERIFY_SETTLE_MAX_S:
-        fails.append("정착시간 %.0fms > %.0fms (HARD)"
-                     % (1e3 * t_settle, 1e3 * VERIFY_SETTLE_MAX_S))
-    elif t_settle > VERIFY_SETTLE_SPEC_S:
-        notes.append("정착 %.0fms — SPEC §6 60ms 초과(advisory: JV는 AC/DC"
-                     " 프로파일 경유라 지령-대역 정착이 60ms를 넘을 수 있음)"
-                     % (1e3 * t_settle))
-    # -- sustained oscillation (HARD): steady-tail residual must decay --------------
+    t_post = (max(0.0, (out[-1] + 1 - k_end) * dt)
+              if (settled and out and k_end is not None)
+              else t_settle)
+    if not short:
+        if not settled:
+            fails.append("±%.0f%% 대역 미정착 (캡처 %.2fs 내)"
+                         % (100 * VERIFY_BAND_FRAC, n * dt))
+        elif t_post is not None and t_post > VERIFY_SETTLE_MAX_S:
+            fails.append("램프 후 정착시간 %.0fms > %.0fms (HARD)"
+                         % (1e3 * t_post, 1e3 * VERIFY_SETTLE_MAX_S))
+        elif t_post is not None and t_post > VERIFY_SETTLE_SPEC_S:
+            notes.append("램프 후 정착 %.0fms — SPEC §6 60ms 초과(advisory;"
+                         " 총 정착 %.0fms에는 프로파일러 램프 t_ramp=%.3fs"
+                         " 포함)" % (1e3 * t_post,
+                                     1e3 * (t_settle or 0.0), t_ramp or 0.0))
+    # -- sustained oscillation (HARD): POST-RAMP tail residual must decay ----
+    #    (live artifact: the ramp slope inside a too-short window reads as a
+    #    48x-noise "oscillation" — the ss window above starts after ramp end)
     tail = v[ss] - v_ss
     half = len(tail) // 2
     rms1 = float(np.sqrt(np.mean(tail[:half] ** 2))) if half else 0.0
     rms2 = float(np.sqrt(np.mean(tail[half:] ** 2))) if half else 0.0
     osc_floor = VERIFY_OSC_FLOOR_FRAC * max(abs(v_ss), 1.0)
     sustained = rms2 > osc_floor and rms2 > VERIFY_OSC_DECAY * rms1
-    if sustained:
+    if sustained and not short:
         fails.append("지속 발진: 정착후 잔진동 RMS %.0f→%.0f cnt/s 비감쇠"
                      " (>%.0f 노이즈층, 한계주기/게인과대 의심)"
                      % (rms1, rms2, osc_floor))
     # -- steady-state current (HARD generic + optional unit window YELLOW) ----------
     iss_max = 0.10 * ctx.cl1
-    if abs(i_ss) > iss_max:
+    if abs(i_ss) > iss_max and not short:
         fails.append("무부하전류 과대 |I_ss|=%.2fA > %.2fA (0.10·CL)"
                      % (abs(i_ss), iss_max))
     exp = ctx.params.verify_iss_expect_a
@@ -2579,6 +2636,11 @@ def _analyze_jv_step(ctx: _Ctx, rec: dict, rpm: float) -> dict:
             "i_ss": round(i_ss, 4), "overshoot_frac": round(os_frac, 4),
             "t_settle_s": (round(t_settle, 4) if t_settle is not None
                            else None),
+            "t_settle_post_s": (round(t_post, 4) if t_post is not None
+                                else None),
+            "settle_includes_ramp": t_ramp is not None,
+            "t_ramp_s": (round(t_ramp, 4) if t_ramp is not None else None),
+            "record_s_used": round(record_s, 4),
             "osc_rms_1st": round(rms1, 1), "osc_rms_2nd": round(rms2, 1),
             "dt_s": dt, "n_samples": n,
             "v_curve": [round(float(x), 1) for x in v[::max(1, n // 300)]],
@@ -2596,6 +2658,11 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
     _emit(ctx, "P0", "F2 검증런: 연결 확인, MO=0 게이트 통과")
     for c in _VERIFY_READS:
         ctx.readings[c] = _cmd(ctx, c)
+    for c in _VERIFY_READS_OPT:                 # AC/DC: fail-open (fallback)
+        try:
+            ctx.readings[c] = _cmd(ctx, c, retries=0)
+        except Exception:
+            ctx.readings[c] = None
     ctx.evidence["readings"] = dict(ctx.readings)
     r = ctx.readings
     ts = r["TS"]
@@ -2656,13 +2723,26 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
         waited += p.poll_s
     _emit(ctx, "ENABLE", "MO=1 통전 — JV 스텝 사다리 시작")
     # ---- JV step ladder ------------------------------------------------------------------
+    # adaptive capture window (live artifact fix 2026-07-14): JV rides the
+    # AC profiler — the window must cover t_ramp = |jv|/AC plus a steady
+    # tail, else mid-ramp is read as steady state (900 rpm @ AC=1e6 ramps
+    # 0.983 s > the old fixed 0.6 s -> 3 phantom hard REDs)
+    ac = ctx.readings.get("AC")
+    ac_ok = isinstance(ac, (int, float)) and ac > 0
+    if not ac_ok:
+        ctx.warnings.append("AC 판독불가 — 프로파일러 램프 보정 불가(고정"
+                            " %.1fs 창 폴백): 고속 스텝은 창 부족 게이트로"
+                            " 정직 RED 될 수 있음" % VERIFY_RECORD_S)
     steps = []
     ctx.evidence["verify"] = {"speeds_rpm": list(p.verify_speeds_rpm),
-                              "steps": steps, "criteria": {
+                              "steps": steps,
+                              "ac_cnt_s2": (float(ac) if ac_ok else None),
+                              "criteria": {
                                   "overshoot_max": VERIFY_OVERSHOOT_MAX,
                                   "overshoot_spec": VERIFY_OVERSHOOT_SPEC,
                                   "settle_spec_s": VERIFY_SETTLE_SPEC_S,
                                   "settle_max_s": VERIFY_SETTLE_MAX_S,
+                                  "settle_tail_s": VERIFY_SETTLE_TAIL_S,
                                   "vss_tol": VERIFY_VSS_TOL,
                                   "band_frac": VERIFY_BAND_FRAC,
                                   "osc_decay": VERIFY_OSC_DECAY,
@@ -2699,18 +2779,24 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
                 raise AbortError("스텝 전 정지 미확인 (|VX|=%.0f)" % abs(vx))
             _sleep(ctx, 0.05)
             w += 0.05
-        _emit(ctx, "VERIFY_STEP", "JV 스텝 %.0frpm (기록 %.1fs)"
-              % (rpm, VERIFY_RECORD_S))
-        _record_start(ctx, VERIFY_RECORD_S)      # arm FIRST: rise in-frame
-        _sleep(ctx, VERIFY_PRE_S)
         jv = ctx.ca18 * rpm / 60.0
+        t_ramp = (abs(jv) / float(ac)) if ac_ok else None
+        record_s = (max(VERIFY_RECORD_S, t_ramp + VERIFY_SETTLE_TAIL_S)
+                    if t_ramp is not None else VERIFY_RECORD_S)
+        _emit(ctx, "VERIFY_STEP", "JV 스텝 %.0frpm (기록 %.2fs, 프로파일러"
+              " 램프 %s)" % (rpm, record_s,
+                             "%.3fs" % t_ramp if t_ramp is not None
+                             else "미상(AC 판독불가)"))
+        _record_start(ctx, record_s)             # arm FIRST: rise in-frame
+        _sleep(ctx, VERIFY_PRE_S)
         _write(ctx, "JV", jv, allow_motion=True)
         _cmd(ctx, "BG", allow_motion=True)       # CR p175: JV latches on BG
-        _sleep(ctx, VERIFY_RECORD_S + 0.02)
+        _sleep(ctx, record_s + 0.02)
         rec = _record_fetch(ctx)
         _seg(ctx, "jv")                          # re-arm timebox for the stop
         _stop_and_wait()
-        step = _analyze_jv_step(ctx, rec, rpm)
+        step = _analyze_jv_step(ctx, rec, rpm, t_ramp=t_ramp,
+                                record_s=record_s)
         steps.append(step)
         for nt in step["notes"]:
             ctx.warnings.append("F2 @%.0frpm: %s" % (rpm, nt))
