@@ -113,6 +113,14 @@ KP_MAX = 100.0
 KI_MAX = 5000.0
 MAX_WC_REDUCTIONS = 3     # PM<45 -> wc*=0.8, at most 3 times (SPEC §4)
 
+# E3 gain-write envelope.  The Gold drive accepted a long decimal literal but
+# silently stored zero in the Phase-2 incident; EAS-native writes stay within
+# six fractional digits.  Keep Phase 1 independently guarded against the same
+# parser failure class.
+APPLY_READBACK_RTOL = 1e-3
+GAIN_DECIMALS_MAX = 6
+GAIN_ROUND_RTOL = 5e-3
+
 # --- pipeline timing constants (SPEC §7) ----------------------------------------------
 T_PROBE_S = 0.20          # B3 stability probe record
 T_DC_RECORD_S = 0.25      # C1 steady-window record per DC level
@@ -1415,24 +1423,111 @@ def _measure_sine(ctx: _Ctx, f_hz: float, a_cmd: float):
 # ======================================================================================
 # E3 / E4 — separate operator actions (Phase-1 stubs per segment contract)
 # ======================================================================================
+def _fmt_gain(v: float) -> str:
+    """Return an EAS-safe plain-decimal gain literal (never scientific)."""
+    text = "%.*f" % (GAIN_DECIMALS_MAX, float(v))
+    text = text.rstrip("0").rstrip(".")
+    return text if text and text != "-" else "0"
+
+
+def _apply_tail(applied, observed=None, unknown=None) -> str:
+    parts = ["SV not executed",
+             "verified prior RAM: %s" % (", ".join(applied) or "none")]
+    if observed is not None:
+        parts.append("observed RAM: %s" % observed)
+    if unknown is not None:
+        parts.append("RAM state UNKNOWN: %s" % unknown)
+    if applied or observed is not None or unknown is not None:
+        parts.append("DO NOT ENABLE until corrected and re-read or power-cycled")
+    return "; " + "; ".join(parts)
+
+
 def apply_gains(link, result: AutotuneResult, persist: bool = False):
     """E3: write KP[1]/KI[1] from a GREEN/YELLOW result.  MO must be 0.
-    SV only on explicit persist=True (I4: never inside the measurement run).
+    SV only on explicit persist=True and only after both write readbacks pass.
     Returns (ok, message).  Live behavior pending hardware verification."""
     if result is None or result.status not in (GREEN, YELLOW) \
             or result.kp_v_per_a is None or result.ki_hz is None:
         return False, "적용 불가: 결과 상태 %s" % (result.status if result else None)
+    applied = []
     try:
         if _to_num(link.command("MO")) == 1:
             return False, "모터 ON(MO=1) — STOP 후 적용"
-        link.command("KP[1]=%.9g" % result.kp_v_per_a)
-        link.command("KI[1]=%.9g" % result.ki_hz)
+
+        # Validate every wire literal before the first write so a formatting
+        # failure cannot leave a partially-applied pair in RAM.
+        prepared = []
+        for name, requested in (("KP[1]", result.kp_v_per_a),
+                                ("KI[1]", result.ki_hz)):
+            requested = float(requested)
+            if not math.isfinite(requested) or requested <= 0.0:
+                return False, "%s invalid gain %.9g%s" % (
+                    name, requested, _apply_tail(applied))
+            literal = _fmt_gain(requested)
+            sent = float(literal)
+            if not math.isfinite(sent) or sent <= 0.0:
+                return False, ("%s rounds to %s at %d decimals%s" %
+                               (name, literal, GAIN_DECIMALS_MAX,
+                                _apply_tail(applied)))
+            round_error = abs(sent / requested - 1.0)
+            if round_error > GAIN_ROUND_RTOL:
+                return False, ("%s rounding error %.3f%% exceeds %.3f%% "
+                               "(requested %.9g, wire %s)%s" %
+                               (name, 100.0 * round_error,
+                                100.0 * GAIN_ROUND_RTOL, requested, literal,
+                                _apply_tail(applied)))
+            prepared.append((name, requested, literal, sent))
+
+        for name, requested, literal, sent in prepared:
+            try:
+                link.command("%s=%s" % (name, literal))
+            except Exception as exc:
+                # The drive may have accepted the write before the transport
+                # reported failure.  Never claim that RAM stayed unchanged.
+                return False, ("%s write response failed: %s%s" %
+                               (name, exc,
+                                _apply_tail(applied, unknown=name)))
+            try:
+                raw_readback = link.command(name)
+            except Exception as exc:
+                return False, ("%s readback failed after write: %s%s" %
+                               (name, exc,
+                                _apply_tail(applied, unknown=name)))
+            try:
+                readback = float(_to_num(raw_readback))
+            except (TypeError, ValueError):
+                return False, ("%s unparseable readback %r%s" %
+                               (name, raw_readback,
+                                _apply_tail(applied, unknown=name)))
+            if not math.isfinite(readback) or readback <= 0.0:
+                tail = _apply_tail(
+                    applied, observed="%s=%.9g" % (name, readback))
+                return False, ("%s invalid readback %.9g "
+                               "(requested %.9g, wire %s)%s" %
+                               (name, readback, requested, literal, tail))
+            error = abs(readback - sent) / abs(sent)
+            if error > APPLY_READBACK_RTOL:
+                tail = _apply_tail(
+                    applied, observed="%s=%.9g" % (name, readback))
+                return False, ("%s readback mismatch: requested %.9g, wire %s, "
+                               "readback %.9g (%.3f%% > %.3f%%)%s" %
+                               (name, requested, literal, readback,
+                                100.0 * error, 100.0 * APPLY_READBACK_RTOL,
+                                tail))
+            applied.append("%s=%s (readback %.6g)" %
+                           (name, literal, readback))
+
         if persist:
-            link.command("SV")
-        return True, "KP[1]=%.5g KI[1]=%.5g 적용%s" % (
-            result.kp_v_per_a, result.ki_hz, " + SV 영속화" if persist else "")
+            try:
+                link.command("SV")
+            except Exception as exc:
+                return False, ("SV command failed after readback verification: "
+                               "%s; persistence state unknown; RAM applied: %s" %
+                               (exc, ", ".join(applied)))
+        return True, "readback verified: %s%s" % (
+            ", ".join(applied), " + SV" if persist else "")
     except Exception as e:
-        return False, "적용 실패: %s" % e
+        return False, "apply failed: %s%s" % (e, _apply_tail(applied))
 
 
 def verify_run(link):
