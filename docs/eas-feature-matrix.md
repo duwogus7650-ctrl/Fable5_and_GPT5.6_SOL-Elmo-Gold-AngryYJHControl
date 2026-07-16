@@ -1,0 +1,248 @@
+# EAS III 기능 구현 매트릭스
+
+> **ACTIVE-SCOPE NOTE — 2026-07-17:** 이 매트릭스는 전체 기능 inventory/backlog다. 현재 실행 범위,
+> 중단 지점과 다음 순서는 [`current-scope-handoff.md`](current-scope-handoff.md)를 우선한다.
+
+Recorder 상단 리본의 항목별 쉬운 설명과 구현/잠금 상태는
+[`eas-recorder-ribbon.md`](eas-recorder-ribbon.md)를 기준으로 한다. 로컬 firmware·manual
+자료의 버전/해시/적용 범위는 [`local-elmo-artifact-audit.md`](local-elmo-artifact-audit.md)에 기록한다.
+
+기준일: 2026-07-16<br>
+대상: 이 저장소의 `AngryYJH Control`과 현재 Gold Twitter 드라이브 1축
+
+이 문서는 “EAS를 전부 복제했다”는 선언이 아니라, 각 기능의 근거와 위험도를 분리하는
+개발 기준표다. 다른 드라이브·펌웨어·피드백 센서에서 같은 결과가 난다고 가정하지 않는다.
+
+## 판정 기준
+
+- `LIVE`: 현재 장비에서 명령/되읽기 또는 실구동 결과가 관측된 기능.
+- `OFFLINE`: 테스트·시뮬레이터·DLL reflection까지만 통과한 기능.
+- `MODEL`: 명령 참조, 펌웨어 노트, EAS 화면 관측으로 설계했지만 해당 조합의 실기 검증이 부족한 기능.
+- `NEED-DATA`: 명령 ID, 단위, 펌웨어 지원 여부 또는 안전 오라클이 부족한 기능.
+- `UNSUPPORTED`: 공장 전용·라이선스 보호·서명 우회 또는 안전 인터록 우회 없이는 제공하지 않을 기능.
+
+`LIVE`도 필드 안전 인증을 뜻하지 않는다. 소프트웨어 STOP은 독립 STO/E-stop을 대신하지 않는다.
+
+## 기능 범위
+
+상단 `File / Parameters / Tools / Views / Floating Tools`는 로컬 실행이 확인된 항목만 활성화한
+애플리케이션 메뉴 v1이다. 원본 EAS 메뉴 동등성은 주장하지 않는다. 공통
+`OperationSpec` 카탈로그가 `LOCAL UI / LOCAL FILE / DRIVE READ / DRIVE STATE / RAM WRITE /
+ENERGIZES / MOTION / PERSIST-SV / SAFETY STOP / NEED-DATA`를 분류하며, Quick/Expert 메뉴는
+같은 Tuning 엔진을 안내형 식별·설계 화면과 RAM trial·검증·복원·저장 화면으로 나눠 보여준다.
+
+| 영역 | 현재 상태 | 근거 수준 | 다음 게이트 |
+|---|---|---|---|
+| USB 연결, 펌웨어/PAL/부트 식별 | 구현 | LIVE | 다른 통신 경로별 동일 identity/readback 계약 |
+| PX/VX/PE/IQ/MO 텔레메트리 | 구현 | LIVE | stale-telemetry 표시와 통신 품질 카운터 |
+| Session Zero (`PX=0`) | 구현 | LIVE 1회 + OFFLINE 회귀 | MO=0·정지·무전류·PX 되읽기 유지; 전원 재인가 후 복원된다고 주장하지 않음 |
+| Motor Settings 읽기/durable 저장 | transaction 구현 | OFFLINE fault injection; 과거 direct-write LIVE 이력은 별개 | 최신 흐름의 RAM rollback·단일 SV·냉간 audit 감독 실기 |
+| Feedback 공통 설정 | 읽기/Preview-only 구현; direct save 잠금 | LIVE readback: 현재 EnDat 2.2 조합 | versioned 명령/type/range/side-effect registry와 센서별 golden readback |
+| EAS 23종 Feedback 패널 | 읽기/preview UI 구조 구현; 저장 잠금 | MODEL; 일부 ID 미확정 | registry에 포함되지 않은 센서·필드는 계속 fail-closed |
+| EnDat Encoder Maintenance (`TW[18..20]`) | 구현 | LIVE: 현재 드라이브 명령 확인 | 명령 자체가 encoder datum/NVM 동작임을 유지; 별도 `SV`를 붙이지 않음 |
+| Personality upload와 레코더 신호 목록 | 구현 | LIVE | 연결 generation별 재발견; 펌웨어별 신호 이름·단위 검정 |
+| 고속 Drive Recording | Immediate finite v1 구현 | LIVE positional key + OFFLINE lifecycle/반례 | Normal/Auto/Interval/Rollover trigger 계약과 post-Configure timing 실기 readback |
+| Recorder CSV/provenance | 구현 | OFFLINE | raw CSV + UTC/target/timing/SHA-256 metadata sidecar의 현장 capture 검증 |
+| Phase 1 R/L 식별과 전류 PI 설계 | 구현 | LIVE: 식별/설계 | 신규 P1 `RAM → Restore/Save` 트랜잭션 실기 되읽기 |
+| P1 게인 임시 적용/복원/SV | 구현 | OFFLINE 전체 회귀시험·세션/UNKNOWN fault injection | 정지축에서 apply/readback/restore, 감독하 전원 재인가 persistence audit |
+| 커뮤테이션 서명 | 구현 | LIVE + OFFLINE 회귀 | 매 전원 투입 시 제한 전류·방향·최종 `TC=0/MO=0` 확인 |
+| Phase 2 속도/위치 식별·설계 | 구현 | LIVE 이력 + OFFLINE 회귀 | 현재 EAS 설정 provenance를 독립 되읽기한 뒤 재개 |
+| P2 RAM 적용·모터 검증·복원·SV | 구현 | LIVE 이력 + OFFLINE 세션/권한/UNKNOWN 회귀 | 최신 코드로 apply→검증→restore/persist 전체 실기 재시험 |
+| P1/P2/Motor `SV` UNKNOWN durable ledger | 구현 | OFFLINE crash/write/readback/손상/identity/interprocess 반례 | 실제 SV 응답 유실 뒤 냉간 OFF/ON + query-only audit 현장 검증 |
+| 자동 설정 프로필 | Motor v1 구현; Feedback 잠금 | Motor OFFLINE, Feedback NEED-DATA | Feedback versioned registry → RAM trial/readback/rollback → 별도 SV |
+| 유한 Single-Axis PTP | backend/STOP transaction 구현, live 잠금 | OFFLINE 42-test kernel | 기계 envelope·정방향·limit·정지거리·독립 E-stop/STO evidence 전에는 gate 해제 금지 |
+| 일반 수동 Jog/Homing/Current/Sine | 미구현 | NEED-DATA | 별도 안전 요구사항·limit·watchdog·fault-state 설계 후에만 추가 |
+| 범용 Scope/Plot/Export | Recorder selection/export + 읽기 전용 2-lane View + shared-X Zoom + local FFT + full+A:B Signal Statistics/Values + local A/B drag/snap + provenance-bound Statistics CSV | backend LIVE + View/Zoom/A:B/CSV OFFLINE; endpoint/delta/RMS/Tolerance %와 nearest original sample 의미 STATIC-IL VERIFIED; FFT STAND-IN | exact EAS glyph/shortcut/persistency/file parity, exact Apply-to-All, verified unit metadata, advanced trigger |
+| Tool Organizer v0.1 | modeless session-only 8-page 표시/숨김·재정렬·Reset; safety shell과 active recovery page 보호 | OFFLINE · PARTIAL · LOCAL_UI; zero-new-drive-I/O | EAS activity/Favorites 전체 조건과 native persistence는 별도 근거 필요 |
+| EAS-native Tool Organizer persistence | 미구현·잠금 | NEED-DATA | EAS 저장 위치/schema/version/unknown-field/손상 복구와 재시작 round-trip oracle |
+| HOST-OBSERVED Status Monitor v0.1 | modeless fixed PX/VX/PE/IQ/MO projection + session-only line 추가/삭제/재정렬/Reset | OFFLINE · PARTIAL · LOCAL_UI projection; 기존 core-admitted telemetry만 소비하고 새 polling/I/O 없음 | exact authority/fail-closed 계약은 아래 절; EAS 전체 polling·signal·display parity와 분리 |
+| Full EAS Status Monitor polling/signals/gauge/Quick Watch | 미구현·잠금 | NEED-DATA | visible-only 0.5 s sampling, arbitrary variables/arrays, multi-target, user units, color/gauge/warning, Quick Watch/topmost의 runtime oracle와 bounded READ ownership |
+| EAS-native Status Monitor `.smc`/`.sac` configuration | 미구현·잠금 | NEED-DATA | help의 extension 모순 해소, schema/version/unknown-field/corruption/N/A-target 처리와 EAS open-save-open fixture |
+| Host-observed Status / Session Log v0.1 | bounded viewer + redacted JSON/CSV 구현 | OFFLINE · PARTIAL | 기존 앱 이벤트만 소비; drive history/source timestamp가 아님 |
+| Full EAS Fault/Ack/Clear Manager | 미구현·잠금 | NEED-DATA | drive-origin history/timestamp, EC/SR/MF taxonomy, Ack/Clear/Reset 권한·복구 계약 |
+| System Configuration Inspector v0.1 | admission된 단일 Gold/Direct Access USB target의 one-level read-only host projection | OFFLINE · PARTIAL; 화면 open/render는 zero-new-drive-I/O | board type은 UNOBSERVED/NEED-DATA; firmware/PAL/boot는 sanitized/redacted host display of readback이며 host provenance 확장과 구분 |
+| Full System Configuration management | Add/Remove/Edit/Group/I/O/Virtual Axis 미구현·잠금 | NEED-DATA | topology·target identity·side effect·partial failure·rollback 계약 |
+| CAN/EtherCAT 네트워크 구성 | 미구현 | NEED-DATA | 통신 하드웨어·네트워크 설정·복구 경로가 있는 별도 모듈 |
+| 프로그램/파라미터 파일 업·다운로드 | 미구현 | NEED-DATA | 형식·버전·원자성·복구·비밀정보 검증 |
+| 펌웨어 다운로드 | 앱에서 제공하지 않음 | 고위험 | 전용 복구 절차와 사용자의 명시적 flashing 승인 없이는 EAS 사용 |
+| 비공개/공장/라이선스 보호 기능 | 제공하지 않음 | UNSUPPORTED | 우회하지 않음; 공식 문서·API·권한이 확보된 범위만 재평가 |
+
+## Tool Organizer v0.1 계약
+
+- organizer가 다루는 canonical 집합은 `motion / motor / feedback / tuning / axis / recorder /
+  status / system`의 고정된 8개 workspace page뿐이다. 현재 세션에서 visible/available partition과
+  visible 순서를 바꾸고 Reset으로 기본 순서를 복원한다. 모든 page 객체는 그대로 유지되며 최소 한
+  page가 항상 visible이어야 한다.
+- Connection/Disconnect, 전역 DRIVE STOP, ONLINE 표시, persistence warning과 상단 application
+  menu는 layout namespace 밖의 보호된 safety shell이다. forged/unknown/duplicate/missing/all-hidden
+  layout은 부분 적용 없이 거부한다.
+- 미저장 P1/P2 trial 또는 tuning/Motor transaction, Recorder recording/stop/recovery/UNKNOWN,
+  Motion inflight/stop/recovery가 있으면 해당 page를 숨길 수 없다. 숨긴 page의 중복 menu action도
+  보이지 않고 programmatic trigger로 page를 열지 못한다.
+- dialog는 modeless이고 staged 변경은 Apply 전까지 main layout을 바꾸지 않는다. Cancel은 버리고,
+  render 실패는 이전 model/visibility/current page로 rollback한다. 이 동작은 `LOCAL_UI`이며
+  worker, `ElmoLink`, serial, network, drive query/write/job을 호출하지 않는다.
+- v0.1은 **session-only**다. 로컬 파일, Windows registry, EAS 설정에 저장하거나 다음 앱 시작에
+  복원하지 않는다. EAS가 문서화한 activity/Favorites와 세션 간 저장을 재현한 것이 아니므로
+  EAS-native persistence는 operation catalog에서 `NEED-DATA` 및 비활성이다.
+- 공개 근거는 설치 경로
+  `C:\Program Files\Elmo Motion Control\Elmo Application Studio III\NetHelp\Content\EAS_II_SimplIQ_Gold_UM\Settings and Configuration.htm`
+  §13.3, SHA-256
+  `E5BF9FDEE568B2FB8C58D06F9D0C2F9261A6973A5E081581038F5CFB3843F881`이다. help manifest
+  `NetHelp\Default.mcwebhelp`의 SHA-256은
+  `51F5FB6AC2C33B149F3AC0565B002B7D93B1D2C5D226852D229C29522EA72BBF`다. 이는 문서 근거이며
+  실제 EAS Tool Organizer 화면·native 저장 round-trip·hardware/display 검증이 아니다.
+
+## HOST-OBSERVED Status Monitor v0.1 계약
+
+- UI는 `Floating Tools → Status Monitor`에서 여는 modeless dialog다. 표시 column은 `Target / Signal /
+  Value / Units / Description`이고, 현재 allowlist는 `PX`→`pos`/cnt, `VX`→`vel`/cnt/s,
+  `PE`→`pos_err`/cnt, `IQ`→`iq`/A, `MO`→`mo`/state의 다섯 신호로 고정된다. dialog는 새 timer,
+  polling, worker/COM 호출, drive query/write/job을 만들지 않으며 core가 이미 받아들인 telemetry의
+  observer일 뿐이다.
+- line 추가/삭제/위·아래 이동/Reset은 immutable session config로만 유지된다. local defensive cap은
+  16 lines이며 EAS 최대 line 수라고 해석하지 않는다. duplicate/unknown/mutable line은 부분 적용 없이
+  거부하고 config 변경 즉시 이전 값을 모두 blank 처리한다. save/load API나 local/native persistence는 없다.
+- 활성 positive generation과 exact canonical `elmo-sn4-sha256:<64 lowercase hex>` identity에 bind한다.
+  sample은 core가 `fresh=True`로 attestation한 strictly increasing positive sequence이고, 다섯 신호가
+  모두 존재하며 finite이고 `MO`가 정확히 0 또는 1일 때만 `CURRENT`다. stale/replay, old/wrong generation, malformed/wrong identity,
+  incomplete/non-finite sample 또는 observer 오류는 전체 snapshot의 sequence와 모든 value를 blank로
+  폐기한다. partial row 유지나 이전 값 fallback은 없고 snapshot/UI에는 exact identity나 digest prefix 대신
+  고정 `Drive01` alias만 보인다.
+- 설치 NetHelp `Supporting Tools.htm` §12.3은 one-or-more target의 선택 motion variable, arbitrary
+  variable/array 입력, Target/Signal/Value/Units/Description/Gauge, target filter/lock, line 도구,
+  counts/user units와 gauge limits를 설명한다. visible Status Monitor는 background에서 0.5 s마다 읽고
+  숨겨지면 view를 갱신하지 않으며, 값 변화는 red/다음 동일 read는 black으로 표시한다고 적는다.
+  현재 v0.1은 이 polling을 소유하지 않고 core telemetry는 dialog visibility와 독립적으로 계속된다.
+- `Floating Tools.htm` §11.5의 EAS floating view는 compact Target/Signal/Value, Quick Watch,
+  always-visible/top 동작과 Unpin을 설명한다. v0.1은 modeless인 것만 구현했고 Quick Watch, topmost,
+  arbitrary signals/arrays, multi-target, user units, Gauge/경고 border와 EAS display parity는 `NEED-DATA`다.
+- native config는 의도적으로 없다. `Supporting Tools.htm` §12.3.1.3의 Save는 `*.smc`, §12.3.1.4의
+  Append 문장은 dialog를 `*.sac`라 한 직후 선택 파일을 `*.smc`라 하고 Replace는 `*.smc`라고 한다.
+  따라서 확장자나 schema를 추측하지 않으며 실제 EAS fixture의 open-save-open, append/replace,
+  unknown-field, corruption과 unavailable-target oracle 전까지 operation catalog에서 잠근다.
+- 증거 identity는 설치 경로
+  `C:\Program Files\Elmo Motion Control\Elmo Application Studio III\NetHelp\Content\EAS_II_SimplIQ_Gold_UM\Supporting Tools.htm`
+  SHA-256 `300B980C11BF37A5AE20803AA3038C178A2E6CD0785959791124EFA6739AAEC4`,
+  같은 directory의 `Floating Tools.htm` SHA-256
+  `32936D4B12A469CC950B592268D4E56A0E7BD12465C1CFA6AC88549D0B2E7E85`, help manifest
+  `NetHelp\Default.mcwebhelp` SHA-256
+  `51F5FB6AC2C33B149F3AC0565B002B7D93B1D2C5D226852D229C29522EA72BBF`다. 설치 executable
+  `ElmoMotionControl.View.Main.exe` 3.0.0.26의 SHA-256은
+  `C8A023EA6DCEF8BC39E3E86E0AF929269AB47BB5B8791EB99FB9A62080F719ED`다. 이 정적 근거는 실제
+  EAS 3.0.0.26 dialog 관찰, native file round-trip, hardware 또는 display validation이 아니다.
+
+## 자동 설정의 실행 계약
+
+자동화 가능한 것은 계산·비교·RAM 시험·되읽기·복원이다. 다음 순서를 공통으로 사용한다.
+
+1. 해시된 drive identity, 정확한 연결 세션 토큰과 펌웨어, 현재 전체 설정 스냅숏을 기록한다.
+2. 적용 전 변경 목록과 단위 변환을 보여준다.
+3. `MO=SO=VX=MF=0`, `PS=-2/-1`, 정지, 무전류, fresh telemetry를 다시 확인한다.
+4. Motor profile은 첫 assignment 전에 durable WAL을 기록하고, WAL 직후 전체 snapshot을
+   사전검사 값과 exact 비교한다. 각 forward/rollback assignment 직전에도 안전 상태를 재조회한다. RAM에 적용한 뒤 모든 대상
+   레지스터를 독립 되읽기한다.
+5. Motor의 pre-SV 일부 실패·timeout·불일치는 역순 원값 복원과 전체 되읽기를 수행한다.
+   복원이 확인되면 `SV` 없이 종료하고, 확인되지 않으면 `UNKNOWN`으로 잠가 새 시험·enable·motion·반복 `SV`를 금지한다.
+6. P1/P2는 RAM 시험과 복원/검증/Save를 분리한다. Motor v1은 현재 한 확인창에서 RAM 적용과
+   단일 `SV`까지의 bounded transaction 전체를 명시하며 중복 요청을 잠근다.
+7. 영구 `SV`는 전체 readback이 일치하고 해당 request의 record ID-bound durable authority가 있을 때 정확히 한 번만 실행한다.
+   `PERSISTING` fsync 뒤 full profile/안전 snapshot과 마지막 안전 조회도 재검증하며, 실패하면 UNKNOWN·SV 미실행이다.
+
+위 재조회는 외부 EAS/CAN/EtherCAT master와 원자적 interlock이 아니다. 실기 프로필 저장은 다른
+master의 배타적 제어권이 확인될 때까지 `NEED-DATA`다. Motor 변경·연결 세대 변경 시 과거 P1/P2
+Apply authority는 폐기하고 이전 worker의 지연 신호도 무시한다.
+
+P1/P2 `SV` 직전과 Motor RAM mutation 전에는 해시된 drive identity, 정확한
+VR/VP/VB·connection epoch,
+원래/적용 게인 전체를 checkout 밖 `%LOCALAPPDATA%\AngryYJHControl\safety`의 SHA-256 검증 원장에
+interprocess lock으로 먼저 atomic 기록한다. 따라서 SV 응답 유실이나
+강제 프로세스 종료 뒤에도 `UNKNOWN` 잠금이 유지된다. 해제는 사용자가 UNKNOWN 이후 냉간
+OFF/ON 또는 동등한 reset을 현장에서 확인하고, 새 connection epoch의 동일 drive identity와
+동일 VR/VP/VB에서 `MO=0·SO=0·VX=0`, 안정된 2회 게인 readback을 query-only로 확인한 때만
+가능하다. Motor record는 `PL[1]`, `CL[1]`, `VH[2]`, `CA[19]`, `CA[28]` 프로파일과
+검증 의존값을 사용한다. `SV`, `LD`, `RS`, assignment는 audit에서 보내지 않는다.
+해제 record에는 reset attestation, 새 epoch, 정확한 software context, 두 query-only snapshot과
+별도 evidence SHA-256을 archive한다. P1/P2는 0.1% 허용오차, Motor는 exact comparator에서
+original/applied가 구별되지 않으면 attempt와 `SV`를 사전에 거부한다. 이 원장을 모르는 구버전
+checkout은 UNKNOWN 중 제어용으로 사용하지 않는다.
+
+Audit 결과는 `RESOLVED_APPLIED_PROFILE` 또는 `RESOLVED_ORIGINAL_PROFILE`처럼 전원 재인가 뒤
+관측된 durable 게인/Motor profile만 말한다. 특정 `SV`의 인과적 성공/실패, whole-drive flash 동일성,
+커뮤테이션 유효성, motion safety는 계속 `UNKNOWN`이며 별도 검증이 필요하다. 현재 durable
+원장 범위는 P1/P2 게인과 Motor profile이다. Feedback assignment/SV는 이 원장만 재사용해
+임의로 열지 않으며, versioned write registry와 sensor-ID side-effect/rollback 계약이 먼저다.
+
+모터 enable, motion, 커뮤테이션 전류 인가, 영구 encoder datum 변경, 안전 한계 확대는
+설정 프로필의 자동 실행 항목에 포함하지 않는다.
+
+## 문서화되었다고 구현 가능한 것은 아니다
+
+- 공식 Command Reference/Drive .NET Library에 공개된 기능은 capability/firmware gate와 되읽기를
+  붙여 구현할 수 있다.
+- EAS 화면 또는 personality XML에서만 관측된 항목은 우선 읽기 전용으로 발견하고, 명령·단위·복원
+  경로를 확인한 뒤에만 쓰기를 연다.
+- 알 수 없는 명령을 실제 드라이브에 탐색적으로 쓰지 않는다. read-only reflection, personality,
+  공식 릴리스 노트, 동일 조건 A/B diff 순으로 근거를 올린다.
+- 공장 서비스·서명·라이선스·안전 인터록을 우회해야 하는 기능은 구현 목표에서 제외한다.
+
+## Recorder View Design v3 + Time/FFT/A:B Signal Statistics 계약
+
+View Design은 worker나 `ElmoLink`를 소유하지 않는 로컬 읽기 전용 계층이다. 정확한
+`COMPLETED` lifecycle, `VALIDATED` manifest, `ResolvedRecorderRequest`, capture ID,
+connection/UI generation, drive identity와 worker completion token이 모두 결속된 capture만 표시한다. UI에서도
+`validate_capture()`를 다시 실행하며, `dt`, 샘플 수, finite 값, 정확한 Personality 신호명이
+하나라도 불일치하면 차트와 CSV 권한을 열지 않는다.
+
+두 chart의 기본 시간축은 `index × actual dt`이고 단위는 추정하지 않는다. chart·summary·CSV는
+한 immutable evidence snapshot을 공유한다. v1은 총 16K sample 상한과 lane당 1채널 제한 안에서
+full waveform을 렌더하고 auto y-range도 full evidence에서 계산한다. raw CSV가 분석·보관 증거다. 새 capture 시작 시 이전
+view authority를 즉시 폐기하고, 연결 변경 시 기존 차트는 남겨도 `HISTORICAL / OFFLINE`으로만
+표시한다.
+
+Manual Time Zoom은 capture data를 수정·감축하지 않고 공통 X(time) viewport만 두 chart에
+적용한다. 범위는 capture domain 안에서 최소 2개 실제 sample을 포함해야 한다. Y 범위는
+Personality-owned unit을 추정하지 않기 때문에 chart별 독립으로 유지한다. 레이아웃 JSON은
+`angryyjh-recorder-view-layout/v3` 로컬 형식이며 v1은 Full Time+Time mode, v2는 저장된
+시간창+Time mode로 이관한다. v3는 `plot_mode`를 명시한다. EAS의 Apply-to-All
+축/대상/undo/persistency 의미와 파일 호환은 `NEED-DATA`다.
+
+로컬 FFT는 full immutable capture의 one-sided peak amplitude `STAND-IN`이며 직사각 창,
+detrend/zero padding 없음, DC 포함, Y 하한 0을 명시한다. Signal Statistics는 설치 EAS NetHelp가
+문서화한 entire-signal field를 같은 full evidence에서 `DERIVED`로 계산하되, prose의 RMS와 literal
+`sqrt(sum)/N` 수식이 모순된다. 설치 ViewModel/Action DLL의 실제 IL은 두 경로 모두 N으로 나눈 뒤
+`Math.Sqrt`를 호출해 표준 RMS 의미를 확정한다. 로컬은 overflow-safe 안정화 계산이므로 극단값의
+bit-identical rounding은 미주장한다. Zoom/FFT/lane과 독립이고 계산 실패가 capture/CSV 권한을
+취소하지 않으며 EAS의 `startIndex < endIndex` gate에 맞춰 N=1은 잠근다. Local A/B는 exact
+integer sample index, inclusive `N=B-A+1`, endpoint Signal Values, signed `ΔX/ΔY`, Tolerance %를 구현했다.
+Time chart의 A/B 선은 현재 visible viewport의 exact 원본 sample로 mouse drag/snap하며 거리 동률은
+낮은 index를 택한다. A<B를 유지하고 release 때 inclusive 통계를 한 번 계산한다. 통계 CSV v1은
+capture binding, exact source-view SHA-256, 범위, signal 순서, CURRENT/HISTORICAL_OFFLINE authority를
+한 UTF-8 파일에 넣어 같은 디렉터리 temp+fsync+replace로 게시한다. 이는 local-only 형식이며 EAS
+Save As 호환을 주장하지 않는다. EAS Marker/Cursor의 정확한 glyph/shortcut/persistency, FFT-bin
+range는 계속 `NEED-DATA`다. Rollover,
+Normal/Auto/Interval, Multi-drive,
+`.mat`, EAS layout schema도 계속 별도 근거/실패 계약이 필요한 기능이다.
+
+## Host-observed Session Log v0.1 계약
+
+- 최대 512개 host-observed 이벤트와 정확한 drop count만 유지하며, 단일 payload도 64 KiB로 제한한다.
+- 앱 로컬 connection generation과 `CURRENT / HISTORICAL / REJECTED`를 구분한다. 이전 worker,
+  sequence replay, source timestamp 회귀, invalid telemetry는 현재 상태를 되살리지 못한다.
+- host UTC/monotonic은 앱 관찰 시각이며 drive source timestamp나 vendor fault history가 아니다.
+- `MO/SO/MF/SR/MS`는 기존 Axis Summary가 이미 읽어 전달한 값만 수동 소비한다. `MF != 0`은
+  raw `ERROR` 표시까지만 하며 원인 taxonomy나 복구 의미를 추정하지 않는다.
+- JSON/CSV는 버튼 시점의 detached snapshot을 target alias·포트·경로·SN[4] 비식별화 후 같은
+  디렉터리 temp+fsync+replace로 저장하고 최종 readback SHA-256을 확인한다.
+- 화면 열기·렌더·내보내기는 drive query/write/job을 만들지 않는다. Ack/Clear/Reset과 full EAS
+  fault manager는 계속 `NEED-DATA` 및 비활성이다.
+
+## 다음 구현 순서
+
+1. Feedback write registry v1: 현재 sensor ID 고정, exact allowlist/type/range와 rollback 집합 확정.
+2. 현재 드라이브 설정 provenance readback 및 baseline snapshot 고정.
+3. Recorder EAS parity 확장; 구현된 local A/B drag/snap·Statistics CSV 위에서 EAS의 정확한
+   glyph/shortcut/persistency, FFT-bin range와 원본 export schema를 별도 근거로 확인.
+4. Full EAS Fault/Ack/Clear: drive-origin history/timestamp/taxonomy와 Ack/Clear/Reset
+   권한·side effect·복구 계약 확보. 그 전에는 `NEED-DATA`를 유지.
+5. 센서별 Feedback live matrix 확장.

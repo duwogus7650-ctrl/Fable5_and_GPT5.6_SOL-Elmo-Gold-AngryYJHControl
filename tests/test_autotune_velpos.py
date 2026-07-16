@@ -124,6 +124,8 @@ class VPSim:
         self._rec = None
         self.record_calls = 0
         self.log = []
+        self._transaction_session = object()
+        self._persistence_unknown_latched = False
         # live-incident knob (2026-07-14): drive SILENTLY stores a different
         # value than requested (KP[2]=0.000166142303 -> stored 0, no error);
         # {"KP[2]": 0.0} makes any KP[2]= write land as 0.0 with "" response
@@ -133,6 +135,15 @@ class VPSim:
     is_synthetic = True     # kernel quarantines ALL persistence (snapshot +
                             # K_a baseline) into snapshot_dir/synthetic — a
                             # sim GREEN must never re-baseline a live unit
+
+    def transaction_session_identity(self):
+        return self._transaction_session
+
+    def persistence_unknown_latched(self):
+        return self._persistence_unknown_latched
+
+    def latch_persistence_unknown(self):
+        self._persistence_unknown_latched = True
 
     def recorder_signals(self):
         return list(self.signals)
@@ -248,13 +259,20 @@ class VPSim:
     def command(self, cmd, timeout_ms=1000, allow_motion=False):
         self.log.append((cmd, allow_motion))
         u = cmd.replace(" ", "").upper()
+        if u.rstrip(";") == "SV" and self.persistence_unknown_latched():
+            raise RuntimeError("SV blocked: persistence state UNKNOWN")
         if not allow_motion and any(u.startswith(pf) for pf in self._MOTION_PREFIXES):
             raise PermissionError("refused motion command without allow_motion: %r"
                                   % cmd)
         if "=" in cmd:
             name, val = cmd.split("=", 1)
             return self._write(name.strip(), float(val))
-        return self._query(cmd.strip())
+        try:
+            return self._query(cmd.strip())
+        except Exception:
+            if u.rstrip(";") == "SV":
+                self.latch_persistence_unknown()
+            raise
 
     def _write(self, name, v):
         regs = self.regs
@@ -345,6 +363,8 @@ class VPSim:
             return "%.6f" % self.v_meas
         if name == "PX":
             return "%.6f" % self.p
+        if name == "TC":
+            return "%.6f" % self.tc
         if name == "IQ":
             return "%.6f" % self.i_act
         if name == "SO":
@@ -419,6 +439,111 @@ def test_t3_one_sided_ka_tooth(green_run):
         assert naive_bias >= 0.08, \
             "one-sided K_a should be biased low (got %+.1f%%)" % (-100 * naive_bias)
         assert abs(run["k_a_diff"] / KA_TRUTH - 1.0) <= 0.02
+
+
+# ======================================================================================
+# Standalone commutation-signature gate (bounded, no Phase-2 continuation)
+# ======================================================================================
+def _signature_params(drive, tmp_path, **kw):
+    kw.setdefault("signature_only", True)
+    kw.setdefault("signature_cap_a", 1.30)
+    kw.setdefault("signature_i_min_a", 0.50)
+    kw.setdefault("signature_i_max_a", 1.30)
+    return _params(drive, tmp_path, **kw)
+
+
+def _motion_commands(drive):
+    return [cmd.replace(" ", "").upper() for cmd, _allow in drive.log]
+
+
+def _assert_signature_did_not_continue_to_phase2(drive):
+    cmds = _motion_commands(drive)
+    assert "BG" not in cmds
+    assert not any(cmd.startswith("JV") for cmd in cmds)
+    assert "UM=3" not in cmds
+
+
+def test_signature_gate_green_is_capped_positive_and_finishes_motor_off(tmp_path):
+    drive = VPSim(i_c=0.6, vel_noise=0.0)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == GREEN, (res.status, res.reason, res.warnings)
+    sig = res.evidence["signature_gate"]
+    assert sig["pass"] is True
+    assert 0.50 <= sig["i_ba_a"] <= 1.30
+    assert sig["direction"] == 1
+    assert sig["command_cap_a"] == pytest.approx(1.30)
+    tc = [abs(float(cmd.split("=", 1)[1])) for cmd in _motion_commands(drive)
+          if cmd.startswith("TC=")]
+    assert tc and max(tc) <= 1.30 + 1e-9
+    assert drive.regs["MO"] == 0
+    assert res.evidence["final_state"]["MO"] == 0
+    assert res.evidence["final_state"]["TC"] == 0.0
+    assert res.evidence["final_state"]["pass"] is True
+    assert drive.regs["SD"] == pytest.approx(1e6)
+    assert drive.regs["ER[2]"] == pytest.approx(1e8)
+    assert "unit_diag" not in res.evidence
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_gate_no_breakaway_red_without_current_escalation(tmp_path):
+    drive = VPSim(i_c=2.0, vel_noise=0.0)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "1.30 A" in res.reason and "미검출" in res.reason
+    tc = [abs(float(cmd.split("=", 1)[1])) for cmd in _motion_commands(drive)
+          if cmd.startswith("TC=")]
+    assert tc and max(tc) <= 1.30 + 1e-9
+    assert drive.regs["MO"] == 0
+    assert res.evidence["final_state"]["MO"] == 0
+    assert res.evidence["final_state"]["TC"] == 0.0
+    assert res.evidence["final_state"]["pass"] is True
+    assert "unit_diag" not in res.evidence
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_gate_reverse_feedback_red_and_motor_off(tmp_path):
+    drive = VPSim(i_c=0.6, vel_noise=0.0, commut_sign=-1.0)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert res.evidence["breakaway"]["direction"] == -1
+    assert drive.regs["MO"] == 0
+    assert res.evidence["final_state"]["pass"] is True
+    assert "unit_diag" not in res.evidence
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_red_surfaces_final_tc_readback_failure(tmp_path):
+    """A RED signature must not hide loss of the final TC=0 readback proof."""
+    class FinalTCUnreadable(VPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            if cmd.replace(" ", "").upper() == "TC":
+                self.log.append((cmd, allow_motion))
+                raise IOError("injected final TC read failure")
+            return VPSim.command(self, cmd, timeout_ms=timeout_ms,
+                                 allow_motion=allow_motion)
+
+    drive = FinalTCUnreadable(i_c=2.0, vel_noise=0.0)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert res.evidence["final_state"]["pass"] is False
+    assert any("TC:" in e for e in res.evidence["final_state"]["read_errors"])
+    assert "종료 상태 확인 실패" in res.reason
+    assert drive.regs["MO"] == 0
+
+
+def test_signature_gate_rejects_cap_above_absolute_limit_before_enable(tmp_path):
+    drive = VPSim(i_c=0.6, vel_noise=0.0)
+    res = run_velpos_autotune(
+        drive, _signature_params(drive, tmp_path, signature_cap_a=1.3001))
+
+    assert res.status == RED
+    assert "1.30 A" in res.reason
+    assert not any(cmd == "MO=1" for cmd in _motion_commands(drive))
+    assert drive.regs["MO"] == 0
 
 
 # ======================================================================================
@@ -727,6 +852,55 @@ def test_mo1_at_start_red_without_auto_disable(tmp_path):
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == RED and "STOP" in res.reason
     assert not any(c.replace(" ", "").startswith("MO=0") for c, _ in drive.log)
+
+
+@pytest.mark.parametrize("runner", [run_velpos_autotune, verify_run_vp],
+                         ids=["phase2", "verify"])
+def test_cancel_latched_during_preflight_sends_no_drive_write(tmp_path, runner):
+    """Both P2 pipelines must poll a cancel raised by an initial read."""
+    class CancelOnPreflightRead(VPSim):
+        def __init__(self):
+            super().__init__()
+            self.cancelled = False
+
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            result = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if cmd.replace(" ", "").upper() == "ER[2]":
+                self.cancelled = True
+            return result
+
+    drive = CancelOnPreflightRead()
+    res = runner(drive, _params(
+        drive, tmp_path, cancel_fn=lambda: drive.cancelled))
+
+    assert drive.cancelled and res.status == RED
+    assert "abort" not in res.evidence
+    assert [cmd for cmd, _ in drive.log if "=" in cmd] == []
+    assert not any(cmd.replace(" ", "").upper() == "MO=1"
+                   for cmd, _ in drive.log)
+
+
+@pytest.mark.parametrize("runner", [run_velpos_autotune, verify_run_vp],
+                         ids=["phase2", "verify"])
+def test_cancel_after_limit_write_blocks_enable_and_restores(tmp_path, runner):
+    """A post-write cancel must abort/restore, but never cross MO=1."""
+    drive = VPSim()
+
+    def cancelled_after_last_limit_write():
+        return any(cmd.replace(" ", "").upper() == "ER[2]=330000"
+                   for cmd, _ in drive.log)
+
+    res = runner(drive, _params(
+        drive, tmp_path, cancel_fn=cancelled_after_last_limit_write))
+
+    cmds = [cmd.replace(" ", "").upper() for cmd, _ in drive.log]
+    assert res.status == RED and "abort" in res.evidence
+    assert "ER[2]=330000" in cmds
+    assert "MO=1" not in cmds and "MO=0" in cmds
+    assert drive.regs["MO"] == 0
+    assert drive.regs["SD"] == pytest.approx(1e6)
+    assert drive.regs["ER[2]"] == pytest.approx(1e8)
 
 
 def test_gs2_gain_scheduling_red(tmp_path):
@@ -1836,6 +2010,19 @@ def test_ramp_frac_above_abs_max_is_preflight_red(tmp_path):
     drive = VPSim()
     res = run_velpos_autotune(drive, _params(drive, tmp_path, ramp_frac=0.6))
     assert res.status == RED and "ramp_frac" in res.reason
+
+
+@pytest.mark.parametrize("register", ["CA[18]", "KP[1]", "KI[1]"])
+def test_required_motion_and_current_loop_readings_fail_closed_before_write(
+        tmp_path, register):
+    drive = VPSim()
+    drive.regs[register] = 0
+
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert register in res.reason
+    assert not any("=" in command for command, _allow_motion in drive.log)
     assert all("=" not in c for c, _ in drive.log)   # pre-power, read-only
 
 
@@ -1883,6 +2070,1067 @@ def test_vpsim_record_split_contract(tmp_path):
 # ======================================================================================
 # F1 / F2 separate operator actions
 # ======================================================================================
+def _gain_snapshot(drive):
+    return {name: drive.regs[name] for name in ("KP[2]", "KI[2]", "KP[3]")}
+
+
+class _IdentifiedVPSim(VPSim):
+    """Offline transaction link with stable drive ID and rotatable session."""
+
+    def __init__(self, transaction_id, **kwargs):
+        super().__init__(**kwargs)
+        self._transaction_id = transaction_id
+        self._transaction_session = object()
+
+    def transaction_identity(self):
+        return self._transaction_id
+
+    def transaction_session_identity(self):
+        return self._transaction_session
+
+    def rotate_transaction_session(self):
+        self._transaction_session = object()
+
+
+def _green_gain_result():
+    return AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                            ki_vel_hz=10.7, kp_pos=85.2114)
+
+
+def test_begin_gain_trial_vp_captures_originals_and_never_saves():
+    drive = VPSim()
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=1.66142303e-4,
+                           ki_vel_hz=10.6999833, kp_pos=85.2113988)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+
+    assert ok, msg
+    assert trial.original == pytest.approx(original)
+    assert trial.applied == pytest.approx({
+        "KP[2]": 0.000166, "KI[2]": 10.699983, "KP[3]": 85.211399})
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert trial.restore_only is False
+    assert _gain_snapshot(drive) == pytest.approx(trial.applied)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_internal_command_guard_preserves_exact_trial_session(monkeypatch):
+    """A transparent safety proxy may guard commands without becoming a link."""
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+
+    class GuardProxy:
+        def __init__(self, base):
+            self.base = base
+
+        @property
+        def transaction_session_link(self):
+            return self.base
+
+        def __getattr__(self, name):
+            return getattr(self.base, name)
+
+    proxy = GuardProxy(drive)
+    monkeypatch.setattr(
+        vp, "verify_run_vp",
+        lambda link, params=None: AutotuneVPResult(status=GREEN))
+
+    verified = vp.verify_gain_trial_vp(proxy, trial)
+
+    assert verified.status == GREEN, verified.reason
+    assert verified.gain_trial_verification is trial.verification
+    assert trial.session_link is drive
+    assert trial.verification.session_link is drive
+
+
+@pytest.mark.parametrize("session_mode", ["missing", "none"])
+def test_begin_gain_trial_vp_requires_explicit_live_session_token(session_mode):
+    class MissingSessionAPI(VPSim):
+        transaction_session_identity = None
+
+    class NoneSessionToken(VPSim):
+        def transaction_session_identity(self):
+            return None
+
+    drive = MissingSessionAPI() if session_mode == "missing" else NoneSessionToken()
+    original = _gain_snapshot(drive)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+
+    assert not ok and trial is None
+    assert "session" in msg.lower()
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_begin_gain_trial_vp_rechecks_session_after_snapshot_before_first_write():
+    class RotateAfterGainSnapshot(_IdentifiedVPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if cmd.strip() == "KP[3]":
+                self.rotate_transaction_session()
+            return response
+
+    drive = RotateAfterGainSnapshot("drive-A")
+    original = _gain_snapshot(drive)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+
+    assert not ok and trial is None
+    assert "session" in msg.lower()
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+
+
+def test_begin_gain_trial_binds_motor_off_read_to_captured_session():
+    class RotateAndEnableAfterMO(_IdentifiedVPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if cmd.strip() == "MO":
+                self.rotate_transaction_session()
+                self.regs["MO"] = 1
+            return response
+
+    drive = RotateAndEnableAfterMO("drive-A")
+    original = _gain_snapshot(drive)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+
+    assert not ok and trial is None
+    assert "session" in msg.lower()
+    assert drive.regs["MO"] == 1
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+
+
+def test_begin_gain_trial_rechecks_unknown_latch_before_first_write():
+    class LatchAfterGainSnapshot(VPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if cmd.strip() == "KP[3]":
+                self.latch_persistence_unknown()
+            return response
+
+    drive = LatchAfterGainSnapshot()
+    original = _gain_snapshot(drive)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+
+    assert not ok and trial is None and "UNKNOWN" in msg
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+
+
+def test_begin_gain_trial_vp_refuses_unrepresentable_rollback_before_write():
+    """A trial must not start when the pre-state cannot be restored through
+    the proven six-decimal wire format.  In particular 4e-7 would serialize to
+    zero, so every proposed-gain write must remain absent."""
+    drive = VPSim(kp2=4e-7)
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+
+    assert not ok and trial is None
+    assert "KP[2]" in msg and ("복원" in msg or "소멸" in msg)
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_begin_gain_trial_vp_mid_write_failure_restores_every_original():
+    class CorruptProposedKIOnce(VPSim):
+        def __init__(self):
+            super().__init__()
+            self.corrupted = False
+
+        def _write(self, name, value):
+            if name == "KI[2]" and not self.corrupted and value == pytest.approx(10.7):
+                self.corrupted = True
+                self.regs[name] = 10.0
+                return ""
+            return super()._write(name, value)
+
+    drive = CorruptProposedKIOnce()
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+
+    assert not ok
+    assert trial is None                    # rollback was verified; no live trial remains
+    assert "KI[2]" in msg and "복원 확인" in msg
+    assert _gain_snapshot(drive) == pytest.approx(
+        original, rel=vp.APPLY_READBACK_RTOL)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_restore_gain_trial_vp_restores_originals_without_sv():
+    drive = VPSim()
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+
+    ok, msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert ok, msg
+    assert trial.persistence_state == "RESTORED"
+    assert _gain_snapshot(drive) == pytest.approx(
+        original, rel=vp.APPLY_READBACK_RTOL)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_restore_gain_trial_vp_is_noop_after_restored():
+    drive = VPSim()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    restored, restore_msg = vp.restore_gain_trial_vp(drive, trial)
+    assert restored, restore_msg
+    log_after_first_restore = list(drive.log)
+
+    restored_again, second_msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert restored_again and "RESTORED" in second_msg
+    assert trial.persistence_state == "RESTORED"
+    assert drive.log == log_after_first_restore
+
+
+@pytest.mark.parametrize("invalid_state", ["PERSISTING", "BROKEN"])
+def test_restore_gain_trial_vp_refuses_nonrestorable_state_without_write(
+        invalid_state):
+    drive = VPSim()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    trial.persistence_state = invalid_state
+    log_before = len(drive.log)
+
+    restored, restore_msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert not restored and invalid_state in restore_msg
+    assert trial.persistence_state == invalid_state
+    assert not any("=" in c or c == "SV" for c, _ in drive.log[log_before:])
+
+
+def test_restore_gain_trial_vp_uses_prevalidated_representable_expected():
+    drive = VPSim(kp2=0.0001534)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+    assert trial.original["KP[2]"] == pytest.approx(0.0001534)
+    assert trial.rollback_literals["KP[2]"] == "0.000153"
+    assert trial.rollback_expected["KP[2]"] == pytest.approx(0.000153)
+
+    ok, msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert ok, msg
+    assert drive.regs["KP[2]"] == pytest.approx(0.000153)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_restore_gain_trial_vp_final_readback_overrides_lost_write_replies():
+    """Applied rollback writes with lost replies are safe when full readback proves all."""
+    class LostRollbackReplies(VPSim):
+        lose_replies = False
+
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            if (self.lose_replies and "=" in cmd
+                    and cmd.split("=", 1)[0] in vp.VP_GAIN_NAMES):
+                VPSim.command(self, cmd, timeout_ms=timeout_ms,
+                              allow_motion=allow_motion)
+                raise TimeoutError("reply lost after accepted rollback write")
+            return VPSim.command(self, cmd, timeout_ms=timeout_ms,
+                                 allow_motion=allow_motion)
+
+    drive = LostRollbackReplies()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    drive.lose_replies = True
+
+    ok, msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert ok, msg
+    assert trial.persistence_state == "RESTORED"
+    assert "warning" in msg.lower() or "응답" in msg
+    assert _gain_snapshot(drive) == pytest.approx(trial.rollback_expected)
+
+
+@pytest.mark.parametrize(
+    "actual, expected",
+    [
+        ({"KP[2]": math.nan, "KI[2]": 10.7, "KP[3]": 85.2},
+         {"KP[2]": 8e-5, "KI[2]": 10.7, "KP[3]": 85.2}),
+        ({"KP[2]": 8e-5, "KI[2]": 10.7},
+         {"KP[2]": 8e-5, "KI[2]": 10.7, "KP[3]": 85.2}),
+        ({"KP[2]": 8e-5, "KI[2]": 10.7, "KP[3]": 85.2},
+         {"KP[2]": 8e-5, "KI[2]": math.inf, "KP[3]": 85.2}),
+        ({"KP[2]": 8e-5, "KI[2]": 0.0, "KP[3]": 85.2},
+         {"KP[2]": 8e-5, "KI[2]": 10.7, "KP[3]": 85.2}),
+    ],
+)
+def test_gain_values_match_rejects_missing_nonfinite_and_nonpositive(actual, expected):
+    match, message = vp._gain_values_match(actual, expected)
+    assert not match and message
+
+
+def test_commit_gain_trial_vp_refuses_changed_ram_and_does_not_save(monkeypatch):
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    verified = vp.verify_gain_trial_vp(drive, trial)
+    assert verified.status == GREEN
+    drive.regs["KI[2]"] = 11.0
+
+    ok, msg = vp.commit_gain_trial_vp(drive, trial)
+
+    assert not ok and "KI[2]" in msg
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_commit_gain_trial_vp_refuses_unverified_trial():
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+
+    ok, msg = vp.commit_gain_trial_vp(drive, trial)
+
+    assert not ok and "검증" in msg and "SV 미실행" in msg
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_public_gain_verification_object_cannot_forge_green_capability():
+    drive = VPSim()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    forged = vp.GainVerificationVP(
+        trial=trial,
+        applied=trial.applied_authority,
+        stable_identity=trial.stable_identity,
+        session_link=trial.session_link,
+        session_token=trial.session_token)
+    trial.verification = forged
+
+    saved, save_msg = vp.commit_gain_trial_vp(drive, trial, forged)
+
+    assert not saved and "capability" in save_msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_gain_trial_verification_is_bound_to_exact_trial(monkeypatch):
+    drive_a, drive_b = VPSim(), VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial_a = vp.begin_gain_trial_vp(drive_a, res)
+    assert ok, msg
+    ok, msg, trial_b = vp.begin_gain_trial_vp(drive_b, res)
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    verified_a = vp.verify_gain_trial_vp(drive_a, trial_a)
+    assert verified_a.status == GREEN
+
+    ok, msg = vp.commit_gain_trial_vp(drive_b, trial_b, verified_a)
+
+    assert not ok and "다른" in msg and "SV 미실행" in msg
+    assert not any(c == "SV" for c, _ in drive_b.log)
+
+
+def test_unbound_gain_trial_is_displayable_but_all_low_level_actions_refuse():
+    trial = vp.GainTrialVP(
+        original={"KP[2]": 0.000153, "KI[2]": 20.0, "KP[3]": 180.0},
+        applied={"KP[2]": 0.000166, "KI[2]": 10.7, "KP[3]": 85.2114})
+    drive = VPSim(kp2=0.000166, ki2=10.7, kp3=85.2114)
+
+    restored, restore_msg = vp.restore_gain_trial_vp(drive, trial)
+    verified = vp.verify_gain_trial_vp(drive, trial)
+    committed, commit_msg = vp.commit_gain_trial_vp(drive, trial)
+    adopted, adopt_msg = vp.adopt_gain_trial_vp_for_restore(drive, trial)
+
+    assert not restored and "session" in restore_msg.lower()
+    assert verified.status == RED and "session" in verified.reason.lower()
+    assert not committed and "session" in commit_msg.lower()
+    assert not adopted and ("identity" in adopt_msg.lower() or "식별" in adopt_msg)
+    assert not any("=" in c or c == "SV" for c, _ in drive.log)
+
+
+def test_gain_trial_verification_cannot_commit_same_trial_on_another_link(monkeypatch):
+    """Mutation tooth: trial object identity alone must not authorize another link."""
+    drive_a = _IdentifiedVPSim("drive-A")
+    drive_b = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive_a, _green_gain_result())
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    verified = vp.verify_gain_trial_vp(drive_a, trial)
+    assert verified.status == GREEN
+    drive_b.regs.update(trial.applied)
+
+    ok, msg = vp.commit_gain_trial_vp(drive_b, trial, verified)
+
+    assert not ok and ("session" in msg.lower() or "링크" in msg)
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any(c == "SV" for c, _ in drive_b.log)
+
+
+def test_gain_trial_verification_expires_when_same_link_session_rotates(monkeypatch):
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    verified = vp.verify_gain_trial_vp(drive, trial)
+    assert verified.status == GREEN
+    drive.rotate_transaction_session()
+
+    ok, msg = vp.commit_gain_trial_vp(drive, trial, verified)
+
+    assert not ok and "session" in msg.lower()
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_commit_rechecks_token_after_final_identity_read(monkeypatch):
+    class RotateDuringSecondArmedIdentity(_IdentifiedVPSim):
+        def __init__(self, transaction_id):
+            super().__init__(transaction_id)
+            self.identity_rotation_armed = False
+            self.armed_identity_calls = 0
+
+        def transaction_identity(self):
+            identity = super().transaction_identity()
+            if self.identity_rotation_armed:
+                self.armed_identity_calls += 1
+                if self.armed_identity_calls == 2:
+                    self.rotate_transaction_session()
+            return identity
+
+    drive = RotateDuringSecondArmedIdentity("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    assert vp.verify_gain_trial_vp(drive, trial).status == GREEN
+    drive.identity_rotation_armed = True
+
+    saved, save_msg = vp.commit_gain_trial_vp(drive, trial)
+
+    assert not saved and "session" in save_msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert drive.armed_identity_calls == 2
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_restore_rechecks_session_after_motor_off_read_before_first_write():
+    class RotateAfterArmedMO(_IdentifiedVPSim):
+        def __init__(self, transaction_id):
+            super().__init__(transaction_id)
+            self.rotate_after_mo = False
+
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if self.rotate_after_mo and cmd.strip() == "MO":
+                self.rotate_after_mo = False
+                self.rotate_transaction_session()
+            return response
+
+    drive = RotateAfterArmedMO("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    drive.rotate_after_mo = True
+    log_before = len(drive.log)
+
+    restored, restore_msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert not restored and "session" in restore_msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any("=" in c or c == "SV" for c, _ in drive.log[log_before:])
+
+
+def test_adoption_rechecks_session_after_gain_readback_before_binding():
+    class RotateAfterGainReadback(_IdentifiedVPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if cmd.strip() == "KP[3]":
+                self.rotate_transaction_session()
+            return response
+
+    old_link = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(old_link, _green_gain_result())
+    assert ok, msg
+    new_link = RotateAfterGainReadback("drive-A")
+    new_link.regs.update(trial.applied)
+
+    adopted, adopt_msg = vp.adopt_gain_trial_vp_for_restore(new_link, trial)
+
+    assert not adopted and "session" in adopt_msg.lower()
+    assert trial.session_link is old_link
+    assert trial.restore_only is False
+    assert not any("=" in c or c == "SV" for c, _ in new_link.log)
+
+
+def test_mutating_public_applied_dict_cannot_authorize_different_ram(monkeypatch):
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    immutable_authority = tuple(trial.applied_authority)
+    trial.applied["KI[2]"] = 99.0
+    drive.regs["KI[2]"] = 99.0
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == RED
+    assert tuple(trial.applied_authority) == immutable_authority
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_gain_trial_authority_public_views_are_read_only():
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+
+    with pytest.raises(AttributeError):
+        trial.applied_authority = (("KP[2]", 0.0001),
+                                   ("KI[2]", 11.0), ("KP[3]", 90.0))
+    with pytest.raises(TypeError):
+        trial.rollback_expected["KI[2]"] = 30.0
+    with pytest.raises(TypeError):
+        trial.rollback_literals["KI[2]"] = "30"
+    with pytest.raises(AttributeError):
+        trial.rollback_expected = {"KP[2]": 0.0002,
+                                   "KI[2]": 30.0, "KP[3]": 250.0}
+    authority = trial.__dict__["_authority"]
+    with pytest.raises(AttributeError):
+        authority.applied = (("KP[2]", 0.0001),
+                             ("KI[2]", 11.0), ("KP[3]", 90.0))
+    with pytest.raises(AttributeError):
+        trial._authority = authority
+
+
+def test_gain_trial_applied_authority_integrity_tamper_blocks_verify(monkeypatch):
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    authority = trial.__dict__["_authority"]
+    forged_applied = (("KP[2]", 0.0001),
+                      ("KI[2]", 11.0), ("KP[3]", 90.0))
+    trial.__dict__["_authority"] = type(authority)(
+        rollback_literals=authority.rollback_literals,
+        rollback_expected=authority.rollback_expected,
+        applied=forged_applied)
+    drive.regs.update(dict(forged_applied))
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    log_before = len(drive.log)
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == RED
+    assert "authority" in verified.reason.lower()
+    assert "integrity" in verified.reason.lower()
+    assert not any("=" in c or c == "SV" for c, _ in drive.log[log_before:])
+
+
+def test_gain_trial_applied_authority_integrity_tamper_blocks_commit(monkeypatch):
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    assert vp.verify_gain_trial_vp(drive, trial).status == GREEN
+    authority = trial.__dict__["_authority"]
+    forged_applied = (("KP[2]", 0.0001),
+                      ("KI[2]", 11.0), ("KP[3]", 90.0))
+    trial.__dict__["_authority"] = type(authority)(
+        rollback_literals=authority.rollback_literals,
+        rollback_expected=authority.rollback_expected,
+        applied=forged_applied)
+    drive.regs.update(dict(forged_applied))
+
+    saved, save_msg = vp.commit_gain_trial_vp(drive, trial)
+
+    assert not saved
+    assert "authority" in save_msg.lower() and "integrity" in save_msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_gain_trial_rollback_authority_integrity_tamper_blocks_restore():
+    drive = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    authority = trial.__dict__["_authority"]
+    trial.__dict__["_authority"] = type(authority)(
+        rollback_literals=(("KP[2]", "0.0002"),
+                           ("KI[2]", "30"), ("KP[3]", "250")),
+        rollback_expected=(("KP[2]", 0.0002),
+                           ("KI[2]", 30.0), ("KP[3]", 250.0)),
+        applied=authority.applied)
+    log_before = len(drive.log)
+
+    restored, restore_msg = vp.restore_gain_trial_vp(drive, trial)
+
+    assert not restored
+    assert "authority" in restore_msg.lower() and "integrity" in restore_msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any("=" in c or c == "SV" for c, _ in drive.log[log_before:])
+
+
+def test_adopt_gain_trial_same_drive_is_restore_only_and_restores():
+    old_link = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(old_link, _green_gain_result())
+    assert ok, msg
+    new_link = _IdentifiedVPSim("drive-A")
+    new_link.regs.update(trial.applied)
+
+    ok, msg = vp.adopt_gain_trial_vp_for_restore(new_link, trial)
+
+    assert ok, msg
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert trial.restore_only is True
+    assert trial.verification is None
+    committed, commit_msg = vp.commit_gain_trial_vp(new_link, trial)
+    assert not committed and "restore" in commit_msg.lower()
+    verified = vp.verify_gain_trial_vp(new_link, trial)
+    assert verified.status == RED and "restore" in verified.reason.lower()
+    assert not any(c == "MO=1" for c, _ in new_link.log)
+    restored, restore_msg = vp.restore_gain_trial_vp(new_link, trial)
+    assert restored, restore_msg
+    assert trial.persistence_state == "RESTORED"
+    assert _gain_snapshot(new_link) == pytest.approx(
+        trial.rollback_expected, rel=vp.APPLY_READBACK_RTOL)
+    assert not any(c == "SV" for c, _ in new_link.log)
+
+
+def test_adopt_gain_trial_same_drive_already_restored_never_rewrites():
+    old_link = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(old_link, _green_gain_result())
+    assert ok, msg
+    new_link = _IdentifiedVPSim("drive-A")
+    new_link.regs.update(trial.rollback_expected)
+    before_log = len(new_link.log)
+
+    ok, msg = vp.adopt_gain_trial_vp_for_restore(new_link, trial)
+
+    assert ok and "RESTORED" in msg
+    assert trial.persistence_state == "RESTORED"
+    assert trial.restore_only is True
+    assert not any("=" in c for c, _ in new_link.log[before_log:])
+
+
+@pytest.mark.parametrize("new_link", [
+    _IdentifiedVPSim("drive-B"),
+    VPSim(),
+], ids=["different-drive", "identity-unavailable"])
+def test_adopt_gain_trial_rejects_different_or_missing_identity_without_write(new_link):
+    old_link = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(old_link, _green_gain_result())
+    assert ok, msg
+    new_link.regs.update(trial.applied)
+    before = _gain_snapshot(new_link)
+
+    ok, msg = vp.adopt_gain_trial_vp_for_restore(new_link, trial)
+
+    assert not ok and ("identity" in msg.lower() or "식별" in msg)
+    assert _gain_snapshot(new_link) == before
+    assert not any(c == "SV" for c, _ in new_link.log)
+
+
+def test_adopt_gain_trial_rejects_unknown_even_on_same_drive():
+    old_link = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(old_link, _green_gain_result())
+    assert ok, msg
+    trial.persistence_state = "UNKNOWN"
+    new_link = _IdentifiedVPSim("drive-A")
+    new_link.regs.update(trial.applied)
+
+    ok, msg = vp.adopt_gain_trial_vp_for_restore(new_link, trial)
+
+    assert not ok and "UNKNOWN" in msg
+    assert trial.persistence_state == "UNKNOWN"
+    assert not any("=" in c for c, _ in new_link.log)
+
+
+@pytest.mark.parametrize("mo, corrupt_name, corrupt_value", [
+    (1, None, None),
+    (0, "KI[2]", math.nan),
+])
+def test_adopt_gain_trial_requires_motor_off_and_complete_finite_readback(
+        mo, corrupt_name, corrupt_value):
+    old_link = _IdentifiedVPSim("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(old_link, _green_gain_result())
+    assert ok, msg
+    new_link = _IdentifiedVPSim("drive-A", mo0=mo)
+    new_link.regs.update(trial.applied)
+    if corrupt_name is not None:
+        new_link.regs[corrupt_name] = corrupt_value
+
+    ok, msg = vp.adopt_gain_trial_vp_for_restore(new_link, trial)
+
+    assert not ok and "preflight" in msg
+    assert not any("=" in c for c, _ in new_link.log)
+
+
+def test_commit_gain_trial_vp_sv_timeout_after_apply_is_unknown(monkeypatch):
+    class SVAppliedThenTimeout(VPSim):
+        def __init__(self):
+            super().__init__()
+            self.sv_applied = False
+
+        def _query(self, name):
+            if name == "SV":
+                self.sv_applied = True
+                raise TimeoutError("reply lost after flash write")
+            return super()._query(name)
+
+    drive = SVAppliedThenTimeout()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    verified = vp.verify_gain_trial_vp(drive, trial)
+    assert verified.status == GREEN
+
+    ok, msg = vp.commit_gain_trial_vp(drive, trial, verified)
+
+    assert not ok and "UNKNOWN" in msg and "영구저장 여부" in msg
+    assert drive.sv_applied
+    assert trial.persistence_state == "UNKNOWN"
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    retry_ok, retry_msg = vp.commit_gain_trial_vp(drive, trial, verified)
+    assert not retry_ok and "UNKNOWN" in retry_msg
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+
+
+def test_sv_unknown_latch_blocks_other_trial_fresh_trial_and_raw_repeat(monkeypatch):
+    class SVAppliedThenTimeout(VPSim):
+        def __init__(self):
+            super().__init__()
+            self.sv_query_calls = 0
+
+        def _query(self, name):
+            if name == "SV":
+                self.sv_query_calls += 1
+                raise TimeoutError("reply lost after flash write")
+            return super()._query(name)
+
+    drive = SVAppliedThenTimeout()
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    ok, msg, first = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    assert vp.verify_gain_trial_vp(drive, first).status == GREEN
+    ok, msg, second = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    assert vp.verify_gain_trial_vp(drive, second).status == GREEN
+
+    saved, save_msg = vp.commit_gain_trial_vp(drive, first)
+    assert not saved and "UNKNOWN" in save_msg
+    assert drive.persistence_unknown_latched()
+    assert drive.sv_query_calls == 1
+
+    second_saved, second_msg = vp.commit_gain_trial_vp(drive, second)
+    assert not second_saved and "UNKNOWN" in second_msg
+    assert second.persistence_state == "RAM_TRIAL"
+    assert drive.sv_query_calls == 1
+
+    before_fresh = len(drive.log)
+    fresh_ok, fresh_msg, fresh_trial = vp.begin_gain_trial_vp(
+        drive, _green_gain_result())
+    assert not fresh_ok and fresh_trial is None and "UNKNOWN" in fresh_msg
+    assert not any("=" in c or c == "SV" for c, _ in drive.log[before_fresh:])
+
+    with pytest.raises(RuntimeError, match="UNKNOWN"):
+        drive.command("SV")
+    assert drive.sv_query_calls == 1
+
+
+def test_commit_gain_trial_vp_saves_once_after_full_readback(monkeypatch):
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+    verified = vp.verify_gain_trial_vp(drive, trial)
+    assert verified.status == GREEN
+
+    ok, msg = vp.commit_gain_trial_vp(drive, trial)
+
+    assert ok, msg
+    assert trial.persistence_state == "PERSISTED"
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+
+
+def test_commit_gain_trial_vp_journals_before_sv_and_closes_after_reply(
+        monkeypatch):
+    class JournalVPSim(VPSim):
+        def __init__(self):
+            super().__init__()
+            self.persistence_events = []
+
+        def prepare_persistence_attempt(self, **payload):
+            self.persistence_events.append(("prepare", payload))
+            return "p2-incident"
+
+        def complete_persistence_attempt(self, record_id):
+            self.persistence_events.append(("complete", record_id))
+
+        def mark_persistence_attempt_unknown(self, record_id, reason):
+            self.persistence_events.append(("unknown", record_id, reason))
+
+        def command(self, cmd, timeout_ms=1000, allow_motion=False,
+                    _persistence_attempt_id=None):
+            if cmd.strip().rstrip(";").upper() == "SV":
+                self.persistence_events.append(
+                    ("sv", _persistence_attempt_id))
+            return super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+
+    drive = JournalVPSim()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    monkeypatch.setattr(
+        vp, "verify_run_vp",
+        lambda link, params=None: AutotuneVPResult(status=GREEN))
+    assert vp.verify_gain_trial_vp(drive, trial).status == GREEN
+
+    saved, message = vp.commit_gain_trial_vp(drive, trial)
+
+    assert saved, message
+    assert [event[0] for event in drive.persistence_events] == [
+        "prepare", "sv", "complete"]
+    assert drive.persistence_events[1][1] == "p2-incident"
+    payload = drive.persistence_events[0][1]
+    assert payload["phase"] == "P2"
+    assert tuple(payload["registers"]) == vp.VP_GAIN_NAMES
+    assert set(payload["original"]) == set(vp.VP_GAIN_NAMES)
+    assert set(payload["applied"]) == set(vp.VP_GAIN_NAMES)
+
+
+def test_commit_gain_trial_vp_journal_preflight_failure_sends_no_sv(monkeypatch):
+    class JournalFailureVPSim(VPSim):
+        def prepare_persistence_attempt(self, **_payload):
+            raise OSError("ledger unavailable")
+
+        def complete_persistence_attempt(self, _record_id):
+            raise AssertionError("close-out must not run")
+
+        def mark_persistence_attempt_unknown(self, _record_id, _reason):
+            raise AssertionError("unknown annotation must not run")
+
+    drive = JournalFailureVPSim()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    monkeypatch.setattr(
+        vp, "verify_run_vp",
+        lambda link, params=None: AutotuneVPResult(status=GREEN))
+    assert vp.verify_gain_trial_vp(drive, trial).status == GREEN
+
+    saved, message = vp.commit_gain_trial_vp(drive, trial)
+
+    assert not saved and "preflight" in message
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any(command == "SV" for command, _ in drive.log)
+
+
+def test_verify_gain_trial_vp_non_green_restores_originals(monkeypatch):
+    drive = VPSim()
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=RED, reason="negative control"))
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == RED
+    assert verified.evidence["gain_trial_restore"]["pass"] is True
+    assert trial.persistence_state == "RESTORED"
+    assert _gain_snapshot(drive) == pytest.approx(
+        original, rel=vp.APPLY_READBACK_RTOL)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_verify_gain_trial_vp_green_keeps_trial_in_ram(monkeypatch):
+    drive = VPSim()
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+    monkeypatch.setattr(vp, "verify_run_vp", lambda link, params=None:
+                        AutotuneVPResult(status=GREEN))
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == GREEN
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert verified.evidence["gain_trial_restore"]["required"] is False
+    assert _gain_snapshot(drive) == pytest.approx(trial.applied)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_verify_gain_trial_vp_unknown_latch_blocks_motion_and_auto_restore(
+        monkeypatch):
+    drive = VPSim()
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    verifier_calls = []
+
+    def forbidden_verifier(link, params=None):
+        verifier_calls.append(True)
+        return AutotuneVPResult(status=GREEN)
+
+    monkeypatch.setattr(vp, "verify_run_vp", forbidden_verifier)
+    drive.latch_persistence_unknown()
+    log_before = list(drive.log)
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == RED and "UNKNOWN" in verified.reason
+    assert verifier_calls == []
+    assert drive.log == log_before
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert verified.evidence["gain_trial_restore"]["pass"] is None
+    assert "명시" in verified.evidence["gain_trial_restore"]["reason"]
+
+    restored, restore_msg = vp.restore_gain_trial_vp(drive, trial)
+    assert restored, restore_msg
+    assert trial.persistence_state == "RESTORED"
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+@pytest.mark.parametrize("pre_motion_event", ["session", "unknown_latch"])
+def test_verify_rechecks_session_and_unknown_latch_before_motion(
+        monkeypatch, pre_motion_event):
+    class ChangeAfterArmedGainRead(_IdentifiedVPSim):
+        def __init__(self, transaction_id):
+            super().__init__(transaction_id)
+            self.armed = False
+
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if self.armed and cmd.strip() == "KP[3]":
+                self.armed = False
+                if pre_motion_event == "session":
+                    self.rotate_transaction_session()
+                else:
+                    self.latch_persistence_unknown()
+            return response
+
+    drive = ChangeAfterArmedGainRead("drive-A")
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    verifier_calls = []
+    monkeypatch.setattr(
+        vp, "verify_run_vp",
+        lambda link, params=None: verifier_calls.append(True)
+        or AutotuneVPResult(status=GREEN))
+    drive.armed = True
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == RED
+    assert verifier_calls == []
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert trial.verification is None
+    if pre_motion_event == "session":
+        assert "session" in verified.reason.lower()
+    else:
+        assert "UNKNOWN" in verified.reason
+        assert verified.evidence["gain_trial_restore"]["pass"] is None
+
+
+def test_verify_rechecks_session_after_final_readback_before_green_token(
+        monkeypatch):
+    class RotateAfterSecondArmedGainRead(_IdentifiedVPSim):
+        def __init__(self, transaction_id):
+            super().__init__(transaction_id)
+            self.armed_gain_reads = 0
+
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if self.armed_gain_reads >= 0 and cmd.strip() == "KP[3]":
+                self.armed_gain_reads += 1
+                if self.armed_gain_reads == 2:
+                    self.rotate_transaction_session()
+            return response
+
+    drive = RotateAfterSecondArmedGainRead("drive-A")
+    # Do not count the begin snapshot; arm the two verify readbacks afterward.
+    drive.armed_gain_reads = -100
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+    assert ok, msg
+    drive.armed_gain_reads = 0
+    verifier_calls = []
+    monkeypatch.setattr(
+        vp, "verify_run_vp",
+        lambda link, params=None: verifier_calls.append(True)
+        or AutotuneVPResult(status=GREEN))
+
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verifier_calls == [True]
+    assert verified.status == RED
+    assert "session" in verified.reason.lower()
+    assert trial.verification is None
+    assert verified.gain_trial_verification is None
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_verify_gain_trial_vp_exception_is_red_and_restores(monkeypatch):
+    """Mutation tooth: even an unexpected verifier exception must flow through
+    the same non-GREEN rollback path instead of escaping with trial gains live."""
+    drive = VPSim(kp2=0.000153, ki2=20.0, kp3=180.0)
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, res)
+    assert ok, msg
+
+    def explode(_link, _params=None):
+        raise RuntimeError("mutation: verifier crashed")
+
+    monkeypatch.setattr(vp, "verify_run_vp", explode)
+    verified = vp.verify_gain_trial_vp(drive, trial)
+
+    assert verified.status == RED and "verifier crashed" in verified.reason
+    assert verified.evidence["gain_trial_restore"]["pass"] is True
+    assert _gain_snapshot(drive) == pytest.approx(original)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
 def test_apply_gains_vp_writes_when_motor_off(tmp_path):
     drive = VPSim()
     res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5, ki_vel_hz=10.7,
@@ -1896,6 +3144,21 @@ def test_apply_gains_vp_writes_when_motor_off(tmp_path):
     assert not any(c == "SV" for c, _ in drive.log)
 
 
+def test_apply_gains_vp_bare_persist_is_refused_before_any_write():
+    drive = VPSim()
+    original = _gain_snapshot(drive)
+    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
+                           ki_vel_hz=10.7, kp_pos=85.2114)
+
+    ok, msg = apply_gains_vp(drive, res, persist=True)
+
+    assert not ok and "직접 저장 거부" in msg and "SV 미실행" in msg
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
 def test_apply_gains_vp_incident_silent_zero_blocked():
     """LIVE INCIDENT REPLAY (2026-07-14): drive silently stores 0 for
     KP[2]=0.000166142303, answers no error -> apply must FAIL with the
@@ -1905,45 +3168,216 @@ def test_apply_gains_vp_incident_silent_zero_blocked():
     drive.write_silent_store = {"KP[2]": 0.0}
     res = AutotuneVPResult(status=GREEN, kp_vel=0.000166142303,
                            ki_vel_hz=10.7, kp_pos=85.2114)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
+    ok, msg = apply_gains_vp(drive, res)
     assert not ok, msg
     assert "KP[2]" in msg and "0.000166142" in msg and "SV 미실행" in msg
     assert "0/음수" in msg                            # the exact fingerprint
+    assert "자동 복원 실패" in msg                    # persistent fault is explicit
     assert not any(c == "SV" for c, _ in drive.log)   # NEVER persisted
-    assert drive.regs["KP[2]"] == 0.0                 # RAM state told honestly
+    assert drive.regs["KP[2]"] == 0.0                 # restore also refused; told honestly
 
 
 def test_apply_gains_vp_ki_truncation_blocked():
     """A later parameter (KI[2]) silently truncated to a nonzero wrong value:
-    caught by the 0.1% readback comparison; SV suppressed; message notes the
-    already-applied KP[2]."""
+    caught by the 0.1% readback comparison; SV suppressed; rollback restores
+    every writable original and reports the persistently refusing KI[2]."""
     drive = VPSim()
+    original = _gain_snapshot(drive)
     drive.write_silent_store = {"KI[2]": 10.0}        # 10.7 -> 10.0 (-6.5%)
     res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
                            ki_vel_hz=10.7, kp_pos=85.2114)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
+    ok, msg = apply_gains_vp(drive, res)
     assert not ok, msg
     assert "KI[2]" in msg and "불일치" in msg and "SV 미실행" in msg
     assert "10.7" in msg and "10" in msg              # request vs readback
-    assert "KP[2]" in msg                             # partial-apply visibility
+    assert "자동 복원 실패" in msg                    # rollback could not fix KI
     assert not any(c == "SV" for c, _ in drive.log)
-    assert drive.regs["KP[2]"] == pytest.approx(8.0e-5)   # already in RAM
-    assert drive.regs["KP[3]"] == pytest.approx(85.2)     # untouched default
+    assert drive.regs["KP[2]"] == pytest.approx(
+        original["KP[2]"], rel=vp.APPLY_READBACK_RTOL)
+    assert drive.regs["KI[2]"] == pytest.approx(10.0)     # persistent refusal
+    assert drive.regs["KP[3]"] == pytest.approx(original["KP[3]"])
 
 
-def test_apply_gains_vp_verified_persist_single_sv():
-    """Healthy path: all three readbacks verify -> success message carries
-    the readbacks, SV exactly once."""
+def test_apply_gains_vp_verified_persist_is_always_refused_without_callback_or_write():
+    """Compatibility API cannot preserve an UNKNOWN handle, so it never persists."""
     drive = VPSim()
-    res = AutotuneVPResult(status=GREEN, kp_vel=8.0e-5,
-                           ki_vel_hz=10.7, kp_pos=85.2114)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
-    assert ok, msg
-    assert "되읽기" in msg and "SV" in msg
-    assert sum(1 for c, _ in drive.log if c == "SV") == 1
-    assert drive.regs["KP[2]"] == pytest.approx(8.0e-5)
-    assert drive.regs["KI[2]"] == pytest.approx(10.7)
-    assert drive.regs["KP[3]"] == pytest.approx(85.2114)
+    original = _gain_snapshot(drive)
+    callbacks = []
+
+    def forbidden_callback(_link, _trial):
+        callbacks.append(True)
+        return AutotuneVPResult(status=GREEN)
+
+    for _ in range(2):
+        ok, msg = apply_gains_vp(
+            drive, _green_gain_result(), persist=True,
+            verified_flow=forbidden_callback)
+        assert not ok and "직접 저장 거부" in msg and "SV 미실행" in msg
+
+    assert callbacks == []
+    assert _gain_snapshot(drive) == original
+    assert not any(c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))
+                   for c, _ in drive.log)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_elmo_transaction_identity_is_stable_opaque_and_unavailable_safe(monkeypatch):
+    from elmo_link import ElmoLink
+
+    first, second, missing = ElmoLink("SIM1"), ElmoLink("SIM2"), ElmoLink("SIM3")
+    monkeypatch.setattr(first, "command", lambda cmd: "  AbC   000123; ")
+    monkeypatch.setattr(second, "command", lambda cmd: "abc 000123")
+    monkeypatch.setattr(missing, "command", lambda cmd: (_ for _ in ()).throw(
+        IOError("identity unavailable")))
+
+    identity_a = first.transaction_identity()
+    identity_b = second.transaction_identity()
+
+    assert identity_a == identity_b
+    assert identity_a.startswith("elmo-sn4-sha256:")
+    assert "000123" not in identity_a
+    assert missing.transaction_identity() is None
+
+    leading_zero = ElmoLink("SIM4")
+    numeric = ElmoLink("SIM5")
+    monkeypatch.setattr(leading_zero, "command", lambda cmd: "000123")
+    monkeypatch.setattr(numeric, "command", lambda cmd: "123")
+    assert leading_zero.transaction_identity() != numeric.transaction_identity()
+
+
+def test_elmo_unprepared_sv_is_blocked_across_disconnect_and_reconnect(
+        monkeypatch):
+    from elmo_link import ElmoLink
+
+    class FakeComm:
+        def __init__(self, fail_sv):
+            self.fail_sv = fail_sv
+            self.IsConnected = False
+            self.send_calls = 0
+
+        def Connect(self):
+            self.IsConnected = True
+            return True, None
+
+        def Disconnect(self):
+            self.IsConnected = False
+
+        def SendCommandAnalyzeError(self, cmd, response, error, timeout_ms):
+            self.send_calls += 1
+            if self.fail_sv and cmd.strip().upper() == "SV":
+                return False, "", "reply lost"
+            return True, "", None
+
+    first_comm, second_comm = FakeComm(True), FakeComm(False)
+    comms = [first_comm, second_comm]
+
+    class FakeFactory:
+        def CreateUSBCommunicationInfo(self, port):
+            return port
+
+        def CreateCommunication(self, info):
+            return comms.pop(0)
+
+    factory = FakeFactory()
+
+    class FakeEAS:
+        DriveCommunicationFactory = staticmethod(lambda: factory)
+
+    link = ElmoLink("SIM")
+    monkeypatch.setattr(link, "_ns", lambda: FakeEAS)
+    link.connect()
+    first_session = link.transaction_session_identity()
+
+    with pytest.raises(RuntimeError, match="prepared persistence"):
+        link.command("SV")
+    assert first_comm.send_calls == 0
+    assert not link.persistence_unknown_latched()
+
+    link.disconnect()
+    link.connect()
+    assert link.transaction_session_identity() is not first_session
+    assert not link.persistence_unknown_latched()
+    assert second_comm.send_calls == 0
+
+    # Read-only diagnostics and exact de-energizing remain available, but a
+    # clear link still cannot issue a bare SV without a durable transaction.
+    link.command("MO")
+    link.command("MO=0")
+    allowed_calls = second_comm.send_calls
+    with pytest.raises(RuntimeError, match="prepared persistence"):
+        link.command("SV")
+    assert second_comm.send_calls == allowed_calls
+    with pytest.raises(ValueError, match="control/newline"):
+        link.command("SV\n")
+    assert second_comm.send_calls == allowed_calls
+
+
+class _ElmoCommandProbeComm:
+    IsConnected = True
+
+    def __init__(self):
+        self.commands = []
+
+    def SendCommandAnalyzeError(self, cmd, response, error, timeout_ms):
+        self.commands.append(cmd)
+        return True, "", None
+
+
+def _elmo_command_probe_link():
+    from elmo_link import ElmoLink
+    link = ElmoLink("SIM")
+    comm = _ElmoCommandProbeComm()
+    link._comm = comm
+    return link, comm
+
+
+@pytest.mark.parametrize("command", [
+    "MO=+1", "MO=01", "MO=1.0", "MO=1e0", "MO=2", "MO=-1",
+    "MO=0.0001", "MO=nan", "MO=inf", "MO=garbage", "MO=",
+])
+def test_elmo_mo_nonzero_or_unparseable_is_fail_closed_motion(command):
+    link, comm = _elmo_command_probe_link()
+
+    with pytest.raises(PermissionError):
+        link.command(command, allow_motion=False)
+    assert comm.commands == []
+
+    link.latch_persistence_unknown()
+    with pytest.raises(RuntimeError, match="UNKNOWN"):
+        link.command(command, allow_motion=True)
+    assert comm.commands == []
+
+
+@pytest.mark.parametrize("command", [
+    "MO=0", "MO=+0", "MO=-0", "MO=0.0", "MO=0e10", "MO=0;",
+])
+def test_elmo_mo_numeric_zero_disable_is_allowed_while_latched(command):
+    link, comm = _elmo_command_probe_link()
+    link.latch_persistence_unknown()
+
+    link.command(command, allow_motion=False)
+
+    assert comm.commands == [command]
+
+
+@pytest.mark.parametrize("command", [
+    "MO=0;MO=1", "PX;MO=1", "MO=0\nMO=1", "PX\r\nMO=1", "SV;;",
+])
+def test_elmo_rejects_multi_command_separators_before_vendor_io(command):
+    link, comm = _elmo_command_probe_link()
+
+    with pytest.raises((ValueError, PermissionError)):
+        link.command(command, allow_motion=True)
+
+    assert comm.commands == []
+
+
+def test_elmo_preserves_one_normal_trailing_semicolon_on_vendor_io():
+    link, comm = _elmo_command_probe_link()
+
+    link.command("PX;")
+
+    assert comm.commands == ["PX;"]
 
 
 def test_apply_gains_vp_wire_format_kp2_six_decimals():
@@ -1954,11 +3388,11 @@ def test_apply_gains_vp_wire_format_kp2_six_decimals():
     drive = VPSim()
     res = AutotuneVPResult(status=GREEN, kp_vel=1.66142303e-4,
                            ki_vel_hz=10.6999833, kp_pos=85.2113988)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
+    ok, msg = apply_gains_vp(drive, res)
     assert ok, msg
     writes = [c for c, _ in drive.log if c.startswith("KP[2]=")]
     assert writes == ["KP[2]=0.000166"], writes
-    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    assert not any(c == "SV" for c, _ in drive.log)
     assert drive.regs["KP[2]"] == pytest.approx(0.000166)
 
 
@@ -1968,7 +3402,7 @@ def test_apply_gains_vp_all_wire_literals_drive_safe():
     drive = VPSim()
     res = AutotuneVPResult(status=GREEN, kp_vel=1.66142303e-4,
                            ki_vel_hz=10.6999833, kp_pos=85.2113988)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
+    ok, msg = apply_gains_vp(drive, res)
     assert ok, msg
     gw = [c for c, _ in drive.log
           if c.startswith(("KP[2]=", "KI[2]=", "KP[3]="))]
@@ -1988,7 +3422,7 @@ def test_apply_gains_vp_vanishing_gain_refused_before_send():
     drive = VPSim()
     res = AutotuneVPResult(status=GREEN, kp_vel=1e-8,
                            ki_vel_hz=10.7, kp_pos=85.2)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
+    ok, msg = apply_gains_vp(drive, res)
     assert not ok, msg
     assert "소멸" in msg and "SV 미실행" in msg and "KP[2]" in msg
     assert not any(c.startswith("KP[2]=") for c, _ in drive.log)
@@ -2001,7 +3435,7 @@ def test_apply_gains_vp_excess_rounding_loss_refused():
     drive = VPSim()
     res = AutotuneVPResult(status=GREEN, kp_vel=1.7e-6,   # ->0.000002 = +17.6%
                            ki_vel_hz=10.7, kp_pos=85.2)
-    ok, msg = apply_gains_vp(drive, res, persist=True)
+    ok, msg = apply_gains_vp(drive, res)
     assert not ok, msg
     assert "반올림 오차" in msg and "SV 미실행" in msg
     assert not any(c.startswith("KP[2]=") for c, _ in drive.log)
@@ -2199,6 +3633,17 @@ def test_verify_refuses_motor_on(tmp_path):
     res = verify_run_vp(drive, _params(drive, tmp_path))
     assert res.status == RED and "MO=1" in res.reason
     assert not any(c.startswith("JV") for c, _ in drive.log)
+
+
+def test_verify_requires_finite_positive_ca18_before_write(tmp_path):
+    drive = VPSim()
+    drive.regs["CA[18]"] = 0
+
+    res = verify_run_vp(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "CA[18]" in res.reason
+    assert not any("=" in command for command, _allow_motion in drive.log)
 
 
 def test_verify_rejects_speed_at_guard(tmp_path):

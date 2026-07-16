@@ -1,0 +1,324 @@
+"""Shared, side-effect-free operation classification for AngryYJH Control.
+
+The catalog is deliberately pure data.  Importing it cannot open a serial port,
+construct a worker, or issue a drive command.  UI code uses the same operation
+IDs for labels/tooltips that safety tests use for boundary assertions.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+from enum import Enum
+from types import MappingProxyType
+
+
+class OperationRisk(str, Enum):
+    LOCAL_UI = "local_ui"
+    LOCAL_FILE = "local_file"
+    DRIVE_READ = "drive_read"
+    DRIVE_STATE = "drive_state"
+    RAM_WRITE = "ram_write"
+    ENERGIZING = "energizing"
+    MOTION = "motion"
+    PERSISTENT_WRITE = "persistent_write"
+    SAFETY_STOP = "safety_stop"
+    NEED_DATA = "need_data"
+
+
+class OperationStatus(str, Enum):
+    IMPLEMENTED = "implemented"
+    PARTIAL = "partial"
+    NEED_DATA = "need_data"
+
+
+@dataclass(frozen=True)
+class OperationSpec:
+    operation_id: str
+    label: str
+    risk: OperationRisk
+    summary: str
+    gates: frozenset[str] = frozenset()
+    status: OperationStatus = OperationStatus.IMPLEMENTED
+    menu_enabled: bool = False
+
+
+_IDENTITY_FRESH = frozenset(("verified_identity", "fresh_telemetry"))
+_STATUS_MONITOR_POLL = _IDENTITY_FRESH | frozenset((
+    "bounded_read_allowlist", "poll_ownership", "poll_rate_limit"))
+_SCOPED_MUTATION = _IDENTITY_FRESH | frozenset((
+    "explicit_scope", "motor_disabled", "exact_readback"))
+_ENERGY = _IDENTITY_FRESH | frozenset((
+    "explicit_scope", "motor_disabled", "current_limit",
+    "verified_closeout"))
+_MOTION = _ENERGY | frozenset(("site_motion_envelope",))
+_PERSIST = _SCOPED_MUTATION | frozenset(("durable_authority",))
+
+
+def _spec(operation_id, label, risk, summary, *, gates=(),
+          status=OperationStatus.IMPLEMENTED, menu_enabled=False):
+    return OperationSpec(
+        operation_id=operation_id,
+        label=label,
+        risk=risk,
+        summary=summary,
+        gates=frozenset(gates),
+        status=status,
+        menu_enabled=bool(menu_enabled),
+    )
+
+
+_SPECS = (
+    # Always-safe application navigation.  These actions select a page only;
+    # the controls inside each page retain their independent hardware gates.
+    _spec("nav.motion", "Single Axis Motion", OperationRisk.LOCAL_UI,
+          "Open the single-axis status and finite-motion page.",
+          menu_enabled=True),
+    _spec("nav.motor", "Motor Settings", OperationRisk.LOCAL_UI,
+          "Open motor parameters; opening the page performs no drive write.",
+          menu_enabled=True),
+    _spec("nav.feedback", "Feedback Settings", OperationRisk.LOCAL_UI,
+          "Open feedback inspection and encoder-maintenance controls.",
+          menu_enabled=True),
+    _spec("nav.tuning.quick", "Quick Tuning · Guided", OperationRisk.LOCAL_UI,
+          "Open the guided identification/design view; Run still has an energizing gate.",
+          menu_enabled=True),
+    _spec("nav.tuning.expert", "Expert Tuning · Apply / Verify / Save",
+          OperationRisk.LOCAL_UI,
+          "Open RAM trial, verification, restore and SV controls.",
+          menu_enabled=True),
+    _spec("nav.axis", "Axis Summary · Read only", OperationRisk.LOCAL_UI,
+          "Open the raw, read-only axis summary.", menu_enabled=True),
+    _spec("nav.recorder", "Recorder", OperationRisk.LOCAL_UI,
+          "Open Recorder configuration and View Design.", menu_enabled=True),
+    _spec("nav.session_log", "Status / Session Log · HOST OBSERVED v0.1",
+          OperationRisk.LOCAL_UI,
+          "Open the bounded host-side event viewer; opening it issues no drive query.",
+          status=OperationStatus.PARTIAL, menu_enabled=True),
+    _spec("nav.system_config", "System Configuration · Inspector v0.1",
+          OperationRisk.LOCAL_UI,
+          "Project already-admitted single-target state; opening it issues no drive query.",
+          status=OperationStatus.PARTIAL, menu_enabled=True),
+    _spec("ui.capability_guide", "Capability & risk guide",
+          OperationRisk.LOCAL_UI,
+          "Explain LOCAL, READ, RAM, ENERGY, MOTION and SV boundaries.",
+          menu_enabled=True),
+    _spec("ui.tool_organizer", "Tool Organizer · LOCAL v0.1",
+          OperationRisk.LOCAL_UI,
+          "Customize visibility and order of existing application pages; no worker or drive query.",
+          status=OperationStatus.PARTIAL, menu_enabled=True),
+    _spec("ui.status_monitor", "Status Monitor · HOST OBSERVED v0.1",
+          OperationRisk.LOCAL_UI,
+          "Open a modeless view of already-admitted PX/VX/PE/IQ/MO telemetry; "
+          "no new drive polling or query.",
+          status=OperationStatus.PARTIAL, menu_enabled=True),
+
+    # Local Recorder files are intentionally not advertised as EAS-compatible.
+    _spec("recorder.workspace.open", "Open Recorder Setup… · LOCAL JSON",
+          OperationRisk.LOCAL_FILE,
+          "Open this application's versioned Recorder JSON.", menu_enabled=True),
+    _spec("recorder.workspace.save", "Save Recorder Setup · LOCAL JSON",
+          OperationRisk.LOCAL_FILE,
+          "Save this application's versioned Recorder JSON.", menu_enabled=True),
+    _spec("recorder.workspace.save_as", "Save Recorder Setup As… · LOCAL JSON",
+          OperationRisk.LOCAL_FILE,
+          "Save a copy in this application's local JSON format.",
+          menu_enabled=True),
+    _spec("session_log.export_json", "Export Session Log… · LOCAL JSON",
+          OperationRisk.LOCAL_FILE,
+          "Atomically export one frozen, redacted host-observed event snapshot.",
+          status=OperationStatus.PARTIAL, menu_enabled=True),
+    _spec("session_log.export_csv", "Export Session Log… · LOCAL CSV",
+          OperationRisk.LOCAL_FILE,
+          "Atomically export the same bounded host-observed event model as CSV.",
+          status=OperationStatus.PARTIAL, menu_enabled=True),
+
+    # Visible placeholders keep EAS parity gaps explicit instead of guessing.
+    _spec("eas.native_files", "EAS native setup import/export · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "The EAS native file schema and atomic recovery contract are unknown.",
+          status=OperationStatus.NEED_DATA),
+    _spec("eas.tool_organizer.native_persistence",
+          "EAS-native Tool Organizer persistence · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "The EAS Tool Organizer storage path, schema and recovery contract are unknown.",
+          status=OperationStatus.NEED_DATA),
+    _spec("eas.status_monitor.live_polling",
+          "Full EAS Status Monitor polling · NEED-DATA",
+          OperationRisk.DRIVE_READ,
+          "True EAS 0.5 s polling, arbitrary signals/arrays, multi-target "
+          "selection, user units, gauge and Quick Watch remain unimplemented.",
+          gates=_STATUS_MONITOR_POLL, status=OperationStatus.NEED_DATA),
+    _spec("eas.status_monitor.native_config",
+          "EAS Status Monitor .smc import/export · NEED-DATA",
+          OperationRisk.LOCAL_FILE,
+          "The native schema and recovery contract are unknown; installed "
+          "help conflicts on .smc/.sac for Append.",
+          status=OperationStatus.NEED_DATA),
+    _spec("eas.multiaxis", "Motion – Multiple Axes · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "Clocking, partial failure and coordinated stop contracts are missing.",
+          status=OperationStatus.NEED_DATA),
+    _spec("eas.floating_terminal", "Floating Terminal · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "An unrestricted command terminal would bypass the command allowlist.",
+          status=OperationStatus.NEED_DATA),
+    _spec("eas.fault_log", "Full EAS Fault/Ack/Clear Manager · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "Drive history, fault taxonomy, acknowledge/clear and recovery semantics are incomplete.",
+          status=OperationStatus.NEED_DATA),
+    _spec("eas.system_config.manage",
+          "System Configuration Add/Remove/Edit · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "Drive/device/group/I/O/virtual-axis side effects and rollback are not frozen.",
+          status=OperationStatus.NEED_DATA),
+
+    # Hardware-bound controls.  The emergency STOP is intentionally special:
+    # it must remain callable when telemetry is stale, so it does not require
+    # the ordinary fresh-telemetry admission gate.
+    _spec("drive.stop", "DRIVE STOP · ST → MO=0",
+          OperationRisk.SAFETY_STOP,
+          "Software stop/disable with terminal readback; not independent STO.",
+          gates=("connected_transport", "terminal_readback")),
+    _spec("axis.refresh", "Refresh Axis Summary",
+          OperationRisk.DRIVE_READ,
+          "Query the current drive identity-bound axis configuration.",
+          gates=_IDENTITY_FRESH),
+    _spec("session.zero", "Set Session Zero · PX=0",
+          OperationRisk.RAM_WRITE,
+          "Write only the volatile session coordinate and verify PX readback.",
+          gates=_SCOPED_MUTATION | frozenset(("coordinate_authority",))),
+    _spec("motor.enable", "Enable motor", OperationRisk.ENERGIZING,
+          "Enable the power stage without starting a motion profile.", gates=_ENERGY),
+    _spec("motor.save", "Save Motor Profile · SV",
+          OperationRisk.PERSISTENT_WRITE,
+          "Persist the verified full motor profile once.", gates=_PERSIST),
+    _spec("feedback.encoder_maintenance", "Encoder Maintenance",
+          OperationRisk.PERSISTENT_WRITE,
+          "Change the encoder datum through the documented maintenance command.",
+          gates=_PERSIST | frozenset(("encoder_reconnect_latch",))),
+    _spec("tuning.p1.run", "Run Phase 1 · Current",
+          OperationRisk.ENERGIZING,
+          "Inject bounded current for R/L identification and current-loop design.",
+          gates=_ENERGY),
+    _spec("tuning.signature.run", "Run Commutation Signature",
+          OperationRisk.ENERGIZING,
+          "Inject bounded current to identify the commutation signature.",
+          gates=_ENERGY),
+    _spec("tuning.p2.run", "Run Phase 2 · Velocity / Position",
+          OperationRisk.MOTION,
+          "Move the rotor for plant identification and loop design.", gates=_MOTION),
+    _spec("tuning.p2.verify", "Verify P2 on Motor",
+          OperationRisk.MOTION,
+          "Run the bounded 300/900 rpm motor verification ladder.",
+          gates=_MOTION | frozenset(("trial_capability",))),
+    _spec("tuning.p1.apply", "Apply P1 → RAM", OperationRisk.RAM_WRITE,
+          "Apply current-loop gains as a volatile, restorable trial.",
+          gates=_SCOPED_MUTATION | frozenset(("trial_capability",))),
+    _spec("tuning.p1.restore", "Restore P1 → Original", OperationRisk.RAM_WRITE,
+          "Restore the frozen current-loop rollback set and verify it.",
+          gates=_SCOPED_MUTATION | frozenset(("trial_capability",))),
+    _spec("tuning.p1.save", "Save P1 → SV",
+          OperationRisk.PERSISTENT_WRITE,
+          "Persist a verified current-loop trial once.",
+          gates=_PERSIST | frozenset(("trial_capability",))),
+    _spec("tuning.p2.apply", "Apply P2 → RAM", OperationRisk.RAM_WRITE,
+          "Apply velocity/position gains as a volatile, restorable trial.",
+          gates=_SCOPED_MUTATION | frozenset(("trial_capability",))),
+    _spec("tuning.p2.restore", "Restore P2 → Original", OperationRisk.RAM_WRITE,
+          "Restore the frozen velocity/position rollback set and verify it.",
+          gates=_SCOPED_MUTATION | frozenset(("trial_capability",))),
+    _spec("tuning.p2.save", "Save P2 → SV",
+          OperationRisk.PERSISTENT_WRITE,
+          "Persist one exact, independently verified P2 trial.",
+          gates=_PERSIST | frozenset(("trial_capability",))),
+    _spec("motion.ptp.run", "Run finite PTP move", OperationRisk.MOTION,
+          "Run one bounded finite position move and always close out disabled.",
+          gates=_MOTION),
+    _spec("recorder.immediate", "Recorder Immediate",
+          OperationRisk.DRIVE_STATE,
+          "Configure and arm one finite Immediate recorder capture.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "explicit_scope", "motor_disabled", "terminal_readback"))),
+    _spec("recorder.upload", "Upload Recorder Buffer",
+          OperationRisk.DRIVE_STATE,
+          "Transfer the exact completed recorder buffer to the host.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "explicit_scope", "motor_disabled", "terminal_readback"))),
+    _spec("recorder.stop", "Recorder Stop",
+          OperationRisk.DRIVE_STATE,
+          "Stop recorder ownership only; this does not stop the motor.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "explicit_scope", "motor_disabled", "terminal_readback"))),
+)
+
+
+OPERATIONS = MappingProxyType({spec.operation_id: spec for spec in _SPECS})
+if len(OPERATIONS) != len(_SPECS):
+    raise RuntimeError("duplicate operation id in operation catalog")
+
+
+# SAFETY_STOP changes the drive, but is deliberately excluded because stale
+# telemetry must never suppress the emergency stop path.
+DRIVE_MUTATING_RISKS = frozenset((
+    OperationRisk.DRIVE_STATE,
+    OperationRisk.RAM_WRITE,
+    OperationRisk.ENERGIZING,
+    OperationRisk.MOTION,
+    OperationRisk.PERSISTENT_WRITE,
+))
+
+
+TOP_MENU_OPERATIONS = MappingProxyType({
+    "File": (
+        "ui.tool_organizer",
+        "recorder.workspace.open", "recorder.workspace.save",
+        "recorder.workspace.save_as", "session_log.export_json",
+        "session_log.export_csv", "eas.native_files",
+        "eas.status_monitor.native_config",
+        "eas.tool_organizer.native_persistence"),
+    "Parameters": (
+        "nav.tuning.quick", "nav.tuning.expert", "nav.motor",
+        "nav.feedback", "nav.axis"),
+    "Tools": (
+        "nav.system_config", "nav.motion", "nav.recorder", "nav.session_log",
+        "eas.system_config.manage", "eas.multiaxis"),
+    "Views": (
+        "nav.system_config", "nav.motion", "nav.motor", "nav.feedback",
+        "nav.tuning.quick", "nav.axis", "nav.recorder", "nav.session_log"),
+    "Floating Tools": (
+        "ui.status_monitor", "ui.capability_guide", "nav.session_log",
+        "eas.status_monitor.live_polling",
+        "eas.floating_terminal", "eas.fault_log"),
+})
+
+
+_RISK_BADGES = MappingProxyType({
+    OperationRisk.LOCAL_UI: "LOCAL UI",
+    OperationRisk.LOCAL_FILE: "LOCAL FILE",
+    OperationRisk.DRIVE_READ: "DRIVE READ",
+    OperationRisk.DRIVE_STATE: "DRIVE STATE",
+    OperationRisk.RAM_WRITE: "RAM WRITE",
+    OperationRisk.ENERGIZING: "ENERGIZES",
+    OperationRisk.MOTION: "MOTION",
+    OperationRisk.PERSISTENT_WRITE: "PERSIST / SV",
+    OperationRisk.SAFETY_STOP: "SAFETY STOP",
+    OperationRisk.NEED_DATA: "NEED-DATA",
+})
+
+
+def operation_spec(operation_id: str) -> OperationSpec:
+    try:
+        return OPERATIONS[str(operation_id)]
+    except KeyError as exc:
+        raise KeyError("unknown operation id %r" % operation_id) from exc
+
+
+def risk_badge(operation_id: str) -> str:
+    return _RISK_BADGES[operation_spec(operation_id).risk]
+
+
+def operation_tooltip(operation_id: str) -> str:
+    spec = operation_spec(operation_id)
+    gates = ", ".join(sorted(spec.gates)) if spec.gates else "none"
+    return "[%s] %s\nGates: %s" % (
+        _RISK_BADGES[spec.risk], spec.summary, gates)

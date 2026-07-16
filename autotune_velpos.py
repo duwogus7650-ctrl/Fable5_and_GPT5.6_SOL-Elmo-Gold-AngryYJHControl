@@ -68,12 +68,17 @@ import os
 import re
 import time
 from dataclasses import dataclass, field, replace as _dc_replace
+from types import MappingProxyType
 from typing import Callable, Optional, Sequence
 
 import numpy as np
 
-__all__ = ["AutotuneVPParams", "AutotuneVPResult", "run_velpos_autotune",
-           "apply_gains_vp", "verify_run_vp", "vel_pos_margins",
+__all__ = ["AutotuneVPParams", "AutotuneVPResult", "GainTrialVP",
+           "GainVerificationVP",
+           "run_velpos_autotune", "begin_gain_trial_vp",
+           "adopt_gain_trial_vp_for_restore", "restore_gain_trial_vp",
+           "commit_gain_trial_vp",
+           "verify_gain_trial_vp", "apply_gains_vp", "verify_run_vp", "vel_pos_margins",
            "design_vp_gains", "window_slope", "GREEN", "YELLOW", "RED"]
 
 GREEN, YELLOW, RED = "GREEN", "YELLOW", "RED"
@@ -143,6 +148,7 @@ PULSE_CUT_POLL_S = 0.01   # VX-only cut poll during main pulses (10 ms: worst
 # at 0.2*CL=4.24 A -> i_ba>4.24 A confirmed; cap raised to 0.4*CL=8.49 A for
 # THIS unit via params.ramp_frac=0.4; the DEFAULT stays 0.2 for bare motors) --
 RAMP_FRAC_ABS_MAX = 0.4   # automatic ramp/pulse current ceiling [frac of CL[1]]
+SIGNATURE_CAP_ABS_MAX_A = 1.30  # standalone signature absolute current cap [A]
 RAMP_FRAC_OPERATOR_ONLY = 0.6   # NEVER automatic — operator-approved sessions
                           # may edit this constant deliberately (자동 램프 금지)
 RAMP_FAST_POLL_ABOVE_A = 2.0    # above this TC: VX-only polls at 10 ms (the
@@ -281,6 +287,12 @@ class AutotuneVPParams:
     detect_dpx: float = 400.0           # |dPX| threshold [cnt] (> compliance windup)
     detect_vx: float = 3000.0           # |VX| threshold [cnt/s] (> velocity noise)
     breakaway_k: float = 1.5            # probe = clip(k*i_ba, probe_i_a, cap)
+    # Standalone commutation-signature gate.  It ends after the bounded +TC
+    # breakaway/direction observation and never enters Phase-2 motion.
+    signature_only: bool = False
+    signature_cap_a: float = SIGNATURE_CAP_ABS_MAX_A
+    signature_i_min_a: float = 0.50
+    signature_i_max_a: float = SIGNATURE_CAP_ABS_MAX_A
     # --- HOLD-CONFIRM (fable-physics 2026-07-13: live i_ba=1.01 A was a
     # BACKLASH TRAVERSAL false positive — free-play flight, total 4166 cnt =
     # 0.76 deg output; the true load breakaway is >1.52 A).  Physics
@@ -357,6 +369,10 @@ class AutotuneVPResult:
     ts_us: Optional[int] = None
     evidence: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
+    # Set only by verify_gain_trial_vp after a GREEN run and final gain
+    # readback.  It is an in-process capability, not persisted evidence.
+    gain_trial_verification: Optional[object] = field(
+        default=None, repr=False, compare=False)
 
 
 class PreflightError(Exception):
@@ -544,6 +560,7 @@ def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
 
 
 def _write(ctx: _Ctx, cmd: str, value, allow_motion: bool = False):
+    _check_cancel_before_mutation(ctx)
     ctx.dirty.append(cmd)
     return _cmd(ctx, "%s=%s" % (cmd, _fmt(value)), allow_motion=allow_motion)
 
@@ -571,6 +588,21 @@ def _check_cancel(ctx: _Ctx):
         return
     if want:
         raise AbortError("작업자 중단 요청")
+
+
+def _check_cancel_before_mutation(ctx: _Ctx):
+    """Poll cancel at a drive-mutation boundary.
+
+    A cancel before the first attempted write is a read-only preflight RED;
+    after any attempted write it remains AbortError so the established
+    segment-specific safe-abort and restore chain runs unchanged.
+    """
+    try:
+        _check_cancel(ctx)
+    except AbortError as exc:
+        if ctx.dirty:
+            raise
+        raise PreflightError(str(exc)) from None
 
 
 def _guard(ctx: _Ctx):
@@ -878,6 +910,63 @@ def _do_abort(ctx: _Ctx, reason: str):
                              "steps_done": steps}
 
 
+def _capture_signature_final_state(ctx: _Ctx) -> bool:
+    """Read back the safety-critical terminal state for any live signature exit.
+
+    The commutation verdict and shutdown verdict are independent: a failed
+    signature can still have a verified safe exit, while a passing signature
+    must never become GREEN without this proof.
+    """
+    read_errors = []
+    try:
+        mo_final = _cmd(ctx, "MO", retries=0)
+    except Exception as e:
+        mo_final = None
+        read_errors.append("MO: %s" % e)
+    try:
+        tc_final = _cmd(ctx, "TC", allow_motion=True, retries=0)
+    except Exception as e:
+        tc_final = None
+        read_errors.append("TC: %s" % e)
+
+    limit_mismatch = {}
+    dirty = set(ctx.dirty)
+    for name, _temporary in LIMIT_WRITES:
+        if name not in dirty or name not in ctx.snapshot:
+            continue
+        try:
+            actual = _cmd(ctx, name, retries=0)
+            expected = ctx.snapshot[name]
+            if (not isinstance(actual, (int, float))
+                    or not isinstance(expected, (int, float))
+                    or abs(actual - expected) > abs(expected) * 1e-6 + 1e-9):
+                limit_mismatch[name] = {"actual": actual,
+                                        "expected": expected}
+        except Exception as e:
+            limit_mismatch[name] = {"actual": None,
+                                    "expected": ctx.snapshot[name],
+                                    "error": str(e)}
+
+    final_ok = (mo_final == 0
+                and isinstance(tc_final, (int, float))
+                and abs(tc_final) <= 1e-9
+                and not limit_mismatch and not read_errors)
+    ctx.evidence["final_state"] = {
+        "MO": mo_final, "TC": tc_final,
+        "limit_mismatch": limit_mismatch,
+        "read_errors": read_errors, "pass": final_ok,
+    }
+    return final_ok
+
+
+def _signature_final_state_failure(ctx: _Ctx) -> str:
+    final = ctx.evidence.get("final_state", {})
+    return ("커뮤테이션 서명 종료 상태 확인 실패: MO=%r TC=%r "
+            "limit_mismatch=%r read_errors=%r"
+            % (final.get("MO"), final.get("TC"),
+               final.get("limit_mismatch"), final.get("read_errors")))
+
+
 def _red(ctx: _Ctx, reason: str) -> AutotuneVPResult:
     ctx.evidence.setdefault("readings", ctx.readings)
     return AutotuneVPResult(status=RED, reason=reason,
@@ -1091,6 +1180,7 @@ def _um3_drag(ctx: _Ctx):
           "directions": []}
     ctx.evidence["um3_drag"] = ev
     try:
+        _check_cancel_before_mutation(ctx)
         _cmd(ctx, "MO=1", allow_motion=True)
         ctx.motor_on = True
         _seg(ctx, "tc")
@@ -1482,13 +1572,17 @@ def _breakaway_ramp(ctx: _Ctx):
             "브레이크어웨이 과대(i_ba=%.2fA > %.1fA) — 커뮤 재오염 가능성"
             " (건강 기준 2.03A; 정보성, 하드게이트 아님)"
             % (i_ba, IBA_COMMUT_WARN_A))
-    if i_ba is not None and ba_direction < 0:
+    if i_ba is not None and ba_direction < 0 and not p.signature_only:
         # 보강1 (fable-physics §3): 유효-역방향 커뮤테이션은 램프 trace에 이미
         # 드러난다 — 진단펄스 통전 전에 조기중단 (live: unit-diag가 19,571 cnt
         # 역회전을 돌린 뒤에야 B1에서 죽었음)
         raise AbortError(
             "방향 반전(유효-역방향 커뮤테이션) — +TC 램프에 음의 피드백 (%s):"
             " 진단펄스 통전 전 조기중단. %s" % (ba_dir_basis, DIR_FIX_MSG))
+    if p.signature_only:
+        # The standalone signature owns the verdict in _pipeline.  Returning
+        # here is the isolation boundary: no UM=3 routing or UNIT-DIAG.
+        return probe
     if i_ba is None:
         if iq_cap is None:
             # hardening #3: no false "IQ witnessed the torque" claim — the
@@ -1868,15 +1962,25 @@ def run_velpos_autotune(link, params: Optional[AutotuneVPParams] = None
     except PreflightError as e:
         return _red(ctx, str(e))
     except AbortError as e:
-        _do_abort(ctx, str(e))
-        return _red(ctx, str(e))
+        reason = str(e)
+        _do_abort(ctx, reason)
+        if ctx.params.signature_only and not _capture_signature_final_state(ctx):
+            reason = "%s; %s" % (reason, _signature_final_state_failure(ctx))
+        return _red(ctx, reason)
     except Exception as e:
-        _do_abort(ctx, "내부 예외: %r" % (e,))
-        return _red(ctx, "내부 예외: %r" % (e,))
+        reason = "내부 예외: %r" % (e,)
+        _do_abort(ctx, reason)
+        if ctx.params.signature_only and not _capture_signature_final_state(ctx):
+            reason = "%s; %s" % (reason, _signature_final_state_failure(ctx))
+        return _red(ctx, reason)
 
 
 def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     p = ctx.params
+
+    # Honor an already-latched cancel before the first read. The same gate in
+    # _write catches cancellation that arrives during the complete preflight.
+    _check_cancel_before_mutation(ctx)
 
     # ---- P0 ---------------------------------------------------------------------------
     if not getattr(ctx.link, "is_connected", False):
@@ -1927,16 +2031,48 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     if not isinstance(cl1, (int, float)) or cl1 <= 0:
         raise PreflightError("CL[1]=%r 비정상" % (cl1,))
     ctx.cl1 = float(cl1)
+    required_positive = {}
+    for name in ("CA[18]", "KP[1]", "KI[1]"):
+        value = r.get(name)
+        if (not isinstance(value, (int, float)) or isinstance(value, bool)
+                or not math.isfinite(float(value)) or float(value) <= 0.0):
+            raise PreflightError(
+                "%s=%r invalid; Phase 2 requires a finite positive live "
+                "readback" % (name, value))
+        required_positive[name] = float(value)
+    if p.signature_only:
+        cap = p.signature_cap_a
+        lo = p.signature_i_min_a
+        hi = p.signature_i_max_a
+        if (not isinstance(cap, (int, float)) or not math.isfinite(cap)
+                or cap <= 0.0 or cap > SIGNATURE_CAP_ABS_MAX_A + 1e-12
+                or cap > ctx.cl1):
+            raise PreflightError(
+                "커뮤테이션 서명 전류 상한은 0 < cap <= 1.30 A 이어야 함 "
+                "(요청값=%r)" % (cap,))
+        if (not all(isinstance(x, (int, float)) and math.isfinite(x)
+                    for x in (lo, hi))
+                or not (0.0 <= lo <= hi <= cap)):
+            raise PreflightError(
+                "커뮤테이션 서명 판정창은 0 <= min <= max <= cap 이어야 함 "
+                "(min=%r, max=%r, cap=%r)" % (lo, hi, cap))
+        if not (0.0 < p.ramp_time_s <= 2.0):
+            raise PreflightError(
+                "커뮤테이션 서명 램프 시간은 0 < t <= 2.0 s 이어야 함 "
+                "(요청값=%r)" % (p.ramp_time_s,))
+        # Reuse the proven ramp state machine but replace its relative Phase-2
+        # current cap with this standalone absolute cap.
+        p = _dc_replace(p, ramp_frac=float(cap) / ctx.cl1)
+        ctx.params = p
     if not (0.0 < p.ramp_frac <= RAMP_FRAC_ABS_MAX + 1e-9):
         raise PreflightError(
             "ramp_frac=%.2f 허용범위(0, %.1f] 벗어남 — %.1f·CL 이상 자동 램프 금지"
             "(오퍼레이터 승인 전용 상수 RAMP_FRAC_OPERATOR_ONLY)"
             % (p.ramp_frac, RAMP_FRAC_ABS_MAX, RAMP_FRAC_ABS_MAX))
-    ca18 = r.get("CA[18]")
-    ctx.ca18 = float(ca18) if isinstance(ca18, (int, float)) and ca18 > 0 else 65536.0
+    ctx.ca18 = required_positive["CA[18]"]
     ctx.vx_guard_cnt = ctx.ca18 * GUARD_RPM / 60.0
-    kp1 = r.get("KP[1]") if isinstance(r.get("KP[1]"), (int, float)) else 0.07177
-    ki1 = r.get("KI[1]") if isinstance(r.get("KI[1]"), (int, float)) else 812.939
+    kp1 = required_positive["KP[1]"]
+    ki1 = required_positive["KI[1]"]
     _emit(ctx, "VALIDATE", "G0 통과: TS=%dµs UM=5 GS[2]=0 CA[17]=%d, CL[1]=%.2fA"
           " (CA[7]=%s — 모터별 커뮤값, 정보성 기록)"
           % (int(ts), p.expected_ca17, ctx.cl1, r.get("CA[7]")))
@@ -1968,6 +2104,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     ctx.evidence["limits"] = limit_rb
 
     # ---- B0 enable (operator gate is the CALLER's) -------------------------------------
+    _check_cancel_before_mutation(ctx)
     _cmd(ctx, "MO=1", allow_motion=True)
     ctx.motor_on = True
     waited = 0.0
@@ -1979,19 +2116,66 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     _emit(ctx, "ENABLE", "MO=1 통전(UM=5), 서보온 확인 — 브레이크어웨이 램프(B1.4) 시작")
 
     # ---- B1.4 adaptive breakaway ramp (geared-stiction fix, 2026-07-13) ---------------
-    _emit(ctx, "BREAKAWAY", "브레이크어웨이 램프: TC 0→%.2fA(0.2·CL[1]) ≤%.1fs,"
+    _emit(ctx, "BREAKAWAY", "브레이크어웨이 램프: TC 0→%.2fA(%.4f·CL[1]) ≤%.1fs,"
           " %.0fms 폴 (|ΔPX|>%.0f ∨ |VX|>%.0f ×2연속)"
-          % (p.ramp_frac * ctx.cl1, p.ramp_time_s, p.poll_dt * 1e3,
+          % (p.ramp_frac * ctx.cl1, p.ramp_frac, p.ramp_time_s,
+             p.poll_dt * 1e3,
              p.detect_dpx, p.detect_vx))
     probe_adapt = _breakaway_ramp(ctx)
     ba = ctx.evidence["breakaway"]
     _emit(ctx, "BREAKAWAY", "브레이크어웨이 %s"
           % ("i_ba=%.2fA → 적응 probe=%.2fA" % (ba["i_ba_a"], probe_adapt)
              if ba["detected"]
-             else "미검출(IQ=%.2fA 토크경로 의심) — UNIT-DIAG 물리분기로"
+             else ("미검출(IQ=%.2fA) — 서명 종료, Phase 2 진행 금지"
+                   if p.signature_only else
+                   "미검출(IQ=%.2fA 토크경로 의심) — UNIT-DIAG 물리분기로")
                   % (ba["iq_at_cap_a"] or -1.0)))
 
     # ---- B1.5 UNIT-DIAG (§9 hard gate — the probe B1 moved AFTER this) ----------------
+    if p.signature_only:
+        i_ba = ba.get("i_ba_a")
+        direction = ba.get("direction", 0)
+        gate = {
+            "mode": "standalone_commutation_signature",
+            "command_cap_a": float(p.signature_cap_a),
+            "expected_i_ba_a": [float(p.signature_i_min_a),
+                                  float(p.signature_i_max_a)],
+            "i_ba_a": i_ba,
+            "direction": direction,
+            "direction_basis": ba.get("direction_basis"),
+            "no_phase2_continuation": True,
+            "pass": False,
+        }
+        ctx.evidence["signature_gate"] = gate
+        if not ba.get("detected") or not isinstance(i_ba, (int, float)):
+            raise AbortError(
+                "커뮤테이션 서명 미검출: +TC 0→1.30 A 범위에서 지속 회전이 "
+                "확인되지 않음; 전류 증대나 Phase 2 진행 금지")
+        if direction != 1:
+            raise AbortError(
+                "커뮤테이션 서명 방향 불합격: +TC에 대한 피드백 방향=%r "
+                "(기대값 +1); Phase 2 진행 금지" % (direction,))
+        if not (p.signature_i_min_a <= i_ba <= p.signature_i_max_a):
+            raise AbortError(
+                "커뮤테이션 서명 전류 불합격: i_ba=%.3f A, 기대창 "
+                "%.2f..%.2f A; Phase 2 진행 금지"
+                % (i_ba, p.signature_i_min_a, p.signature_i_max_a))
+
+        # A passing observation is not enough: GREEN requires confirmed TC=0,
+        # MO=0, and verified restoration of every temporary limit.
+        _do_abort(ctx, "커뮤테이션 서명 측정 완료 — 안전 종료")
+        final_ok = _capture_signature_final_state(ctx)
+        if not final_ok:
+            return _red(ctx, _signature_final_state_failure(ctx))
+        gate["pass"] = True
+        status = YELLOW if ctx.warnings else GREEN
+        _emit(ctx, "SIGNATURE", "커뮤테이션 서명 %s: i_ba=%.3f A, 방향=+1, "
+              "TC=0/MO=0 복귀 확인" % (status, i_ba))
+        return AutotuneVPResult(
+            status=status,
+            reason="" if status == GREEN else "; ".join(ctx.warnings),
+            ts_us=int(ts), evidence=ctx.evidence, warnings=ctx.warnings)
+
     i_diag = max(UNITDIAG_I_A, probe_adapt) if probe_adapt else UNITDIAG_I_A
     _emit(ctx, "UNIT_DIAG", "단위 진단: +%.2fA/%.0fms 펄스(적응), TR=1,"
           " dt·속도스케일·토크경로 판별" % (i_diag, UNITDIAG_T_S * 1e3))
@@ -2414,75 +2598,853 @@ def _fmt_gain(v: float) -> str:
     return s if s and s not in ("-",) else "0"
 
 
-def apply_gains_vp(link, result: AutotuneVPResult, persist: bool = False):
-    """F1: write KP[2]/KI[2]/KP[3] from a GREEN/YELLOW result (MO must be 0).
-    FF[1] is NEVER written (advisory only).  SV only on explicit persist.
+VP_GAIN_NAMES = ("KP[2]", "KI[2]", "KP[3]")
 
-    LIVE INCIDENT 2026-07-14: the drive SILENTLY stored 0 for
-    KP[2]=0.000166142303 (no error response), the old code saw no exception,
-    ran SV, and reported success — a zero velocity P-gain was PERSISTED.
-    Hardening (root cause owned by fable-physics, independent of it):
-      * every write is READ BACK and compared (rtol 0.1%);
-      * readback <= 0 is an explicit failure (gains are positive by design);
-      * SV runs ONLY after ALL three readbacks verify — a partial failure
-        returns False with the request/readback pair spelled out and the
-        note that SV was NOT executed (power cycle restores saved gains)."""
-    if result is None or result.status not in (GREEN, YELLOW) \
-            or result.kp_vel is None:
-        return False, "적용 불가: 결과 상태 %s" % (result.status if result else None)
+
+@dataclass(frozen=True)
+class _GainAuthorityVP:
+    """Private immutable authority for one Phase-2 RAM transaction."""
+    rollback_literals: tuple
+    rollback_expected: tuple
+    applied: tuple
+
+
+def _gain_authority_seal(authority: _GainAuthorityVP) -> tuple:
+    return (authority.rollback_literals,
+            authority.rollback_expected,
+            authority.applied)
+
+
+@dataclass
+class GainTrialVP:
+    """One unsaved Phase-2 gain trial.
+
+    ``original`` and ``applied`` are mutable display copies.  The actual
+    rollback/persistence authority is a sealed private frozen snapshot built
+    before the first write.  The object contains no claim that the values were
+    saved; only :func:`commit_gain_trial_vp` may send ``SV``.
+    """
+    original: dict
+    applied: dict
+    verification: Optional["GainVerificationVP"] = field(
+        default=None, init=False, repr=False, compare=False)
+    persistence_state: str = field(
+        default="RAM_TRIAL", init=False, compare=False)
+    stable_identity: Optional[object] = field(
+        default=None, init=False, repr=False, compare=False)
+    session_link: Optional[object] = field(
+        default=None, init=False, repr=False, compare=False)
+    session_token: Optional[object] = field(
+        default=None, init=False, repr=False, compare=False)
+    restore_only: bool = field(default=False, init=False, compare=False)
+    _authority: _GainAuthorityVP = field(
+        init=False, repr=False, compare=False)
+    _authority_seal: tuple = field(
+        init=False, repr=False, compare=False)
+    _verification_capability: object = field(
+        init=False, repr=False, compare=False)
+
+    def __setattr__(self, name, value):
+        if (name in {"_authority", "_authority_seal",
+                     "_verification_capability"}
+                and name in self.__dict__):
+            raise AttributeError("gain trial authority is immutable")
+        object.__setattr__(self, name, value)
+
+    def __post_init__(self):
+        # Freeze both authorities at construction.  In particular, validate
+        # the rollback wire representation before a caller can perform the
+        # first trial write.  Re-formatting the raw readback during rollback
+        # would be too late and could compare against an unrepresentable value.
+        original = dict(self.original)
+        proposed = dict(self.applied)
+        rollback_literals, rollback_expected = _gain_wire_values(original)
+        _, applied = _gain_wire_values(proposed)
+        authority = _GainAuthorityVP(
+            rollback_literals=tuple(
+                (name, rollback_literals[name]) for name in VP_GAIN_NAMES),
+            rollback_expected=tuple(
+                (name, float(rollback_expected[name])) for name in VP_GAIN_NAMES),
+            applied=tuple(
+                (name, float(applied[name])) for name in VP_GAIN_NAMES))
+        object.__setattr__(self, "original", original)
+        object.__setattr__(self, "applied", dict(applied))
+        object.__setattr__(self, "_authority", authority)
+        object.__setattr__(self, "_authority_seal", _gain_authority_seal(authority))
+        object.__setattr__(self, "_verification_capability", object())
+
+    @property
+    def rollback_literals(self):
+        authority = _gain_trial_authority(self)
+        return MappingProxyType(dict(authority.rollback_literals))
+
+    @property
+    def rollback_expected(self):
+        authority = _gain_trial_authority(self)
+        return MappingProxyType(dict(authority.rollback_expected))
+
+    @property
+    def applied_authority(self):
+        return _gain_trial_authority(self).applied
+
+
+def _gain_trial_authority(trial: GainTrialVP) -> _GainAuthorityVP:
+    """Return the sealed authority or fail before any gain write/SV."""
+    authority = getattr(trial, "_authority", None)
+    seal = getattr(trial, "_authority_seal", None)
     try:
-        if _to_num(link.command("MO")) == 1:
-            return False, "모터 ON(MO=1) — STOP 후 적용"
-        applied = []
-        for name, req in (("KP[2]", result.kp_vel), ("KI[2]", result.ki_vel_hz),
-                          ("KP[3]", result.kp_pos)):
-            req = float(req)
-            lit = _fmt_gain(req)                 # drive-safe wire literal
-            sent = float(lit)
-            tail = (" — SV 미실행: 전원 재투입 시 이전 저장값 복귀"
-                    " (RAM 반영분: %s)" % (", ".join(applied) or "없음"))
-            if sent <= 0.0:
-                # the exact silent-zero accident, caught BEFORE transmission:
-                # a sub-1e-6 gain vanishes at 6 fractional digits
-                return False, ("%s 전송 불가: 요청 %.9g가 소수 %d자리 반올림"
-                               "에서 %s로 소멸 (0 전송 금지)%s"
-                               % (name, req, GAIN_DECIMALS_MAX, lit, tail))
-            if abs(sent / req - 1.0) > GAIN_ROUND_RTOL:
-                return False, ("%s 전송 불가: 소수 %d자리 반올림 오차 %.2f%%"
-                               " > %.1f%% (요청 %.9g → 전송 %s)%s"
-                               % (name, GAIN_DECIMALS_MAX,
-                                  100.0 * abs(sent / req - 1.0),
-                                  100.0 * GAIN_ROUND_RTOL, req, lit, tail))
-            link.command("%s=%s" % (name, lit))
-            rb = _to_num(link.command(name))
-            # readback is compared against the SENT (rounded) value, not the
-            # raw design value — the rounding budget is owned by
-            # GAIN_ROUND_RTOL above, the wire integrity by this gate
-            if not isinstance(rb, (int, float)) or \
-                    (isinstance(rb, float) and math.isnan(rb)):
-                return False, "%s 되읽기 실패: 전송 %s → 응답 %r%s" % (
-                    name, lit, rb, tail)
-            if rb <= 0.0:
-                return False, ("%s 쓰기 실패: 요청 %.9g(전송 %s) → 드라이브"
-                               " %.9g (0/음수 — 무성 거부/절삭 의심)%s"
-                               % (name, req, lit, rb, tail))
-            if abs(rb - sent) > APPLY_READBACK_RTOL * abs(sent):
-                return False, ("%s 쓰기 불일치: 요청 %.9g(전송 %s) → 드라이브"
-                               " %.9g (편차 %.2f%% > %.1f%%)%s"
-                               % (name, req, lit, rb,
-                                  100.0 * abs(rb - sent) / sent,
-                                  100.0 * APPLY_READBACK_RTOL, tail))
-            applied.append("%s=%s(되읽기 %.6g)" % (name, lit, rb))
-        if persist:
+        if not isinstance(authority, _GainAuthorityVP):
+            raise ValueError("private snapshot missing or wrong type")
+        if seal != _gain_authority_seal(authority):
+            raise ValueError("private snapshot seal mismatch")
+        for label, entries in (
+                ("rollback literals", authority.rollback_literals),
+                ("rollback expected", authority.rollback_expected),
+                ("applied", authority.applied)):
+            if tuple(name for name, _ in entries) != VP_GAIN_NAMES:
+                raise ValueError("%s names/order mismatch" % label)
+        rollback_literals = dict(authority.rollback_literals)
+        rollback_expected = dict(authority.rollback_expected)
+        applied = dict(authority.applied)
+        checked_literals, checked_expected = _gain_wire_values(rollback_expected)
+        _, checked_applied = _gain_wire_values(applied)
+        if (rollback_literals != checked_literals
+                or rollback_expected != checked_expected
+                or applied != checked_applied):
+            raise ValueError("wire values no longer canonical")
+    except Exception as exc:
+        raise RuntimeError(
+            "gain trial authority integrity check failed: %s" % exc) from exc
+    return authority
+
+
+@dataclass(frozen=True)
+class GainVerificationVP:
+    """In-process proof that one exact active trial completed GREEN.
+
+    Object identity is intentional: equal gain numbers from another trial are
+    not authority to persist that other trial.
+    """
+    trial: GainTrialVP = field(repr=False, compare=False)
+    applied: tuple
+    status: str = GREEN
+    stable_identity: Optional[object] = field(
+        default=None, repr=False, compare=False)
+    session_link: Optional[object] = field(
+        default=None, repr=False, compare=False)
+    session_token: Optional[object] = field(
+        default=None, repr=False, compare=False)
+    _capability: Optional[object] = field(
+        default=None, init=False, repr=False, compare=False)
+
+
+def _link_stable_identity(link):
+    """Best-effort stable drive identity; ``None`` forbids reconnect adoption."""
+    getter = getattr(link, "transaction_identity", None)
+    if not callable(getter):
+        return None
+    try:
+        identity = getter()
+    except Exception:
+        return None
+    if identity is None or (isinstance(identity, str) and not identity.strip()):
+        return None
+    try:
+        hash(identity)
+    except (TypeError, ValueError):
+        return None
+    return identity
+
+
+def _link_session_token(link):
+    """Return one opaque token for the exact active transport session."""
+    getter = getattr(link, "transaction_session_identity", None)
+    if not callable(getter):
+        raise RuntimeError("transaction session API unavailable")
+    token = getter()
+    if token is None:
+        raise RuntimeError("transaction session unavailable")
+    return token
+
+
+def _link_session_identity_snapshot(link) -> tuple[object, Optional[object]]:
+    """Atomically-enough observe token -> SN[4] identity -> token.
+
+    The transport does not expose a lock spanning separate commands, so a
+    token change across the identity read is the authoritative reconnect race
+    signal.  Callers must repeat this immediately before their first write or
+    SV after any intervening I/O.
+    """
+    token_before = _link_session_token(link)
+    stable_identity = _link_stable_identity(link)
+    token_after = _link_session_token(link)
+    if token_after is not token_before:
+        raise RuntimeError(
+            "transaction session changed during drive identity read")
+    return token_after, stable_identity
+
+
+def _link_persistence_unknown(link) -> bool:
+    """Read the link-wide ambiguous-SV latch shared by P1/P2 callers."""
+    checker = getattr(link, "persistence_unknown_latched", None)
+    if callable(checker):
+        return bool(checker())
+    if checker is not None:
+        return bool(checker)
+    return bool(getattr(link, "_persistence_unknown_latched", False))
+
+
+def _latch_link_persistence_unknown(link) -> None:
+    """Permanently latch ambiguous persistence for this link instance."""
+    marker = getattr(link, "latch_persistence_unknown", None)
+    if callable(marker):
+        marker()
+    else:
+        try:
+            setattr(link, "_persistence_unknown_latched", True)
+        except Exception as exc:
+            raise RuntimeError(
+                "link has no writable persistence UNKNOWN latch") from exc
+    if not _link_persistence_unknown(link):
+        raise RuntimeError("link persistence UNKNOWN latch did not engage")
+
+
+def _canonical_transaction_link(link):
+    """Unwrap an internal command guard without changing session identity."""
+    canonical = getattr(link, "transaction_session_link", link)
+    return link if canonical is None else canonical
+
+
+def _bind_gain_trial_session(trial: GainTrialVP, link, *, stable_identity,
+                             session_token, restore_only: bool) -> None:
+    trial.stable_identity = stable_identity
+    trial.session_link = _canonical_transaction_link(link)
+    trial.session_token = session_token
+    trial.restore_only = bool(restore_only)
+
+
+def _gain_trial_session_matches(link, trial: GainTrialVP) -> tuple[bool, str]:
+    """Require the exact link object, connection epoch, and known drive ID."""
+    if trial.session_link is None or trial.session_token is None:
+        return False, "transaction session 미결합 trial — 저수준 작업 거부"
+    canonical_link = _canonical_transaction_link(link)
+    if trial.session_link is not canonical_link:
+        return False, "transaction session 링크 불일치 — 다른 연결에서 작업 거부"
+    try:
+        current_token, current_identity = _link_session_identity_snapshot(
+            canonical_link)
+    except Exception as exc:
+        return False, "transaction session 확인 실패: %s" % exc
+    if current_token is not trial.session_token:
+        return False, "transaction session 만료/불일치 — 재연결 후 기존 GREEN 권한 무효"
+    if trial.stable_identity is not None:
+        if current_identity is None:
+            return False, "drive identity 재확인 실패 — 작업 거부"
+        if current_identity != trial.stable_identity:
+            return False, "drive identity 불일치 — 다른 드라이브 작업 거부"
+    return True, ""
+
+
+def _gain_wire_values(values: dict) -> tuple[dict, dict]:
+    """Validate all gains before the first write and return literals+floats."""
+    literals, sent = {}, {}
+    for name in VP_GAIN_NAMES:
+        if name not in values:
+            raise ValueError("%s 값 누락" % name)
+        try:
+            requested = float(values[name])
+        except (TypeError, ValueError):
+            raise ValueError("%s 값이 숫자가 아님: %r" % (name, values[name]))
+        if not math.isfinite(requested) or requested <= 0.0:
+            raise ValueError("%s 값은 유한한 양수여야 함: %r" % (name, requested))
+        literal = _fmt_gain(requested)
+        rounded = float(literal)
+        if rounded <= 0.0:
+            raise ValueError(
+                "%s 전송 불가: 요청 %.9g가 소수 %d자리 반올림에서 %s로 소멸"
+                % (name, requested, GAIN_DECIMALS_MAX, literal))
+        error = abs(rounded / requested - 1.0)
+        if error > GAIN_ROUND_RTOL:
+            raise ValueError(
+                "%s 전송 불가: 소수 %d자리 반올림 오차 %.2f%% > %.1f%% "
+                "(요청 %.9g → 전송 %s)"
+                % (name, GAIN_DECIMALS_MAX, 100.0 * error,
+                   100.0 * GAIN_ROUND_RTOL, requested, literal))
+        literals[name], sent[name] = literal, rounded
+    return literals, sent
+
+
+def _read_gain_values(link) -> dict:
+    values = {}
+    for name in VP_GAIN_NAMES:
+        value = _to_num(link.command(name))
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise RuntimeError("%s 되읽기 실패: %r" % (name, value))
+        if float(value) <= 0.0:
+            raise RuntimeError("%s 되읽기 값이 0/음수: %.9g" % (name, value))
+        values[name] = float(value)
+    return values
+
+
+def _assert_motor_off(link) -> None:
+    mo = _to_num(link.command("MO"))
+    if mo != 0:
+        raise RuntimeError("모터 OFF 필요(MO=%r)" % mo)
+
+
+def _write_gain_values(link, values: dict) -> tuple[dict, list]:
+    """Write and read back a complete gain set; never sends SV."""
+    literals, sent = _gain_wire_values(values)
+    applied = []
+    for name in VP_GAIN_NAMES:
+        requested = float(values[name])
+        literal, expected = literals[name], sent[name]
+        link.command("%s=%s" % (name, literal))
+        rb = _to_num(link.command(name))
+        if not isinstance(rb, (int, float)) or not math.isfinite(float(rb)):
+            raise RuntimeError("%s 되읽기 실패: 전송 %s → 응답 %r" % (
+                name, literal, rb))
+        rb = float(rb)
+        if rb <= 0.0:
+            raise RuntimeError(
+                "%s 쓰기 실패: 요청 %.9g(전송 %s) → 드라이브 %.9g "
+                "(0/음수 — 무성 거부/절삭 의심)"
+                % (name, requested, literal, rb))
+        if abs(rb - expected) > APPLY_READBACK_RTOL * abs(expected):
+            raise RuntimeError(
+                "%s 쓰기 불일치: 요청 %.9g(전송 %s) → 드라이브 %.9g "
+                "(편차 %.2f%% > %.1f%%)"
+                % (name, requested, literal, rb,
+                   100.0 * abs(rb - expected) / expected,
+                   100.0 * APPLY_READBACK_RTOL))
+        applied.append("%s=%s(되읽기 %.6g)" % (name, literal, rb))
+    return sent, applied
+
+
+def _gain_values_match(actual: dict, expected: dict) -> tuple[bool, str]:
+    for name in VP_GAIN_NAMES:
+        if name not in actual or name not in expected:
+            return False, "%s RAM 게인 누락(actual/expected) (SV 금지)" % name
+        try:
+            av, ev = float(actual[name]), float(expected[name])
+        except (TypeError, ValueError, OverflowError):
+            return False, ("%s RAM 게인 숫자 변환 실패: expected=%r actual=%r "
+                           "(SV 금지)" % (name, expected[name], actual[name]))
+        if (not math.isfinite(av) or not math.isfinite(ev)
+                or av <= 0.0 or ev <= 0.0):
+            return False, ("%s RAM 게인 비정상: expected=%r actual=%r "
+                           "(finite positive 필요, SV 금지)" %
+                           (name, expected[name], actual[name]))
+        if abs(av - ev) > APPLY_READBACK_RTOL * abs(ev):
+            return False, ("%s RAM 값 불일치: 기대 %.9g, 현재 %.9g "
+                           "(SV 금지)" % (name, ev, av))
+    return True, ""
+
+
+def _gain_fingerprint(values: dict) -> tuple:
+    return tuple((name, float(values[name])) for name in VP_GAIN_NAMES)
+
+
+def restore_gain_trial_vp(link, trial: GainTrialVP):
+    """Restore all pre-trial RAM gains and verify them.  Never sends SV."""
+    if not isinstance(trial, GainTrialVP):
+        return False, "복원 불가: 유효한 게인 시험 스냅숏이 없음"
+    if trial.persistence_state == "RESTORED":
+        return True, "RESTORED_ALREADY: 원래 게인 복원이 이미 확인됨 — 추가 쓰기 없음"
+    if trial.persistence_state == "UNKNOWN":
+        return False, ("복원 금지: SV 영구저장 여부 UNKNOWN — 재연결/리셋 후 "
+                       "RAM·비휘발 설정을 먼저 확인해야 함")
+    if trial.persistence_state == "PERSISTED":
+        return False, "복원 불가: 이 게인 시험은 이미 SV 영구저장됨"
+    if trial.persistence_state not in ("RAM_TRIAL", "RESTORE_FAILED"):
+        return False, "복원 불가: 복원 가능한 trial 상태가 아님(%s)" % \
+            trial.persistence_state
+    try:
+        authority = _gain_trial_authority(trial)
+    except Exception as exc:
+        return False, "복원 거부: %s" % exc
+    trial.verification = None
+    same_session, session_error = _gain_trial_session_matches(link, trial)
+    if not same_session:
+        return False, "복원 거부: %s" % session_error
+    try:
+        _assert_motor_off(link)
+        same_session, session_error = _gain_trial_session_matches(link, trial)
+        if not same_session:
+            return False, "복원 거부: %s" % session_error
+        # These exact literals and expected values were validated and frozen
+        # before the first trial write.
+        literals = dict(authority.rollback_literals)
+        expected = dict(authority.rollback_expected)
+        write_warnings = []
+        for name in VP_GAIN_NAMES:
             try:
-                link.command("SV")
-            except Exception as e:
-                return False, ("SV 실패: %s — 게인은 RAM 반영됨(%s), 영구저장"
-                               " 안 됨" % (e, ", ".join(applied)))
-        return True, "%s 적용·되읽기 검증 통과%s (FF[1] 미변경)" % (
-            ", ".join(applied), " + SV" if persist else "")
-    except Exception as e:
-        return False, "적용 실패: %s — SV 미실행" % e
+                link.command("%s=%s" % (name, literals[name]))
+                rb = _to_num(link.command(name))
+                if not isinstance(rb, (int, float)) or not math.isfinite(float(rb)):
+                    raise RuntimeError("되읽기 실패: %r" % rb)
+                rb = float(rb)
+                if rb <= 0.0 or abs(rb - expected[name]) > \
+                        APPLY_READBACK_RTOL * abs(expected[name]):
+                    raise RuntimeError("기대 %.9g, 현재 %.9g" % (expected[name], rb))
+            except Exception as exc:
+                write_warnings.append("%s: %s" % (name, exc))
+        # The independent complete readback is authoritative.  In particular,
+        # a write may have been accepted even when its reply was lost; if every
+        # final value matches, restoration is proven and the reply errors are
+        # retained as warnings rather than a false RESTORE_FAILED verdict.
+        final_error = None
+        try:
+            actual = _read_gain_values(link)
+            match, mismatch = _gain_values_match(actual, expected)
+            if not match:
+                final_error = mismatch
+        except Exception as exc:
+            final_error = "최종 되읽기: %s" % exc
+        if final_error is not None:
+            trial.persistence_state = "RESTORE_FAILED"
+            detail = ([final_error] +
+                      (["write/readback warnings: " + "; ".join(write_warnings)]
+                       if write_warnings else []))
+            return False, "원래 게인 자동 복원 실패 — " + "; ".join(detail)
+        trial.persistence_state = "RESTORED"
+        warning_suffix = (("; warning: 개별 write/readback 응답 이상이 있었으나 "
+                           "최종 전체 되읽기로 복원 확인 — " +
+                           "; ".join(write_warnings))
+                          if write_warnings else "")
+        return True, ("원래 게인 허용오차 내 복원 확인: " + ", ".join(
+            "%s=%.9g" % (name, expected[name]) for name in VP_GAIN_NAMES)
+            + " (SV 미실행)" + warning_suffix)
+    except Exception as exc:
+        trial.persistence_state = "RESTORE_FAILED"
+        return False, "원래 게인 자동 복원 실패 — %s" % exc
+
+
+def begin_gain_trial_vp(link, result: AutotuneVPResult):
+    """Apply Phase-2 gains to RAM as a rollback-capable, unsaved trial."""
+    if result is None or result.status not in (GREEN, YELLOW):
+        return False, "임시 적용 불가: 결과 상태 %s" % (
+            result.status if result else None), None
+    try:
+        requested = {"KP[2]": result.kp_vel, "KI[2]": result.ki_vel_hz,
+                     "KP[3]": result.kp_pos}
+        # Full request validation happens before the snapshot and first write.
+        _, applied = _gain_wire_values(requested)
+        if _link_persistence_unknown(link):
+            raise RuntimeError(
+                "link persistence UNKNOWN latch 활성 — fresh P2 trial 및 SV 금지")
+        session_token, stable_identity = _link_session_identity_snapshot(link)
+        _assert_motor_off(link)
+        original = _read_gain_values(link)
+        # GainTrialVP construction prevalidates and stores every rollback
+        # literal.  Failure here is still pre-write and therefore leaves RAM
+        # untouched.
+        trial = GainTrialVP(original=original, applied=applied)
+        _gain_trial_authority(trial)
+        _bind_gain_trial_session(
+            trial, link, stable_identity=stable_identity,
+            session_token=session_token, restore_only=False)
+        same_session, session_error = _gain_trial_session_matches(link, trial)
+        if not same_session:
+            raise RuntimeError(
+                "first gain write blocked: %s" % session_error)
+        if _link_persistence_unknown(link):
+            raise RuntimeError(
+                "first gain write blocked: link persistence UNKNOWN latch 활성")
+        try:
+            _, details = _write_gain_values(link, requested)
+        except Exception as exc:
+            restored, restore_msg = restore_gain_trial_vp(link, trial)
+            return False, ("RAM 임시 적용 실패: %s; %s (SV 미실행)"
+                           % (exc, restore_msg)), (None if restored else trial)
+        return True, ("RAM 임시 적용·되읽기 통과: %s (SV 미실행)" %
+                      ", ".join(details)), trial
+    except Exception as exc:
+        return False, "RAM 임시 적용 불가: %s (SV 미실행)" % exc, None
+
+
+def adopt_gain_trial_vp_for_restore(link, trial: GainTrialVP):
+    """Safely adopt a disconnected trial on the same drive for restore only.
+
+    Adoption never carries a prior GREEN token across a connection boundary.
+    It is allowed only for a known stable drive identity and a complete MO=0
+    gain readback that matches either the applied trial or the prevalidated
+    rollback set.  UNKNOWN/PERSISTED can only be resolved by a separate reset
+    and durability workflow, never by reconnect adoption.
+    """
+    if not isinstance(trial, GainTrialVP):
+        return False, "restore adoption 불가: 유효한 게인 trial이 없음"
+    if trial.persistence_state in ("UNKNOWN", "PERSISTED"):
+        return False, ("restore adoption 거부: 상태=%s — reset/durability evidence "
+                       "없이 재연결 adoption 금지" % trial.persistence_state)
+    if trial.persistence_state not in ("RAM_TRIAL", "RESTORE_FAILED"):
+        return False, "restore adoption 불가: 상태=%s" % trial.persistence_state
+    try:
+        authority = _gain_trial_authority(trial)
+    except Exception as exc:
+        return False, "restore adoption 거부: %s" % exc
+
+    # Crossing a connection boundary always consumes any previous capability,
+    # including when the adoption attempt is later rejected.
+    trial.verification = None
+    if trial.stable_identity is None:
+        return False, "drive identity 없음 — reconnect restore adoption 금지"
+    try:
+        session_token, current_identity = _link_session_identity_snapshot(link)
+        if current_identity is None:
+            raise RuntimeError(
+                "drive identity 확인 불가 — reconnect restore adoption 금지")
+        if current_identity != trial.stable_identity:
+            raise RuntimeError(
+                "drive identity 불일치 — 다른 드라이브에는 복원할 수 없음")
+        _assert_motor_off(link)
+        actual = _read_gain_values(link)
+        final_token, final_identity = _link_session_identity_snapshot(link)
+        if final_token is not session_token:
+            raise RuntimeError(
+                "transaction session changed during adoption readback")
+        if final_identity is None or final_identity != current_identity:
+            raise RuntimeError(
+                "drive identity changed/unavailable during adoption readback")
+        session_token, current_identity = final_token, final_identity
+    except Exception as exc:
+        return False, "restore adoption preflight 실패: %s" % exc
+
+    original_match, original_error = _gain_values_match(
+        actual, dict(authority.rollback_expected))
+    if original_match:
+        _bind_gain_trial_session(
+            trial, link, stable_identity=current_identity,
+            session_token=session_token, restore_only=True)
+        trial.persistence_state = "RESTORED"
+        return True, ("RESTORED_ALREADY: 동일 drive identity와 MO=0 확인; "
+                      "현재 전체 게인이 rollback_expected와 일치 — 추가 쓰기 없음")
+
+    applied_match, applied_error = _gain_values_match(
+        actual, dict(authority.applied))
+    if not applied_match:
+        return False, ("restore adoption 거부: 현재 전체 게인이 applied/rollback 어느 "
+                       "집합과도 불일치 (%s; %s)" %
+                       (applied_error, original_error))
+
+    _bind_gain_trial_session(
+        trial, link, stable_identity=current_identity,
+        session_token=session_token, restore_only=True)
+    # RESTORE_FAILED from a dead prior transport becomes a live, readback-
+    # proven RAM trial on this same drive, but only restoration is authorized.
+    trial.persistence_state = "RAM_TRIAL"
+    return True, ("ADOPTED_RESTORE_ONLY: 동일 drive identity·MO=0·전체 applied "
+                  "게인 readback 확인 — Restore만 허용, Verify/Commit 금지")
+
+
+def _bound_gain_verification(trial: GainTrialVP, verification=None):
+    try:
+        authority = _gain_trial_authority(trial)
+    except Exception as exc:
+        return None, "저장 불가: %s (SV 미실행)" % exc
+    candidate = verification
+    if isinstance(candidate, AutotuneVPResult):
+        if candidate.status != GREEN:
+            return None, "저장 불가: 검증 결과가 GREEN이 아님 (SV 미실행)"
+        candidate = candidate.gain_trial_verification
+    if candidate is None:
+        candidate = trial.verification
+    if not isinstance(candidate, GainVerificationVP):
+        return None, "저장 불가: 이 RAM 시험의 GREEN 검증 토큰이 없음 (SV 미실행)"
+    if candidate.trial is not trial:
+        return None, "저장 불가: 다른 게인 시험의 GREEN 검증 토큰임 (SV 미실행)"
+    if trial.verification is not candidate:
+        return None, "저장 불가: 만료되었거나 현재 trial과 불일치하는 검증 토큰 (SV 미실행)"
+    if (getattr(candidate, "_capability", None)
+            is not trial._verification_capability):
+        return None, "저장 불가: 내부 GREEN 검증 capability 불일치 (SV 미실행)"
+    if candidate.status != GREEN or candidate.applied != authority.applied:
+        return None, "저장 불가: GREEN 검증 토큰의 게인 지문 불일치 (SV 미실행)"
+    if (candidate.session_link is not trial.session_link
+            or candidate.session_token is not trial.session_token
+            or candidate.stable_identity != trial.stable_identity):
+        return None, "저장 불가: GREEN 검증 토큰의 transaction session 불일치 (SV 미실행)"
+    return candidate, ""
+
+
+def commit_gain_trial_vp(link, trial: GainTrialVP, verification=None):
+    """Persist one unchanged, GREEN-verified trial.
+
+    Failures before calling ``SV`` are reported as definitely not persisted.
+    Once ``SV`` has been issued, any transport exception is conservatively
+    ``UNKNOWN`` because the flash write may have completed before the reply was
+    lost.  Such a trial cannot be retried or restored without reset/readback.
+    """
+    if not isinstance(trial, GainTrialVP):
+        return False, "저장 불가: 유효한 게인 시험 스냅숏이 없음"
+    if _link_persistence_unknown(link):
+        trial.verification = None
+        return False, ("저장 금지: link persistence UNKNOWN latch 활성 — "
+                       "fresh P1/P2 trial 및 반복 SV 금지")
+    if trial.restore_only:
+        return False, ("저장 불가: reconnect restore-only adoption — Restore만 허용; "
+                       "새 trial과 같은 session의 fresh GREEN 검증 필요 (SV 미실행)")
+    if trial.persistence_state == "UNKNOWN":
+        return False, ("저장 재시도 금지: 이전 SV 영구저장 여부 UNKNOWN — "
+                       "재연결/리셋 후 확인 필요")
+    if trial.persistence_state != "RAM_TRIAL":
+        return False, ("저장 불가: 활성 RAM 시험 상태가 아님(%s) (SV 미실행)"
+                       % trial.persistence_state)
+    same_session, session_error = _gain_trial_session_matches(link, trial)
+    if not same_session:
+        trial.verification = None
+        return False, "SV 미실행: %s" % session_error
+    token, token_error = _bound_gain_verification(trial, verification)
+    if token is None:
+        return False, token_error
+    try:
+        authority = _gain_trial_authority(trial)
+        _assert_motor_off(link)
+        actual = _read_gain_values(link)
+        match, mismatch = _gain_values_match(
+            actual, dict(authority.applied))
+        if not match:
+            trial.verification = None
+            return False, mismatch + "; 재검증 필요 (SV 미실행)"
+        same_session, session_error = _gain_trial_session_matches(link, trial)
+        if not same_session:
+            trial.verification = None
+            return False, "SV 미실행: %s" % session_error
+        authority = _gain_trial_authority(trial)
+        match, mismatch = _gain_values_match(actual, dict(authority.applied))
+        if not match:
+            trial.verification = None
+            return False, mismatch + "; 재검증 필요 (SV 미실행)"
+        if _link_persistence_unknown(link):
+            trial.verification = None
+            return False, ("SV 미실행: link persistence UNKNOWN latch 활성 — "
+                           "반복 SV 금지")
+    except Exception as exc:
+        trial.verification = None
+        return False, "SV 미실행: 저장 전 MO/게인 되읽기 실패 — %s; 재검증 필요" % exc
+
+    # Crossing this line consumes the token.  A thrown exception can no longer
+    # distinguish 'not accepted' from 'flash completed, reply lost'.
+    trial.verification = None
+    prepare_attempt = getattr(link, "prepare_persistence_attempt", None)
+    complete_attempt = getattr(link, "complete_persistence_attempt", None)
+    mark_unknown = getattr(link, "mark_persistence_attempt_unknown", None)
+    attempt_id = None
+    if callable(prepare_attempt):
+        if not callable(complete_attempt) or not callable(mark_unknown):
+            return False, "persistence journal API incomplete; SV not executed"
+        try:
+            authority = _gain_trial_authority(trial)
+            attempt_id = prepare_attempt(
+                phase="P2",
+                registers=VP_GAIN_NAMES,
+                original=dict(authority.rollback_expected),
+                applied=dict(authority.applied),
+            )
+        except Exception as exc:
+            return False, ("persistence journal preflight failed: %s; "
+                           "SV not executed" % exc)
+    trial.persistence_state = "PERSISTING"
+    try:
+        if attempt_id is not None:
+            link.command("SV", _persistence_attempt_id=attempt_id)
+        else:
+            # Legacy/offline test doubles without the persistence journal do
+            # not expose the private capability keyword.
+            link.command("SV")
+    except Exception as exc:
+        trial.persistence_state = "UNKNOWN"
+        latch_error = None
+        ledger_error = None
+        try:
+            _latch_link_persistence_unknown(link)
+        except Exception as latch_exc:
+            latch_error = latch_exc
+        if attempt_id is not None:
+            try:
+                mark_unknown(attempt_id, type(exc).__name__)
+            except Exception as ledger_exc:
+                # The pre-SV PERSISTING record remains active and fail-closed.
+                ledger_error = ledger_exc
+        return False, ("UNKNOWN: SV 명령 전송 후 응답 실패 — 영구저장 여부를 "
+                       "판정할 수 없음(%s); 재시도/복원 금지, 재연결·리셋 후 확인%s"
+                       % (exc, "".join((
+                           ("; LINK LATCH FAILURE: %s" % latch_error)
+                           if latch_error is not None else "",
+                           ("; LEDGER UPDATE FAILURE: %s" % ledger_error)
+                           if ledger_error is not None else ""))))
+    if attempt_id is not None:
+        try:
+            complete_attempt(attempt_id)
+        except Exception as exc:
+            trial.persistence_state = "UNKNOWN"
+            try:
+                _latch_link_persistence_unknown(link)
+            except Exception:
+                pass
+            return False, ("UNKNOWN: SV replied but persistence journal "
+                           "close-out failed (%s); reset/read-only audit required"
+                           % exc)
+    trial.persistence_state = "PERSISTED"
+    return True, "GREEN 검증 토큰·최종 RAM 되읽기 일치 — SV 영구저장 완료"
+
+
+def verify_gain_trial_vp(link, trial: GainTrialVP,
+                         params: Optional[AutotuneVPParams] = None
+                         ) -> AutotuneVPResult:
+    """Verify a RAM trial; any non-GREEN result triggers automatic rollback."""
+    if not isinstance(trial, GainTrialVP):
+        return AutotuneVPResult(
+            status=RED, reason="검증 불가: 유효한 게인 시험 스냅숏이 없음")
+    if _link_persistence_unknown(link):
+        trial.verification = None
+        return AutotuneVPResult(
+            status=RED,
+            reason=("검증 금지: link persistence UNKNOWN latch 활성 — "
+                    "motion 검증 및 자동 복원 쓰기 금지; 명시적 Restore만 허용"),
+            evidence={"gain_trial_restore": {
+                "required": True, "pass": None,
+                "reason": ("UNKNOWN latch 상태에서는 자동 쓰기 없음; "
+                           "운영자 명시적 Restore만 허용")}})
+    if trial.restore_only:
+        return AutotuneVPResult(
+            status=RED,
+            reason=("검증 불가: reconnect restore-only adoption — Restore만 허용; "
+                    "새 trial 필요"),
+            evidence={"gain_trial_restore": {
+                "required": True, "pass": False,
+                "reason": "restore-only trial은 검증/저장 권한 없음"}})
+    if trial.persistence_state != "RAM_TRIAL":
+        return AutotuneVPResult(
+            status=RED, reason="검증 불가: 활성 RAM 시험 상태가 아님(%s)" %
+            trial.persistence_state)
+    try:
+        authority = _gain_trial_authority(trial)
+    except Exception as exc:
+        return AutotuneVPResult(
+            status=RED, reason="검증 불가: %s" % exc,
+            evidence={"gain_trial_restore": {
+                "required": True, "pass": False,
+                "reason": "authority integrity 실패로 자동 복원도 금지"}})
+    same_session, session_error = _gain_trial_session_matches(link, trial)
+    if not same_session:
+        trial.verification = None
+        return AutotuneVPResult(
+            status=RED, reason="검증 불가: %s" % session_error,
+            evidence={"gain_trial_restore": {
+                "required": True, "pass": False,
+                "reason": "session 불일치로 자동 복원도 금지"}})
+    trial.verification = None
+    try:
+        _assert_motor_off(link)
+        before = _read_gain_values(link)
+        match, mismatch = _gain_values_match(
+            before, dict(authority.applied))
+        if not match:
+            raise RuntimeError("검증 시작 전 " + mismatch)
+        same_session, session_error = _gain_trial_session_matches(link, trial)
+        if not same_session:
+            trial.verification = None
+            return AutotuneVPResult(
+                status=RED,
+                reason="검증 금지: motion 직전 %s" % session_error,
+                evidence={"gain_trial_restore": {
+                    "required": True, "pass": False,
+                    "reason": "session 불일치로 자동 복원도 금지"}})
+        if _link_persistence_unknown(link):
+            trial.verification = None
+            return AutotuneVPResult(
+                status=RED,
+                reason=("검증 금지: motion 직전 link persistence UNKNOWN latch 활성 — "
+                        "자동 복원 쓰기 금지; 명시적 Restore만 허용"),
+                evidence={"gain_trial_restore": {
+                    "required": True, "pass": None,
+                    "reason": ("UNKNOWN latch 상태에서는 자동 쓰기 없음; "
+                               "운영자 명시적 Restore만 허용")}})
+        result = verify_run_vp(link, params)
+        if not isinstance(result, AutotuneVPResult):
+            raise RuntimeError("검증 함수가 유효한 결과를 반환하지 않음: %r" % result)
+    except Exception as exc:
+        result = AutotuneVPResult(
+            status=RED, reason="검증 예외: %r" % exc,
+            evidence={"verify_exception": repr(exc)})
+    if result.evidence is None:
+        result.evidence = {}
+    if result.status == GREEN:
+        try:
+            same_session, session_error = _gain_trial_session_matches(link, trial)
+            if not same_session:
+                raise RuntimeError(session_error)
+            _assert_motor_off(link)
+            after = _read_gain_values(link)
+            authority = _gain_trial_authority(trial)
+            match, mismatch = _gain_values_match(
+                after, dict(authority.applied))
+            if not match:
+                raise RuntimeError("검증 종료 후 " + mismatch)
+            same_session, session_error = _gain_trial_session_matches(link, trial)
+            if not same_session:
+                raise RuntimeError(session_error)
+            if _link_persistence_unknown(link):
+                trial.verification = None
+                result.status = RED
+                result.reason = ((result.reason + "; ") if result.reason else "") + \
+                    ("GREEN 폐기: link persistence UNKNOWN latch 활성 — "
+                     "자동 복원 쓰기 금지; 명시적 Restore만 허용")
+                result.evidence["gain_trial_restore"] = {
+                    "required": True, "pass": None,
+                    "reason": ("UNKNOWN latch 상태에서는 자동 쓰기 없음; "
+                               "운영자 명시적 Restore만 허용")}
+                return result
+        except Exception as exc:
+            result.status = RED
+            result.reason = (result.reason + "; " if result.reason else "") + \
+                "GREEN 폐기: 최종 RAM 게인 확인 실패 — %s" % exc
+        else:
+            token = GainVerificationVP(
+                trial=trial, applied=authority.applied,
+                stable_identity=trial.stable_identity,
+                session_link=trial.session_link,
+                session_token=trial.session_token)
+            object.__setattr__(
+                token, "_capability", trial._verification_capability)
+            trial.verification = token
+            result.gain_trial_verification = token
+            result.evidence["gain_trial_verification"] = {
+                "status": GREEN,
+                "bound_to_active_trial": True,
+                "applied": dict(token.applied)}
+            result.evidence["gain_trial_restore"] = {
+                "required": False, "pass": None,
+                "reason": "검증 GREEN·최종 되읽기 통과 — RAM 게인 유지, SV는 별도 승인 필요"}
+            return result
+    restored, message = restore_gain_trial_vp(link, trial)
+    result.evidence["gain_trial_restore"] = {
+        "required": True, "pass": bool(restored), "reason": message}
+    if not restored:
+        result.status = RED
+        result.reason = (result.reason + "; " if result.reason else "") + message
+    return result
+
+
+def apply_gains_vp(link, result: AutotuneVPResult, persist: bool = False,
+                   *, verified_flow=None):
+    """Compatibility wrapper for callers outside the GUI.
+
+    New GUI code must use the explicit begin/verify/restore/commit sequence.
+    A write failure is transactional: rollback is attempted immediately.
+    ``persist=True`` is unconditionally rejected before any write, even when
+    legacy code supplies ``verified_flow``: this two-value compatibility API
+    cannot return and retain an UNKNOWN recovery handle after an ambiguous SV.
+    """
+    if persist:
+        return False, ("호환 API persist=True 직접 저장 거부: "
+                       "begin→verify GREEN→commit 절차 필요 "
+                       "(RAM 미변경, SV 미실행)")
+    ok, message, trial = begin_gain_trial_vp(link, result)
+    if not ok:
+        return False, message
+    return True, message
 
 
 def verify_run_vp(link, params: Optional[AutotuneVPParams] = None
@@ -2650,6 +3612,7 @@ def _analyze_jv_step(ctx: _Ctx, rec: dict, rpm: float,
 
 def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
     p = ctx.params
+    _check_cancel_before_mutation(ctx)
     # ---- P0 (mirror of the main pipeline) ----------------------------------------------
     if not getattr(ctx.link, "is_connected", False):
         raise PreflightError("드라이브 미연결")
@@ -2681,8 +3644,12 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
         raise PreflightError("CL[1]=%r 비정상" % (cl1,))
     ctx.cl1 = float(cl1)
     ca18 = r.get("CA[18]")
-    ctx.ca18 = float(ca18) if isinstance(ca18, (int, float)) and ca18 > 0 \
-        else 65536.0
+    if (not isinstance(ca18, (int, float)) or isinstance(ca18, bool)
+            or not math.isfinite(float(ca18)) or float(ca18) <= 0.0):
+        raise PreflightError(
+            "CA[18]=%r invalid; verification requires finite positive "
+            "counts/rev" % (ca18,))
+    ctx.ca18 = float(ca18)
     ctx.vx_guard_cnt = ctx.ca18 * GUARD_RPM / 60.0
     for rpm in p.verify_speeds_rpm:
         if abs(rpm) >= GUARD_RPM:
@@ -2713,6 +3680,7 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
                                 % (cmd, e))
     ctx.evidence["limits"] = limit_rb
     # ---- enable ------------------------------------------------------------------------
+    _check_cancel_before_mutation(ctx)
     _cmd(ctx, "MO=1", allow_motion=True)
     ctx.motor_on = True
     waited = 0.0

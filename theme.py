@@ -92,6 +92,11 @@ QLabel#pill {
     letter-spacing: 1.5px; background: rgba(239,90,69,0.18); color: #ff8a78; border: 1px solid rgba(239,90,69,0.6);
 }
 QLabel#pill[on="true"] { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #a6d65a, stop:1 #6fae2a); color: #1c2406; border: none; }
+QLabel#pill[status="active"] { background: #213d50; color: #73c8f0; border-color: #4b9bc2; }
+QLabel#pill[status="ready"] { background: #514018; color: #ffd36a; border-color: #b88b27; }
+QLabel#pill[status="success"] { background: #6fae2a; color: #1c2406; border-color: #a6d65a; }
+QLabel#pill[status="error"] { background: #4b2020; color: #ff9b88; border-color: #d45d49; }
+QLabel#pill[status="neutral"] { background: #292c30; color: #b9b09e; border-color: #4a4e54; }
 QToolTip { background: #212327; color: #f0ead8; border: 1px solid #f5a623; padding: 5px 9px; border-radius: 6px; }
 
 QTabWidget::pane { border: none; }

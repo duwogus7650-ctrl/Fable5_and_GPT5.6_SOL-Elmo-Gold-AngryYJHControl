@@ -1,5 +1,10 @@
 # PAF5 Brief — Fable5-Elmo-Control-Program
 
+> **CURRENT POINTER — 2026-07-17:** 활성 범위는 Quick Tuning + 제한형 Single Axis Motion이다.
+> 현재 working tree, 중단 지점, 검증 근거와 재개 순서는
+> [`../docs/current-scope-handoff.md`](../docs/current-scope-handoff.md)를 우선한다. 이 파일의 아래 내용은
+> 초기 프로젝트 경로와 장기 개발 이력을 포함한 historical context이며 현재 상태를 덮어쓰지 않는다.
+
 메인 세션(Opus)이 유지하는 연속성 파일. 모든 fable-* 에이전트는 시작 시 이 파일을 읽는다.
 
 ## 목표

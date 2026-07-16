@@ -75,15 +75,19 @@ D2 L_ph(f)=sqrt(max(|Z|²−R²,0))/(2πf); |Z|≤1.05·R→f×2 재시도1회
 D3 L_ph=median; spread>0.15→YELLOW
 E1 TC램프다운→0(0.3s); MO=0; 복원(게인은 원값유지)
 E2 §4 게인계산+안정성게이트→status; evidence채워 반환
-E3 [사용자액션 "적용"] MO==0 확인→KP[1]/KI[1]을 평문 소수 ≤6자리로 사전검증(과학표기 금지,
-   반올림 손실 ≤0.5%)→각 쓰기 직후 되읽기(>0, 전송값 대비 ±0.1%)→둘 다 통과 후에만 (선택)SV;
-   포맷/되읽기/쓰기 실패 시 False+부분 RAM 상태 명시+SV 금지. 실제 드라이브 Apply는 감독 실기 미검증.
+E3 [사용자액션 "Apply P1 → RAM"] MO==0 확인→기존 KP[1]/KI[1] 전체 스냅숏→새 게인을
+   평문 소수 ≤6자리로 사전검증(과학표기 금지, 반올림 손실 ≤0.5%)→각 쓰기 직후 되읽기
+   (>0, 전송값 대비 ±0.1%). 이 단계는 SV 금지. 중간 실패는 원래 두 게인을 모두 복원·되읽기하며,
+   복원을 증명하지 못하면 시험 스냅숏을 유지한다.
+E3b [사용자액션 "Restore P1 → Original" | "Save P1 → SV"] Restore는 원래 두 게인을 전부
+   복원·되읽기하고 SV를 보내지 않는다. Save는 현재 두 게인을 다시 읽어 E3의 임시 적용값과 모두
+   일치할 때만 SV를 한 번 보낸다. 실제 드라이브의 신규 P1 트랜잭션 흐름은 감독 실기 미검증.
 E4 [사용자액션 "검증런"] B1~B3 재수행(새게인 TC스텝 I1)→오버슛≤25% AND 2ms정착 AND 무진동→GREEN 확정; 실패→원게인복원+RED
 ```
 
 ## 8. 엣지케이스(핵심)
 MO==1시작→RED "STOP후"(자동disable금지). KP[1]==0+명판없음→RED. 전압신호없음→RED+덤프. 4소켓만석/ID8선점→RED.
-SC[8]≠0→0클리어(복원원값). 사전정렬 스냅>1.5극피치(CA[19]기반)→abort; 래칫 3회 미수렴→RED "정렬 미수렴"; 래치 후 |ΔPX|>θ_abort→abort. CA[19] 판독불가→극쌍16 가정+경고(YELLOW). **CA[18] 판독불가/0→모션게이트 전체 inf 비활성을 경고로 명시(YELLOW, 침묵 비활성 금지)**. 사이클 PX 판독불가(dpx=None)→수렴 아님(캡까지 진행→RED "무모션 증거 확보 실패"). 수렴 사이클 내 가역 변위 dev_max>θ_abort(감속기 컴플라이언스)→경고만(YELLOW, 하드페일 금지·사이클별 dev_max evidence 기록). MF=0x200000(스턱)→abort+세그먼트단축안내. LC==1(포화)→abort. abort A3(TC=0)의 err58 "Servo must be on"은 A1(MO=0) 성공 시 예상거동=steps 기록·경고 제외.
+SC[8]≠0→0클리어(복원원값). 사전정렬 스냅>1.5극피치(CA[19]기반)→abort; 래칫 3회 미수렴→RED "정렬 미수렴"; 래치 후 |ΔPX|>θ_abort→abort. CA[19] 판독불가→극쌍16 가정+경고(YELLOW). **CA[18]은 live finite positive read가 필수이며 판독불가/비유한/0 이하이면 어떤 write나 energization 전 RED로 fail-closed한다. 무한 PX guard 폴백은 금지한다.** 사이클 PX 판독불가(dpx=None)→수렴 아님(캡까지 진행→RED "무모션 증거 확보 실패"). 수렴 사이클 내 가역 변위 dev_max>θ_abort(감속기 컴플라이언스)→경고만(YELLOW, 하드페일 금지·사이클별 dev_max evidence 기록). MF=0x200000(스턱)→abort+세그먼트단축안내. LC==1(포화)→abort. abort A3(TC=0)의 err58 "Servo must be on"은 A1(MO=0) 성공 시 예상거동=steps 기록·경고 제외.
 SE 미주입(2회재시도후)→RED "SE→CA[70] 미확인(U1)". Ī₂−Ī₁<0.5A→RED. R_ph<0∥>10→RED. |Z|≤1.05R→f×2. L(800)vs L(1600)>15%→YELLOW.
 PM<45(3회감축후)→RED. 통신타임아웃→abort(재접속시 스냅숏우선). NaN응답→즉시abort(입구차단).
 

@@ -672,21 +672,14 @@ def test_abort_a3_err58_demoted_not_warning(tmp_path):
     assert any(s.startswith("A3") and "58" in s for s in steps), steps
 
 
-def test_ca18_unreadable_warns_loudly_not_silent(tmp_path):
-    """[hardening MEDIUM] CA[18]<=0: every PX motion gate degenerates to inf —
-    that state must be VISIBLE (warning -> YELLOW), never a silent disable
-    (asymmetry with the CA[19] fallback closed).  Measurement itself is
-    unaffected (the gates were the only CA[18] consumer)."""
+def test_ca18_unreadable_fails_closed_before_any_write(tmp_path):
+    """CA[18]<=0 cannot establish a finite motion/position safety bound."""
     drive = SimDrive()
     drive.regs["CA[18]"] = 0
     res = run_current_autotune(drive, _params(drive, tmp_path))
-    assert res.status == YELLOW
-    assert any("CA[18]" in w and "비활성" in w for w in res.warnings)
-    pa = res.evidence["prealign"]
-    assert pa["theta_abort_counts"] == float("inf")
-    assert pa["prealign_tol_counts"] == float("inf")
-    assert abs(res.r_pp_ohm / R_TERM_PP - 1.0) <= 0.01
-    assert abs(res.l_pp_h / L_PP_ORACLE - 1.0) <= 0.03
+    assert res.status == RED
+    assert "CA[18]" in res.reason
+    assert not any("=" in command for command, _allow_motion in drive.log)
 
 
 def test_prealign_unparseable_px_is_not_convergence(tmp_path):
@@ -1167,6 +1160,14 @@ class _FakeComm:
         self.upload_calls = 0
         self._upload_ok = upload_ok
 
+    def SendCommandAnalyzeError(self, command, _response, _error, _timeout):
+        values = {
+            "VR": "Twitter 01.01.16.00 08Mar2020B01G",
+            "VP": "90",
+            "SN[4]": "TEST-DRIVE-001",
+        }
+        return (True, values[command], None)
+
     def UploadPersonality(self, path):
         self.upload_calls += 1
         return (_FakeUploadModel(path, self._upload_ok), None)
@@ -1217,10 +1218,57 @@ def test_personality_cache_first_skips_upload(tmp_path, monkeypatch):
     _el, link = _fresh_link(tmp_path, monkeypatch)
     (tmp_path / "lib").mkdir(parents=True, exist_ok=True)
     (tmp_path / "lib" / "personality_model.xml").write_text(
-        "<personality/>", encoding="utf-8")
+        "<ROOT><version>Twitter 01.01.16.00 08Mar2020B01G Pal: 90</version></ROOT>",
+        encoding="utf-8")
     names = link.recorder_signals()
     assert names is not None and len(names) == 3
     assert link._comm.upload_calls == 0
+    assert link.recorder_personality_provenance()[
+        "firmware_personality_match"] is True
+
+
+def test_personality_cache_requires_nonempty_exact_firmware_match(
+        tmp_path, monkeypatch):
+    _el, link = _fresh_link(tmp_path, monkeypatch)
+    (tmp_path / "lib").mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "lib" / "personality_model.xml"
+    path.write_text(
+        "<ROOT><version>Twitter 01.01.16.00 08Mar2020B01G Pal: 90</version></ROOT>",
+        encoding="utf-8")
+
+    link.command = lambda command: "" if command == "VR" else "90"
+    assert link._personality_cache_matches_drive(str(path))[0] is False
+
+    link.command = lambda command: (
+        "Twitter 01.01.16.00" if command == "VR" else "90")
+    assert link._personality_cache_matches_drive(str(path))[0] is False
+
+
+def test_prepopulated_communication_model_does_not_claim_firmware_match(
+        tmp_path, monkeypatch):
+    _el, link = _fresh_link(tmp_path, monkeypatch)
+    (tmp_path / "lib").mkdir(parents=True, exist_ok=True)
+    path = tmp_path / "lib" / "prepopulated.xml"
+    path.write_text("<personality/>", encoding="utf-8")
+    ok, _err = link._comm.CreatePersonalityModel(str(path))
+    assert ok
+
+    assert link.recorder_signals() is not None
+    provenance = link.recorder_personality_provenance()
+    assert provenance["source"] == "connected_communication_model"
+    assert provenance["firmware_personality_match"] is False
+
+
+def test_personality_cache_identity_mismatch_forces_current_drive_upload(
+        tmp_path, monkeypatch):
+    _el, link = _fresh_link(tmp_path, monkeypatch)
+    (tmp_path / "lib").mkdir(parents=True, exist_ok=True)
+    (tmp_path / "lib" / "personality_model.xml").write_text(
+        "<ROOT><version>Trombone 01.01.09.10 Pal: 48</version></ROOT>",
+        encoding="utf-8")
+    names = link.recorder_signals()
+    assert names is not None and len(names) == 3
+    assert link._comm.upload_calls == 1
 
 
 def test_personality_failure_returns_none_with_reason(tmp_path, monkeypatch):
@@ -1376,6 +1424,55 @@ def test_cancel_fn_triggers_spec6_abort_and_restore(tmp_path):
     assert any(c == "RR=0" for c in cmds[i_tc:])
 
 
+def test_cancel_latched_during_preflight_sends_no_drive_write(tmp_path):
+    """A cancel that arrives during P1 reads must beat the first mutation.
+
+    This is the negative control for the former hole where cancel was only
+    polled by the first energized sleep, after configuration and MO=1.
+    """
+    state = {"cancelled": False}
+
+    class CancelOnLastPreflightRead(SimDrive):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False):
+            result = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+            if cmd.replace(" ", "").upper() == "WS[57]":
+                state["cancelled"] = True
+            return result
+
+    drive = CancelOnLastPreflightRead()
+    res = run_current_autotune(
+        drive, _params(drive, tmp_path,
+                       cancel_fn=lambda: state["cancelled"]))
+
+    assert state["cancelled"] and res.status == RED
+    assert "abort" not in res.evidence
+    assert [cmd for cmd, _ in drive.log if "=" in cmd] == []
+    assert not any(cmd.replace(" ", "").upper() == "MO=1"
+                   for cmd, _ in drive.log)
+
+
+def test_cancel_after_configuration_blocks_enable_and_runs_abort(tmp_path):
+    """After a write, cancellation keeps the existing restore abort chain."""
+    drive = SimDrive()
+
+    def cancelled_after_last_setup_write():
+        return any(cmd.replace(" ", "").upper() == "SE[7]=50"
+                   for cmd, _ in drive.log)
+
+    res = run_current_autotune(
+        drive, _params(drive, tmp_path,
+                       cancel_fn=cancelled_after_last_setup_write))
+
+    cmds = [cmd.replace(" ", "").upper() for cmd, _ in drive.log]
+    assert res.status == RED and "abort" in res.evidence
+    assert "SE[7]=50" in cmds
+    assert "MO=1" not in cmds
+    assert "MO=0" in cmds and "TW[80]=0" in cmds
+    assert drive.regs["MO"] == 0 and drive.regs["UM"] == 5
+    assert drive.regs["CA[44]"] == 0 and drive.regs["CA[70]"] == 0
+
+
 def test_progress_fn_exception_does_not_kill_run(tmp_path):
     def bomb(code, detail):
         raise RuntimeError("GUI hook crashed at %s" % code)
@@ -1431,6 +1528,130 @@ class GainReadbackTimeoutDrive(SimDrive):
         return super()._query(name)
 
 
+class SelectiveGainWriteFailureDrive(SimDrive):
+    """Fail selected gain writes without preventing later commands."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.fail_gain_writes = set()
+
+    def _write(self, name, value):
+        if name in self.fail_gain_writes:
+            raise IOError("simulated %s write failure" % name)
+        return super()._write(name, value)
+
+
+class PersistenceLatchSimDrive(SimDrive):
+    """SimDrive exposing the shared link-wide persistence latch contract."""
+
+    def __init__(self, persistence_unknown=False, **kwargs):
+        super().__init__(**kwargs)
+        self.persistence_unknown = bool(persistence_unknown)
+        self.persistence_latch_calls = 0
+        self.latch_after_query = None
+
+    def persistence_unknown_latched(self):
+        return self.persistence_unknown
+
+    def latch_persistence_unknown(self):
+        self.persistence_latch_calls += 1
+        self.persistence_unknown = True
+
+    def _query(self, name):
+        value = super()._query(name)
+        if name == self.latch_after_query:
+            self.latch_after_query = None
+            self.persistence_unknown = True
+        return value
+
+
+class SvAppliedThenTimeoutDrive(PersistenceLatchSimDrive):
+    """Model an SV request that reaches the drive but loses its response."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.sv_applied = False
+
+    def command(self, cmd, timeout_ms=1000, allow_motion=False):
+        if cmd.strip().upper() == "SV":
+            self.log.append((cmd, allow_motion))
+            self.sv_applied = True
+            raise TimeoutError("simulated timeout after SV was applied")
+        return super().command(cmd, timeout_ms=timeout_ms,
+                               allow_motion=allow_motion)
+
+
+class AppliedThenTimeoutGainWriteDrive(SimDrive):
+    """Apply selected gain writes but lose their transport response."""
+
+    def __init__(self, **kwargs):
+        super().__init__(**kwargs)
+        self.timeout_after_gain_writes = set()
+
+    def _write(self, name, value):
+        response = super()._write(name, value)
+        if name in self.timeout_after_gain_writes:
+            raise TimeoutError("response lost after %s write applied" % name)
+        return response
+
+
+class IdentitySimDrive(SimDrive):
+    """SimDrive with a stable identity shared across connection objects."""
+
+    def __init__(self, stable_identity, **kwargs):
+        super().__init__(**kwargs)
+        self.stable_identity = stable_identity
+        self.session_identity = object()
+
+    def transaction_identity(self):
+        return self.stable_identity
+
+    def transaction_session_identity(self):
+        return self.session_identity
+
+    def rotate_session(self):
+        self.session_identity = object()
+
+
+class SessionRotatingQueryDrive(IdentitySimDrive):
+    """Rotate the connection generation after one selected readback."""
+
+    def __init__(self, stable_identity, **kwargs):
+        super().__init__(stable_identity, **kwargs)
+        self.rotate_after_query = None
+
+    def _query(self, name):
+        value = super()._query(name)
+        if name == self.rotate_after_query:
+            self.rotate_after_query = None
+            self.rotate_session()
+        return value
+
+
+class FailedApplyLeavesAppliedDrive(SimDrive):
+    """Lose the final trial readback and reject both rollback writes."""
+
+    def __init__(self, **kwargs):
+        super().__init__(kp=0.06, ki=700.0, **kwargs)
+        self._lose_ki_readback_once = False
+
+    def _write(self, name, value):
+        if name == "KI[1]" and abs(value - 812.9) < 1e-9:
+            response = super()._write(name, value)
+            self._lose_ki_readback_once = True
+            return response
+        if (name == "KP[1]" and abs(value - 0.06) < 1e-12) or \
+                (name == "KI[1]" and abs(value - 700.0) < 1e-9):
+            raise IOError("simulated rollback write rejection for %s" % name)
+        return super()._write(name, value)
+
+    def _query(self, name):
+        if name == "KI[1]" and self._lose_ki_readback_once:
+            self._lose_ki_readback_once = False
+            raise TimeoutError("trial KI readback response lost")
+        return super()._query(name)
+
+
 def test_apply_gains_writes_when_motor_off(tmp_path):
     drive = SimDrive()
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
@@ -1462,7 +1683,7 @@ def test_apply_gains_incident_silent_zero_blocks_persist():
     """Accepted-but-stored-as-zero must fail honestly and never reach SV."""
     drive = SilentGainStoreDrive({"KP[1]": 0.0})
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
-    ok, msg = apply_gains(drive, res, persist=True)
+    ok, msg = apply_gains(drive, res)
     assert not ok, msg
     assert "KP[1]" in msg and "readback" in msg and "SV not executed" in msg
     assert "observed RAM: KP[1]=0" in msg and "DO NOT ENABLE" in msg
@@ -1474,7 +1695,7 @@ def test_apply_gains_late_readback_mismatch_exposes_partial_apply():
     """A bad KI readback leaves KP in RAM but must suppress persistence."""
     drive = SilentGainStoreDrive({"KI[1]": 800.0})
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
-    ok, msg = apply_gains(drive, res, persist=True)
+    ok, msg = apply_gains(drive, res)
     assert not ok, msg
     assert "KI[1]" in msg and "mismatch" in msg and "KP[1]" in msg
     assert "SV not executed" in msg
@@ -1487,7 +1708,7 @@ def test_apply_gains_late_readback_mismatch_exposes_partial_apply():
 def test_apply_gains_readback_timeout_reports_unknown_ram_state():
     drive = GainReadbackTimeoutDrive("KP[1]")
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
-    ok, msg = apply_gains(drive, res, persist=True)
+    ok, msg = apply_gains(drive, res)
     assert not ok, msg
     assert drive.regs["KP[1]"] == pytest.approx(0.0712)  # write did reach RAM
     assert "RAM state UNKNOWN: KP[1]" in msg and "DO NOT ENABLE" in msg
@@ -1495,21 +1716,48 @@ def test_apply_gains_readback_timeout_reports_unknown_ram_state():
     assert not any(c == "SV" for c, _ in drive.log)
 
 
-def test_apply_gains_verified_persist_runs_single_sv():
-    drive = SimDrive()
+def test_apply_gains_rejects_legacy_persist_before_any_drive_command():
+    drive = SimDrive(kp=0.06, ki=700.0)
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
     ok, msg = apply_gains(drive, res, persist=True)
-    assert ok, msg
-    assert "readback" in msg and "SV" in msg
-    assert sum(1 for c, _ in drive.log if c == "KP[1]") == 1
-    assert sum(1 for c, _ in drive.log if c == "KI[1]") == 1
-    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    assert not ok
+    assert "persist=True" in msg and "begin_gain_trial_p1" in msg
+    assert "SV not executed" in msg
+    assert drive.log == []
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_apply_gains_rejects_latched_unknown_before_any_drive_command():
+    drive = PersistenceLatchSimDrive(
+        persistence_unknown=True, kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg = apply_gains(drive, res)
+
+    assert not ok and "UNKNOWN" in msg
+    assert drive.log == []
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_apply_gains_rechecks_unknown_latch_immediately_before_first_write():
+    drive = PersistenceLatchSimDrive(kp=0.06, ki=700.0)
+    drive.latch_after_query = "MO"
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg = apply_gains(drive, res)
+
+    assert not ok and "UNKNOWN" in msg
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in drive.log)
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
 
 
 def test_apply_gains_refuses_gain_that_vanishes_on_wire():
     drive = SimDrive()
     res = AutotuneResult(status=GREEN, kp_v_per_a=1e-8, ki_hz=812.9)
-    ok, msg = apply_gains(drive, res, persist=True)
+    ok, msg = apply_gains(drive, res)
     assert not ok, msg
     assert "KP[1]" in msg and "round" in msg and "SV not executed" in msg
     assert not any(c.startswith("KP[1]=") for c, _ in drive.log)
@@ -1532,3 +1780,581 @@ def test_apply_gains_refuses_red_result():
 def test_verify_run_is_honest_stub():
     res = verify_run(SimDrive())
     assert res.status == RED and "실기" in res.reason
+
+
+def test_p1_gain_trial_apply_restore_never_saves():
+    drive = SimDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.071234567,
+                         ki_hz=812.939123)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    assert isinstance(trial, at.GainTrialP1)
+    assert trial.original == pytest.approx({"KP[1]": 0.06, "KI[1]": 700.0})
+    assert drive.regs["KP[1]"] == pytest.approx(0.071235)
+    assert drive.regs["KI[1]"] == pytest.approx(812.939123)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+    assert ok, msg
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_p1_gain_trial_begin_rejects_latched_unknown_before_drive_command():
+    drive = PersistenceLatchSimDrive(
+        persistence_unknown=True, kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert not ok and trial is None and "UNKNOWN" in msg
+    assert drive.log == []
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_begin_rechecks_unknown_latch_before_first_write():
+    drive = PersistenceLatchSimDrive(kp=0.06, ki=700.0)
+    drive.latch_after_query = "KI[1]"
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert not ok and trial is None and "UNKNOWN" in msg
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in drive.log)
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_rejects_unrepresentable_original_before_trial_writes():
+    drive = SimDrive(kp=4e-7, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert not ok and trial is None
+    assert "KP[1]" in msg and ("0" in msg or "round" in msg.lower())
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in drive.log)
+    assert drive.regs["KP[1]"] == pytest.approx(4e-7)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_prevalidates_second_original_rounding_before_any_write():
+    """A nonzero >0.5% KI rounding error must block even the earlier KP write."""
+    drive = SimDrive(kp=0.06, ki=1.01e-6)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert not ok and trial is None
+    assert "KI[1]" in msg and "0.990%" in msg
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in drive.log)
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(1.01e-6)
+
+
+def test_p1_gain_trial_restore_compares_to_representable_original():
+    drive = SimDrive(kp=0.0002004, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+
+    assert ok, msg
+    assert trial.original["KP[1]"] == pytest.approx(0.0002004)
+    assert trial.rollback_literals["KP[1]"] == "0.0002"
+    assert trial.rollback_expected["KP[1]"] == pytest.approx(0.0002)
+    assert drive.regs["KP[1]"] == pytest.approx(0.0002)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_restore_attempts_both_registers_and_full_readback():
+    drive = SelectiveGainWriteFailureDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    drive.fail_gain_writes.add("KP[1]")
+    log_start = len(drive.log)
+
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+
+    restore_commands = [c for c, _ in drive.log[log_start:]]
+    assert not ok
+    assert "KP[1]" in msg and "write" in msg.lower()
+    assert "full readback" in msg.lower()
+    assert "KP[1]=0.0712" in msg and "KI[1]=700" in msg
+    assert "KP[1]=0.06" in restore_commands
+    assert "KI[1]=700" in restore_commands
+    assert "KP[1]" in restore_commands and "KI[1]" in restore_commands
+    assert drive.regs["KP[1]"] == pytest.approx(0.0712)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_restore_accepts_exact_full_readback_after_write_timeout():
+    drive = AppliedThenTimeoutGainWriteDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    drive.timeout_after_gain_writes.add("KP[1]")
+
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+
+    assert ok, msg
+    assert "warning" in msg.lower() and "KP[1]" in msg
+    assert getattr(trial, "persistence_state", None) == "RESTORED"
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_commit_requires_full_match_and_single_sv():
+    drive = SimDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+    assert ok, msg
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    assert getattr(trial, "persistence_state", None) == "PERSISTED"
+
+    log_count = len(drive.log)
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+    assert not ok and "PERSISTED" in msg
+    assert len(drive.log) == log_count
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+    assert not ok and "PERSISTED" in msg
+    assert len(drive.log) == log_count
+
+    drive2 = SimDrive(kp=0.06, ki=700.0)
+    ok, msg, trial2 = at.begin_gain_trial_p1(drive2, res)
+    assert ok, msg
+    drive2.regs["KI[1]"] = 900.0
+    ok, msg = at.commit_gain_trial_p1(drive2, trial2)
+    assert not ok and "KI[1]" in msg and "SV" in msg
+    assert "SV not executed" in msg and "UNKNOWN" not in msg
+    assert not any(c == "SV" for c, _ in drive2.log)
+
+
+def test_p1_gain_trial_commit_rejects_preexisting_latch_without_drive_command():
+    drive = PersistenceLatchSimDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    drive.persistence_unknown = True
+    drive.log.clear()
+
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+
+    assert not ok and "UNKNOWN" in msg and "SV not executed" in msg
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert drive.log == []
+
+
+def test_p1_gain_trial_commit_rechecks_latch_after_readback_before_sv():
+    drive = PersistenceLatchSimDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    drive.latch_after_query = "KI[1]"
+    log_start = len(drive.log)
+
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+
+    commit_commands = [c for c, _ in drive.log[log_start:]]
+    assert not ok and "UNKNOWN" in msg and "SV not executed" in msg
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert "SV" not in commit_commands
+
+
+def test_p1_gain_trial_sv_timeout_reports_ambiguous_persistence():
+    drive = SvAppliedThenTimeoutDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+
+    assert not ok and drive.sv_applied
+    assert "UNKNOWN" in msg and "persistence" in msg.lower()
+    assert "after SV" in msg
+    assert "SV not executed" not in msg
+    assert sum(1 for c, _ in drive.log if c == "SV") == 1
+    assert getattr(trial, "persistence_state", None) == "UNKNOWN"
+    assert drive.persistence_unknown_latched() is True
+    assert drive.persistence_latch_calls == 1
+
+    log_count = len(drive.log)
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+    assert not ok and "UNKNOWN" in msg
+    assert len(drive.log) == log_count
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+    assert not ok and "UNKNOWN" in msg
+    assert len(drive.log) == log_count
+
+
+def test_p1_gain_trial_failed_apply_rolls_back_and_suppresses_sv():
+    drive = SilentGainStoreDrive({"KI[1]": 600.0})
+    original = {"KP[1]": drive.regs["KP[1]"], "KI[1]": drive.regs["KI[1]"]}
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert not ok, msg
+    # The simulated persistent refusal also blocks KI rollback, so the retained
+    # trial is the honest recovery authority and SV remains forbidden.
+    assert trial is not None
+    assert drive.regs["KP[1]"] == pytest.approx(original["KP[1]"])
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_p1_gain_trial_failed_apply_recovery_authority_cannot_commit():
+    drive = FailedApplyLeavesAppliedDrive()
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert not ok and trial is not None
+    assert drive.regs["KP[1]"] == pytest.approx(0.0712)
+    assert drive.regs["KI[1]"] == pytest.approx(812.9)
+    assert getattr(trial, "persistence_state", None) == "RESTORE_FAILED"
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+    assert not ok and "RESTORE_FAILED" in msg
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+@pytest.mark.parametrize("bad", [float("nan"), float("inf"), -float("inf")])
+def test_p1_gain_trial_direct_construction_rejects_nonfinite_applied(bad):
+    with pytest.raises(ValueError):
+        at.GainTrialP1(
+            original={"KP[1]": 0.06, "KI[1]": 700.0},
+            applied={"KP[1]": bad, "KI[1]": 812.9})
+
+
+def test_p1_gain_trial_direct_construction_is_not_commit_authority():
+    drive = SimDrive(kp=0.0712, ki=812.9)
+    trial = at.GainTrialP1(
+        original={"KP[1]": 0.06, "KI[1]": 700.0},
+        applied={"KP[1]": 0.0712, "KI[1]": 812.9})
+
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+
+    assert not ok and "PREPARING" in msg
+    assert not any(c == "SV" for c, _ in drive.log)
+    log_count = len(drive.log)
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(drive.log) == log_count
+    ok, msg = at.adopt_gain_trial_p1_for_restore(drive, trial)
+    assert not ok and "PREPARING" in msg
+    assert len(drive.log) == log_count
+
+
+def test_p1_gain_trial_mutated_applied_authority_blocks_sv():
+    drive = SimDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    trial.applied["KP[1]"] = 99.0
+    drive.regs["KP[1]"] = 99.0
+
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+
+    assert not ok and "authority" in msg.lower()
+    assert getattr(trial, "persistence_state", None) == "AUTHORITY_INVALID"
+    assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_p1_gain_trial_cross_link_commit_and_restore_are_rejected():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    other_session = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.0712, ki=812.9)
+
+    log_count = len(other_session.log)
+    ok, msg = at.commit_gain_trial_p1(other_session, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(other_session.log) == log_count
+    ok, msg = at.restore_gain_trial_p1(other_session, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(other_session.log) == log_count
+    assert not any(c == "SV" for c, _ in other_session.log)
+
+
+def test_p1_gain_trial_same_link_new_session_requires_restore_only_adoption():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    source.rotate_session()
+
+    log_count = len(source.log)
+    ok, msg = at.commit_gain_trial_p1(source, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(source.log) == log_count
+    ok, msg = at.restore_gain_trial_p1(source, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(source.log) == log_count
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(source, trial)
+    assert ok, msg
+    assert trial.restore_only is True
+    ok, msg = at.commit_gain_trial_p1(source, trial)
+    assert not ok and "restore-only" in msg.lower()
+
+
+def test_p1_gain_trial_same_session_rechecks_stable_identity():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    source.stable_identity = ("gold", "serial-2")
+
+    log_count = len(source.log)
+    ok, msg = at.commit_gain_trial_p1(source, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(source.log) == log_count
+    ok, msg = at.restore_gain_trial_p1(source, trial)
+    assert not ok and "session" in msg.lower()
+    assert len(source.log) == log_count
+
+
+def test_p1_gain_trial_rechecks_session_before_first_trial_write():
+    source = SessionRotatingQueryDrive(
+        ("gold", "serial-1"), kp=0.06, ki=700.0)
+    source.rotate_after_query = "KI[1]"
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+
+    assert not ok and trial is None and "session" in msg.lower()
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in source.log)
+    assert source.regs["KP[1]"] == pytest.approx(0.06)
+    assert source.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_rechecks_session_immediately_before_restore_writes():
+    source = SessionRotatingQueryDrive(
+        ("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    source.rotate_after_query = "MO"
+    log_start = len(source.log)
+
+    ok, msg = at.restore_gain_trial_p1(source, trial)
+
+    restore_commands = [c for c, _ in source.log[log_start:]]
+    assert not ok and "session" in msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any(c.startswith(("KP[1]=", "KI[1]="))
+                   for c in restore_commands)
+    assert source.regs["KP[1]"] == pytest.approx(0.0712)
+    assert source.regs["KI[1]"] == pytest.approx(812.9)
+
+
+def test_p1_gain_trial_rechecks_session_after_final_readback_before_sv():
+    source = SessionRotatingQueryDrive(
+        ("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    source.rotate_after_query = "KI[1]"
+
+    ok, msg = at.commit_gain_trial_p1(source, trial)
+
+    assert not ok and "session" in msg.lower()
+    assert trial.persistence_state == "RAM_TRIAL"
+    assert not any(c == "SV" for c, _ in source.log)
+
+
+def test_p1_gain_trial_rejects_unavailable_session_token_before_writes():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+
+    def unavailable():
+        raise RuntimeError("session token unavailable")
+
+    source.transaction_session_identity = unavailable
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+
+    assert not ok and trial is None and "session" in msg.lower()
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in source.log)
+
+
+def test_p1_gain_trial_rejects_none_session_token_before_writes():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    source.transaction_session_identity = lambda: None
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+
+    assert not ok and trial is None and "session" in msg.lower()
+    assert not any(c.startswith(("KP[1]=", "KI[1]=")) for c, _ in source.log)
+
+
+def test_p1_gain_trial_reconnect_adoption_is_restore_only():
+    identity = {"target": "gold", "serial": "serial-1"}
+    source = IdentitySimDrive(identity, kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    reconnected = IdentitySimDrive(
+        {"serial": "serial-1", "target": "gold"},
+        kp=0.0712, ki=812.9)
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(reconnected, trial)
+
+    assert ok, msg
+    assert trial.restore_only is True
+    assert trial.owner_link is reconnected
+    assert trial.persistence_state == "RAM_TRIAL"
+    log_count = len(reconnected.log)
+    ok, msg = at.commit_gain_trial_p1(reconnected, trial)
+    assert not ok and "restore-only" in msg.lower()
+    assert len(reconnected.log) == log_count
+    ok, msg = at.restore_gain_trial_p1(reconnected, trial)
+    assert ok, msg
+    assert trial.persistence_state == "RESTORED"
+    assert reconnected.regs["KP[1]"] == pytest.approx(0.06)
+    assert reconnected.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_authority_invalid_reconnect_uses_frozen_applied():
+    identity = ("gold", "serial-1")
+    source = IdentitySimDrive(identity, kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    trial.applied["KP[1]"] = float("nan")
+    ok, msg = at.commit_gain_trial_p1(source, trial)
+    assert not ok and trial.persistence_state == "AUTHORITY_INVALID"
+
+    reconnected = IdentitySimDrive(identity, kp=0.0712, ki=812.9)
+    ok, msg = at.adopt_gain_trial_p1_for_restore(reconnected, trial)
+
+    assert ok, msg
+    assert trial.owner_link is reconnected
+    assert trial.restore_only is True
+    assert trial.persistence_state == "RESTORE_FAILED"
+    ok, msg = at.restore_gain_trial_p1(reconnected, trial)
+    assert ok, msg
+    assert trial.persistence_state == "RESTORED"
+    assert reconnected.regs["KP[1]"] == pytest.approx(0.06)
+    assert reconnected.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_adoption_rechecks_session_before_rebinding():
+    identity = ("gold", "serial-1")
+    source = IdentitySimDrive(identity, kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    candidate = SessionRotatingQueryDrive(
+        identity, kp=0.0712, ki=812.9)
+    candidate.rotate_after_query = "KI[1]"
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(candidate, trial)
+
+    assert not ok and "session" in msg.lower()
+    assert trial.owner_link is source
+    assert trial.restore_only is False
+
+
+def test_p1_gain_trial_reconnect_adoption_accepts_restore_failed_applied_ram():
+    source = FailedApplyLeavesAppliedDrive()
+    source.transaction_identity = lambda: ("gold", "serial-1")
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert not ok and trial.persistence_state == "RESTORE_FAILED"
+    reconnected = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.0712, ki=812.9)
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(reconnected, trial)
+
+    assert ok, msg
+    assert trial.restore_only is True
+    assert trial.persistence_state == "RESTORE_FAILED"
+    ok, msg = at.commit_gain_trial_p1(reconnected, trial)
+    assert not ok and "restore-only" in msg.lower()
+    ok, msg = at.restore_gain_trial_p1(reconnected, trial)
+    assert ok, msg
+
+
+def test_p1_gain_trial_reconnect_adoption_marks_already_restored_without_writes():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    reconnected = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.06, ki=700.0)
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(reconnected, trial)
+
+    assert ok and "already restored" in msg.lower()
+    assert trial.restore_only is True
+    assert trial.persistence_state == "RESTORED"
+    assert not any("=" in c for c, _ in reconnected.log)
+
+
+@pytest.mark.parametrize("identity", [("gold", "serial-2"), None])
+def test_p1_gain_trial_reconnect_adoption_rejects_different_or_missing_identity(
+        identity):
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    if identity is None:
+        reconnected = SimDrive(kp=0.0712, ki=812.9)
+    else:
+        reconnected = IdentitySimDrive(identity, kp=0.0712, ki=812.9)
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(reconnected, trial)
+
+    assert not ok and "identity" in msg.lower()
+    assert trial.owner_link is source and trial.restore_only is False
+    assert reconnected.log == []
+
+
+def test_p1_gain_trial_reconnect_adoption_rejects_drift_motor_on_and_nonfinite():
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+
+    drifted = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.08, ki=812.9)
+    ok, msg = at.adopt_gain_trial_p1_for_restore(drifted, trial)
+    assert not ok and "drift" in msg.lower()
+    assert trial.owner_link is source
+
+    motor_on = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.0712, ki=812.9, mo0=1)
+    ok, msg = at.adopt_gain_trial_p1_for_restore(motor_on, trial)
+    assert not ok and "MO" in msg
+    assert trial.owner_link is source
+
+    nonfinite = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.0712, ki=812.9)
+    nonfinite.regs["KP[1]"] = float("nan")
+    ok, msg = at.adopt_gain_trial_p1_for_restore(nonfinite, trial)
+    assert not ok and "readback" in msg.lower()
+    assert trial.owner_link is source
+
+
+@pytest.mark.parametrize("terminal_state", ["UNKNOWN", "PERSISTED"])
+def test_p1_gain_trial_reconnect_adoption_rejects_terminal_save_state(
+        terminal_state):
+    source = IdentitySimDrive(("gold", "serial-1"), kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(source, res)
+    assert ok, msg
+    trial.persistence_state = terminal_state
+    reconnected = IdentitySimDrive(
+        ("gold", "serial-1"), kp=0.0712, ki=812.9)
+
+    ok, msg = at.adopt_gain_trial_p1_for_restore(reconnected, trial)
+
+    assert not ok and terminal_state in msg
+    assert reconnected.log == []
