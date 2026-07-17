@@ -7,8 +7,8 @@ Run:   python main.py
 Smoke: python main.py --smoke     (offscreen render, no hardware)
 
 Safety: telemetry is read continuously, while every drive write is routed through
-an explicit UI action. Motion/enable commands are not issued by the tuning and
-encoder-maintenance workflows; volatile trials require restore or verified save.
+an explicit UI action. Production hardware gain trials and finite PTP remain
+locked; retained recovery trials are Restore-only.
 """
 from __future__ import annotations
 
@@ -64,6 +64,11 @@ _RECORDER_OFFLINE_TEST_CAPABILITY = object()
 # E-stop/STO evidence) is entered and verified.  Do not turn this into an
 # environment-variable bypass: activation must be a reviewed code/config change.
 FINITE_PTP_LIVE_ENABLED = False
+# Hardware RAM gain trials stay disabled until their write-ahead record can
+# coexist safely with the P2_LIMITS transaction used during verification.
+# Synthetic kernels opt in inside their domain modules; the desktop UI never
+# exposes that test-only capability.
+PRODUCTION_GAIN_TRIALS_ENABLED = False
 
 
 class SessionCoordinateError(RuntimeError):
@@ -661,6 +666,8 @@ class DriveWorker(QtCore.QThread):
         self._pending = collections.deque()   # one-shot commands from the GUI thread
         self._jobs = collections.deque()      # structured jobs (writes) from the GUI thread
         self._cancel_at = False               # operator-abort flag polled by the autotune
+        self._tune_job_generation = 0         # STOP cannot be undone by a later start call
+        self._tune_cancelled_through = 0
         self._motion_cancel = False           # polled inside finite PTP transaction
         self._motion_generation = 0           # STOP cannot be reordered behind a queued move
         self._motion_cancelled_through = 0
@@ -670,6 +677,7 @@ class DriveWorker(QtCore.QThread):
         self._energy_closeout_unknown = False
         self._motion_ownership_requested = False
         self._commutation_signature_green = False
+        self._commutation_signature_token = None
         self._recorder_active = False
         self._recorder_ready = False
         self._recorder_resolved = None
@@ -716,11 +724,11 @@ class DriveWorker(QtCore.QThread):
 
     def start_autotune(self, kw: dict):
         """Queue our own current-loop auto-tune (ENERGIZES the motor — caller gates)."""
-        self._cancel_at = False
-        self._jobs.append(("autotune", dict(kw)))
+        return self._queue_tuning_job("autotune", dict(kw))
 
     def cancel_autotune(self):
         """Request a safe abort mid-tune (polled in autotune's _sleep -> SPEC §6 chain)."""
+        self._tune_cancelled_through = self._tune_job_generation
         self._cancel_at = True
 
     def apply_autotune_gains(self, result, persist: bool):
@@ -742,12 +750,12 @@ class DriveWorker(QtCore.QThread):
     def start_velpos_autotune(self, kw: dict):
         """Queue the Phase-2 vel/pos auto-tune (ROTATES the motor ~1 rev/run +
         low-speed jogs — the caller shows the rotation warning gate first)."""
-        self._cancel_at = False
-        self._jobs.append(("velpos", dict(kw)))
+        return self._queue_tuning_job("velpos", dict(kw))
 
     def cancel_velpos(self):
         """Request a safe Phase-2 abort (same operator flag; the module runs the
         segment-appropriate chain: TC=0->MO=0 or JV=0;ST->MO=0)."""
+        self._tune_cancelled_through = self._tune_job_generation
         self._cancel_at = True
 
     def apply_velpos_gains(self, result, persist: bool):
@@ -766,11 +774,36 @@ class DriveWorker(QtCore.QThread):
         """Queue SV only after the full trial readback still matches."""
         self._jobs.append(("vp_trial_commit", trial))
 
-    def start_verify_vp(self, kw: dict, trial=None):
+    def start_verify_vp(self, kw: dict, trial=None, signature_token=None):
         """Queue the F2/G5 gain-acceptance run (ROTATES the motor: JV steps
         300->900 rpm — the caller shows the rotation warning gate first)."""
-        self._cancel_at = False
-        self._jobs.append(("verify_vp", (dict(kw), trial)))
+        return self._queue_tuning_job(
+            "verify_vp", (dict(kw), trial, signature_token))
+
+    def _queue_tuning_job(self, kind, payload):
+        """Bind one energizing job to a monotonic STOP/cancel generation."""
+        self._tune_job_generation += 1
+        token = self._tune_job_generation
+        if self._motion_stop_requested:
+            self._tune_cancelled_through = token
+        self._jobs.append((str(kind), (token, payload)))
+        return token
+
+    def _tune_cancel_requested(self, tune_token=None):
+        """Return the monotonic cancellation state for one tuning job.
+
+        ``_cancel_at`` is a convenience flag that a later job may clear.  A
+        generation already covered by STOP/cancel remains cancelled for its
+        entire lifetime, including the telemetry-to-handler race window.
+        """
+        token_bound = isinstance(tune_token, int)
+        generation_cancelled = (
+            token_bound and tune_token <= self._tune_cancelled_through)
+        return bool(
+            not self._run
+            or self._motion_stop_requested
+            or (not token_bound and self._cancel_at)
+            or generation_cancelled)
 
     def soft_zero(self):
         """Queue a session-only PX=0 with MO/standstill and readback gates."""
@@ -810,6 +843,7 @@ class DriveWorker(QtCore.QThread):
         self._motion_cancel = True
         self._motion_stop_requested = True
         self._motion_cancelled_through = self._motion_generation
+        self._tune_cancelled_through = self._tune_job_generation
         self._cancel_at = True
         self._urgent_jobs.append(("motion_stop", None))
 
@@ -843,8 +877,16 @@ class DriveWorker(QtCore.QThread):
         """Conservatively revoke session motion authority before config writes."""
         was_green = self._commutation_signature_green
         self._commutation_signature_green = False
+        self._commutation_signature_token = None
         if was_green:
             self.motion_authority.emit(False, str(reason))
+
+    def current_commutation_signature_token(self):
+        """Return the opaque token for the exact current GREEN proof."""
+        if not self._commutation_signature_green:
+            return None
+        token = self._commutation_signature_token
+        return token if isinstance(token, str) and token else None
 
     def write_motor(self, writes: dict, ca18_basis=None):
         """Queue a Motor write with the exact RPM-conversion basis shown."""
@@ -955,7 +997,8 @@ class DriveWorker(QtCore.QThread):
         if status["record_id"] is not None and not isinstance(
                 status["record_id"], str):
             raise ValueError("persistence record_id is invalid")
-        if status["phase"] not in (None, "P1", "P2"):
+        if status["phase"] not in (
+                None, "P1", "P2", "P1_CONFIG", "P2_LIMITS", "MOTOR"):
             raise ValueError("persistence phase is invalid")
         if status["ledger_error"] is not None and not isinstance(
                 status["ledger_error"], str):
@@ -988,9 +1031,20 @@ class DriveWorker(QtCore.QThread):
 
     @staticmethod
     def _verify_payload_trial(payload):
-        if isinstance(payload, tuple) and len(payload) == 2:
+        if isinstance(payload, tuple) and len(payload) >= 2:
             return payload[1]
         return None
+
+    @staticmethod
+    def _verify_payload_signature_token(payload):
+        if isinstance(payload, tuple) and len(payload) >= 3:
+            return payload[2]
+        return None
+
+    def _verify_signature_is_current(self, payload):
+        supplied = self._verify_payload_signature_token(payload)
+        current = self.current_commutation_signature_token()
+        return bool(current is not None and supplied == current)
 
     def _trial_job_guard(self, kind, payload):
         """Worker-owned phase/state allowlist and exact trial identity gate."""
@@ -1081,12 +1135,23 @@ class DriveWorker(QtCore.QThread):
                                "실행할 수 없습니다." % (phase, kind))
             if phase == "P1" and payload is not self._p1_gain_trial:
                 return False, "P1 RAM 시험 객체 불일치 — 현재 시험만 복원/저장할 수 있습니다."
+            if (phase == "P1" and kind == "p1_trial_commit"
+                    and not autotune_current.p1_gain_trial_has_save_authority(
+                        active_trial)):
+                return False, (
+                    "P1 Save locked: session-bound on-motor verification "
+                    "capability is unavailable while E4 remains RED")
             if phase == "P2":
                 supplied = (self._verify_payload_trial(payload)
                             if kind == "verify_vp" else payload)
                 if supplied is not self._vp_gain_trial:
                     return False, ("P2 RAM 시험 객체 불일치 — 현재 적용된 정확한 시험만 "
                                    "검증/복원/저장할 수 있습니다.")
+                if (kind == "verify_vp"
+                        and not self._verify_signature_is_current(payload)):
+                    return False, (
+                        "Phase 2 verification locked: Commutation Signature "
+                        "GREEN is required for this connection")
             return True, ""
 
         if kind in ("p1_trial_commit", "vp_trial_commit"):
@@ -1097,6 +1162,10 @@ class DriveWorker(QtCore.QThread):
             return True, ""
         if kind == "verify_vp" and self._verify_payload_trial(payload) is not None:
             return False, "종료된 P2 RAM 시험 객체의 검증 요청을 거부했습니다."
+        if kind == "verify_vp" and not self._verify_signature_is_current(payload):
+            return False, (
+                "Phase 2 verification locked: Commutation Signature GREEN "
+                "is required for this connection")
         return True, ""
 
     def _emit_guard_rejection(self, kind, payload, message):
@@ -1427,6 +1496,20 @@ class DriveWorker(QtCore.QThread):
         prior = str(getattr(result, "reason", "") or "").strip()
         result.reason = "%s; %s" % (prior, detail) if prior else str(detail)
         return result
+
+    def _latch_configuration_unknown(self, link, result, workflow):
+        evidence = getattr(result, "evidence", None) or {}
+        if evidence.get("configuration_state") != "UNKNOWN":
+            return False
+        self._motion_config_unknown = True
+        self._invalidate_commutation_signature(
+            "Commutation Signature revoked: %s configuration restore UNKNOWN"
+            % workflow)
+        self._mark_workflow_red(
+            result, "%s temporary configuration restore is UNKNOWN" % workflow)
+        self._publish_persistence_status(link)
+        self._emit_axis_summary(link)
+        return True
 
     def _finish_energizing_workflow(self, link, result, workflow):
         """Own verified torque removal and publish a new post-run sample.
@@ -1992,6 +2075,19 @@ class DriveWorker(QtCore.QThread):
                     if not self._run:
                         break
                     kind, payload = self._jobs.popleft()
+                    tune_token = None
+                    if kind in {"autotune", "velpos", "verify_vp"}:
+                        if (isinstance(payload, tuple) and len(payload) == 2
+                                and isinstance(payload[0], int)):
+                            tune_token, payload = payload
+                        else:  # compatibility for pre-generation offline probes
+                            tune_token = self._tune_job_generation + 1
+                        if self._tune_cancel_requested(tune_token):
+                            self._emit_guard_rejection(
+                                kind, payload,
+                                "STOP/cancel superseded this tuning request "
+                                "before drive I/O")
+                            continue
                     allowed, guard_message = self._trial_job_guard(kind, payload)
                     if not allowed:
                         self._emit_guard_rejection(kind, payload, guard_message)
@@ -2009,6 +2105,13 @@ class DriveWorker(QtCore.QThread):
                     # popped job can cross into a write-capable handler.
                     if not self._run:
                         break
+                    if (kind in {"autotune", "velpos", "verify_vp"}
+                            and self._tune_cancel_requested(tune_token)):
+                        self._emit_guard_rejection(
+                            kind, payload,
+                            "STOP/cancel superseded this tuning request "
+                            "during the fresh telemetry admission read")
+                        continue
                     if kind == "motor_write":
                         self._invalidate_commutation_signature(
                             "Commutation Signature revoked before Motor Settings write")
@@ -2055,7 +2158,8 @@ class DriveWorker(QtCore.QThread):
                     elif kind == "recorder_stop":
                         self._run_recorder_stop(link)
                     elif kind == "persistence_audit":
-                        self._commutation_signature_green = False
+                        self._invalidate_commutation_signature(
+                            "Post-reset persistence audit revoked Commutation Signature")
                         self.motion_authority.emit(
                             False,
                             "Post-reset persistence audit never grants motion authority")
@@ -2082,16 +2186,34 @@ class DriveWorker(QtCore.QThread):
                     elif kind == "autotune":
                         self._invalidate_commutation_signature(
                             "Commutation Signature revoked before Phase 1 tuning")
-                        self._run_autotune(link, payload)
+                        if not self._motion_stop_requested:
+                            self._cancel_at = False
+                        try:
+                            self._run_autotune(link, payload, tune_token)
+                        finally:
+                            if not self._motion_stop_requested:
+                                self._cancel_at = False
                     elif kind == "autotune_apply":
                         # Defense in depth: the guard rejects this legacy API.
                         # Keep the typed signal for compatibility, but never I/O.
                         self.autotune_applied.emit(
                             False, "Legacy direct apply 지원 종료 — P1 transaction을 사용하세요.")
                     elif kind == "velpos":
-                        self._run_velpos_autotune(link, payload)
+                        if not self._motion_stop_requested:
+                            self._cancel_at = False
+                        try:
+                            self._run_velpos_autotune(link, payload, tune_token)
+                        finally:
+                            if not self._motion_stop_requested:
+                                self._cancel_at = False
                     elif kind == "verify_vp":
-                        self._run_verify_vp(link, payload)
+                        if not self._motion_stop_requested:
+                            self._cancel_at = False
+                        try:
+                            self._run_verify_vp(link, payload, tune_token)
+                        finally:
+                            if not self._motion_stop_requested:
+                                self._cancel_at = False
                     elif kind == "vp_trial_begin":
                         if self._p1_gain_trial is not None or self._vp_gain_trial is not None:
                             phase = "P1" if self._p1_gain_trial is not None else "P2"
@@ -2317,7 +2439,7 @@ class DriveWorker(QtCore.QThread):
             finally:
                 self.stopped.emit()
 
-    def _run_autotune(self, link, kw: dict):
+    def _run_autotune(self, link, kw: dict, tune_token=None):
         """Run the current-loop auto-tune in this thread, streaming progress to the GUI.
 
         sleep_fn -> QThread.msleep so timeouts advance in real time; progress_fn and
@@ -2328,24 +2450,25 @@ class DriveWorker(QtCore.QThread):
         params = autotune_current.AutotuneParams(
             sleep_fn=lambda s: self.msleep(int(max(s, 0.0) * 1000)),
             progress_fn=lambda code, detail: self.autotune_progress.emit(str(code), str(detail)),
-            cancel_fn=lambda: self._cancel_at,
+            cancel_fn=lambda: self._tune_cancel_requested(tune_token),
             **kw)
         guarded_link = _EnergyAwareLink(
             link, self._claim_drive_energy,
-            lambda: self._run and not self._cancel_at)
+            lambda: not self._tune_cancel_requested(tune_token))
         try:
             res = autotune_current.run_current_autotune(guarded_link, params)
         except Exception as e:                       # module shouldn't raise; be safe
             res = autotune_current.AutotuneResult(
                 status=autotune_current.RED, reason="worker 예외: %r" % e)
         res = self._finish_energizing_workflow(link, res, "autotune")
+        self._latch_configuration_unknown(link, res, "P1")
         self.autotune_result.emit(res)
         try:                                         # gains view reflects reality post-run
             self.tuning_gains.emit(link.read_tuning_gains())
         except Exception:
             pass
 
-    def _run_velpos_autotune(self, link, kw: dict):
+    def _run_velpos_autotune(self, link, kw: dict, tune_token=None):
         """Run the Phase-2 vel/pos auto-tune in this thread (mirror of
         _run_autotune): sleep_fn -> msleep, progress_fn/cancel_fn -> Qt signals
         / the shared operator-abort flag.  The module never raises (RED result)
@@ -2354,11 +2477,11 @@ class DriveWorker(QtCore.QThread):
         params = autotune_velpos.AutotuneVPParams(
             sleep_fn=lambda s: self.msleep(int(max(s, 0.0) * 1000)),
             progress_fn=lambda code, detail: self.velpos_progress.emit(str(code), str(detail)),
-            cancel_fn=lambda: self._cancel_at,
+            cancel_fn=lambda: self._tune_cancel_requested(tune_token),
             **kw)
         guarded_link = _EnergyAwareLink(
             link, self._claim_drive_energy,
-            lambda: self._run and not self._cancel_at)
+            lambda: not self._tune_cancel_requested(tune_token))
         try:
             res = autotune_velpos.run_velpos_autotune(guarded_link, params)
         except Exception as e:                       # module shouldn't raise; be safe
@@ -2366,6 +2489,7 @@ class DriveWorker(QtCore.QThread):
                 status=autotune_velpos.RED, reason="worker 예외: %r" % e)
         res = self._finish_energizing_workflow(link, res, "velpos")
         evidence = res.evidence or {}
+        self._latch_configuration_unknown(link, res, "P2")
         signature = evidence.get("signature_gate", {})
         final = evidence.get("final_state", {})
         signature_mode = (bool(kw.get("signature_only")) or
@@ -2377,6 +2501,8 @@ class DriveWorker(QtCore.QThread):
                 and signature.get("pass") is True
                 and final.get("MO") == 0
                 and final.get("TC") == 0)
+            self._commutation_signature_token = (
+                str(uuid.uuid4()) if self._commutation_signature_green else None)
             detail = ("Session Commutation Signature GREEN"
                       if self._commutation_signature_green
                       else "Commutation Signature not GREEN")
@@ -2389,25 +2515,25 @@ class DriveWorker(QtCore.QThread):
         except Exception:
             pass
 
-    def _run_verify_vp(self, link, payload):
+    def _run_verify_vp(self, link, payload, tune_token=None):
         """Run the F2/G5 verification in this thread (mirror of
         _run_velpos_autotune): sleep_fn -> msleep, progress -> the shared
         velpos_progress stream, cancel -> the operator-abort flag.  The
         module never raises (RED result) and runs the JV abort chain
         (JV=0 -> BG -> ST -> MO=0) on cancel."""
         if isinstance(payload, tuple):
-            kw, trial = payload
+            kw, trial = payload[:2]
         else:                           # compatibility with existing smoke/tests
             kw, trial = payload, None
         self.verify_started.emit()
         params = autotune_velpos.AutotuneVPParams(
             sleep_fn=lambda s: self.msleep(int(max(s, 0.0) * 1000)),
             progress_fn=lambda code, detail: self.velpos_progress.emit(str(code), str(detail)),
-            cancel_fn=lambda: self._cancel_at,
+            cancel_fn=lambda: self._tune_cancel_requested(tune_token),
             **kw)
         guarded_link = _EnergyAwareLink(
             link, self._claim_drive_energy,
-            lambda: self._run and not self._cancel_at)
+            lambda: not self._tune_cancel_requested(tune_token))
         try:
             if trial is None:
                 res = autotune_velpos.verify_run_vp(guarded_link, params)
@@ -2418,6 +2544,7 @@ class DriveWorker(QtCore.QThread):
             res = autotune_velpos.AutotuneVPResult(
                 status=autotune_velpos.RED, reason="verify worker 예외: %r" % e)
         res = self._finish_energizing_workflow(link, res, "verify_vp")
+        self._latch_configuration_unknown(link, res, "P2 Verify")
         if trial is not None:
             restore = (res.evidence or {}).get("gain_trial_restore", {})
             if res.status != autotune_velpos.GREEN and restore.get("pass") is True:
@@ -3006,8 +3133,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_persistence_badge.setAlignment(
             QtCore.Qt.AlignmentFlag.AlignCenter)
         self.lbl_persistence_badge.setToolTip(
-            "P1/P2/Motor persistence ambiguity ledger. A resolved profile does not "
-            "certify commutation or motion safety.")
+            "Active P1_CONFIG/P2_LIMITS/Motor persistence ledger plus legacy P2 "
+            "record audit. A resolved profile does not certify commutation or motion safety.")
         self.lbl_state = QtWidgets.QLabel("OFFLINE"); self.lbl_state.setObjectName("pill")
         # Stack the two status pills.  Side-by-side long safety text made the
         # header dictate a width larger than common 1366 px bench displays.
@@ -3679,6 +3806,8 @@ class MainWindow(QtWidgets.QMainWindow):
         locked.setProperty("role", "hint"); locked.setWordWrap(True); v.addWidget(locked)
 
         self._motion_signature_green = False
+        self._motion_signature_token = None
+        self._motion_signature_generation = None
         self._motion_session_zero_confirmed = False
         self._motion_inflight = False
         self._motion_stop_pending = False
@@ -3721,7 +3850,7 @@ class MainWindow(QtWidgets.QMainWindow):
             FINITE_PTP_LIVE_ENABLED
             and telemetry_trusted
             and not getattr(self, "_persistence_recovery_unknown", False)
-            and self._motion_signature_green
+            and self._motion_signature_is_current()
             and self._motion_session_zero_confirmed
             and not self._motion_inflight
             and not self._motion_stop_pending
@@ -3743,7 +3872,7 @@ class MainWindow(QtWidgets.QMainWindow):
             text = "UNKNOWN 잠금: 임시 Motion 설정과 실제 드라이브 readback을 audit해야 합니다."
         elif not connected:
             text = "OFFLINE: 먼저 드라이브에 연결하세요."
-        elif not self._motion_signature_green:
+        elif not self._motion_signature_is_current():
             text = "잠금: 이 연결 세션의 Commutation Signature GREEN이 필요합니다."
         elif not self._motion_session_zero_confirmed:
             text = "잠금: 이 연결에서 현재 위치에 Session Zero(PX=0)를 먼저 실행하세요."
@@ -3846,7 +3975,22 @@ class MainWindow(QtWidgets.QMainWindow):
         source = self.sender()
         if source is not None and source is not self.worker:
             return
-        self._motion_signature_green = bool(allowed)
+        token = None
+        if allowed:
+            getter = getattr(
+                self.worker, "current_commutation_signature_token", None)
+            if callable(getter):
+                token = getter()
+            elif source is None or source is self.worker:
+                # Offline/fake workers have no drive authority; retain a local
+                # marker only so deterministic UI tests can exercise controls.
+                token = "offline-ui-signature:%s" % id(self.worker)
+        effective = bool(allowed and isinstance(token, str) and token)
+        self._motion_signature_green = effective
+        self._motion_signature_token = token if effective else None
+        self._motion_signature_generation = (
+            getattr(self, "_tuning_authority_generation", 0)
+            if effective else None)
         self._flash(str(detail))
         self._set_connected_ui(bool(
             getattr(self, "_ui_connected", False)
@@ -6465,7 +6609,7 @@ class MainWindow(QtWidgets.QMainWindow):
         expert_layout = QtWidgets.QVBoxLayout(self.tuning_expert_frame)
         expert_layout.setContentsMargins(12, 10, 12, 10); expert_layout.setSpacing(8)
         expert_title = QtWidgets.QLabel(
-            "EXPERT CONTROLS  ·  RAM TRIAL → VERIFY / RESTORE → ONE SV")
+            "EXPERT CONTROLS  ·  CANDIDATES + INSTALLED-GAIN VERIFY")
         expert_title.setProperty("role", "field"); expert_layout.addWidget(expert_title)
 
         caprow = QtWidgets.QHBoxLayout(); caprow.setSpacing(8)
@@ -6481,8 +6625,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "Extended는 Standard보다 최대 전류가 2배이며, 실행할 때 별도의 현장 확인과 승인이 필요합니다.")
         cap_hint.setProperty("role", "hint"); cap_hint.setWordWrap(True)
         expert_layout.addWidget(cap_hint)
-        # controls: measurement/motion actions and gain-state actions stay on
-        # separate rows so the RAM -> verify -> SV sequence is visually explicit.
+        # Keep measurement/motion actions separate from production-locked gain
+        # mutation controls so the available authority remains visually explicit.
         btnrow = QtWidgets.QHBoxLayout(); btnrow.setSpacing(8)
         self.btn_tune = QtWidgets.QPushButton("Run Phase 1 (Current)"); self.btn_tune.setEnabled(False)
         self.btn_tune.clicked.connect(self._run_autotune_clicked)
@@ -6493,7 +6637,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_vp.clicked.connect(self._run_velpos_clicked)
         self.btn_tune_abort = QtWidgets.QPushButton("Abort"); self.btn_tune_abort.setEnabled(False)
         self.btn_tune_abort.clicked.connect(self._abort_autotune_clicked)
-        self.btn_tune_verify = QtWidgets.QPushButton("Verify P2 on Motor")
+        self.btn_tune_verify = QtWidgets.QPushButton("Verify Installed P2 on Motor")
         self.btn_tune_verify.setEnabled(False)
         self.btn_tune_verify.clicked.connect(self._run_verify_clicked)
         for b in (self.btn_tune, self.btn_tune_signature, self.btn_tune_vp,
@@ -6503,12 +6647,12 @@ class MainWindow(QtWidgets.QMainWindow):
 
         p1row = QtWidgets.QHBoxLayout(); p1row.setSpacing(8)
         p1label = QtWidgets.QLabel("P1 CURRENT GAINS"); p1label.setProperty("role", "field")
-        self.btn_tune_apply = QtWidgets.QPushButton("Apply P1 → RAM"); self.btn_tune_apply.setEnabled(False)
+        self.btn_tune_apply = QtWidgets.QPushButton("Apply P1 → RAM (LOCKED)"); self.btn_tune_apply.setEnabled(False)
         self.btn_tune_apply.clicked.connect(self._apply_autotune_clicked)
         self.btn_tune_p1_restore = QtWidgets.QPushButton("Restore P1 → Original")
         self.btn_tune_p1_restore.setEnabled(False)
         self.btn_tune_p1_restore.clicked.connect(self._restore_current_clicked)
-        self.btn_tune_p1_save = QtWidgets.QPushButton("Save P1 → SV")
+        self.btn_tune_p1_save = QtWidgets.QPushButton("Save P1 → SV (LOCKED)")
         self.btn_tune_p1_save.setEnabled(False)
         self.btn_tune_p1_save.clicked.connect(self._save_current_clicked)
         p1row.addWidget(p1label)
@@ -6519,18 +6663,24 @@ class MainWindow(QtWidgets.QMainWindow):
 
         p2row = QtWidgets.QHBoxLayout(); p2row.setSpacing(8)
         p2label = QtWidgets.QLabel("P2 VELOCITY / POSITION GAINS"); p2label.setProperty("role", "field")
-        self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → RAM"); self.btn_tune_vp_apply.setEnabled(False)
+        self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → RAM (LOCKED)"); self.btn_tune_vp_apply.setEnabled(False)
         self.btn_tune_vp_apply.clicked.connect(self._apply_velpos_clicked)
         self.btn_tune_vp_restore = QtWidgets.QPushButton("Restore P2 → Original")
         self.btn_tune_vp_restore.setEnabled(False)
         self.btn_tune_vp_restore.clicked.connect(self._restore_velpos_clicked)
-        self.btn_tune_vp_save = QtWidgets.QPushButton("Save P2 → SV")
+        self.btn_tune_vp_save = QtWidgets.QPushButton("Save P2 → SV (LOCKED)")
         self.btn_tune_vp_save.setEnabled(False)
         self.btn_tune_vp_save.clicked.connect(self._save_velpos_clicked)
         p2row.addWidget(p2label)
         for b in (self.btn_tune_vp_apply, self.btn_tune_verify,
                   self.btn_tune_vp_restore, self.btn_tune_vp_save):
             p2row.addWidget(b)
+        gain_lock_reason = (
+            "Hardware gain Apply/Save is locked until a durable "
+            "pre-assignment RAM-trial WAL is implemented.")
+        for b in (self.btn_tune_apply, self.btn_tune_p1_save,
+                  self.btn_tune_vp_apply, self.btn_tune_vp_save):
+            b.setToolTip(gain_lock_reason)
         expert_layout.addLayout(p2row)
         v.addWidget(self.tuning_expert_frame)
         note = QtWidgets.QLabel("ⓘ 우리 자체 오토튠 — EAS 내부 알고리즘 재현이 아니라, 드라이브 명령으로 "
@@ -6580,19 +6730,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tuning_expert_frame.setVisible(expert)
         if expert:
             self.tune_title.setText(
-                "EXPERT TUNING  ·  Controlled RAM trials and durable save")
+                "EXPERT TUNING  ·  Candidate review (gain Apply/Save locked)")
             self.tuning_mode_note.setText(
-                "Expert mode does not bypass any gate. Apply writes RAM, Verify can move "
-                "the motor, Restore writes the frozen original values, and Save performs "
-                "one durable SV only after exact trial authority is GREEN.")
-            self.lbl_tuning_mode_risk.setText("RAM WRITE / MOTION / PERSIST-SV")
+                "Expert mode does not bypass any gate. Hardware P1/P2 gain Apply and "
+                "Save are locked until a durable pre-assignment RAM-trial WAL exists. "
+                "Verify can still move the motor for the currently installed gains; "
+                "retained recovery trials, if any, remain Restore-only.")
+            self.lbl_tuning_mode_risk.setText("MOTION / GAIN APPLY LOCKED")
         else:
             self.tune_title.setText(
                 "QUICK TUNING  ·  Guided identification + design")
             self.tuning_mode_note.setText(
                 "Guided view measures and computes candidates only. Phase 1 energizes the "
-                "motor; commutation and Phase 2 can rotate it. Applying or saving a result "
-                "is intentionally kept in Expert mode.")
+                "motor; commutation and Phase 2 can rotate it. Hardware gain Apply/Save "
+                "remain locked in every mode pending a durable pre-assignment trial WAL.")
             self.lbl_tuning_mode_risk.setText("ENERGIZES / MOTION")
 
     def _show_tuning_mode(self, mode):
@@ -6736,6 +6887,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tune_status.setText("⏹ Abort 요청됨 — 드라이브를 안전 상태로 되돌리는 중…")
 
     def _apply_autotune_clicked(self):
+        if not PRODUCTION_GAIN_TRIALS_ENABLED:
+            self._flash(
+                "P1 Apply locked: durable pre-assignment RAM-trial WAL is not "
+                "available for hardware links.")
+            return
         if getattr(self, "_motor_write_inflight", False):
             self._flash("Motor profile 저장 중에는 P1 게인을 적용할 수 없습니다.")
             return
@@ -6751,11 +6907,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 or r.status not in (autotune_current.GREEN, autotune_current.YELLOW)):
             self._flash("적용할 유효한 결과가 없습니다."); return
         btn = QtWidgets.QMessageBox.question(
-            self, "P1 RAM 임시 적용 확인",
+            self, "P1 synthetic/retained RAM trial 확인",
+            "개발 회귀/retained recovery 전용 경로입니다. Production hardware entry는 잠겨 있습니다.\n"
             "산출된 전류루프 게인을 RAM에만 적용합니다 (모터 OFF에서만).\n"
             "적용 전에 원래 KP[1]/KI[1]을 저장하고, 이 단계에서는 SV를 실행하지 않습니다.\n\n"
             "• KP[1] = %.6g V/A\n• KI[1] = %.6g Hz\n"
-            "• 적용 후 Restore P1 또는 Save P1 → SV를 선택\n\nRAM 임시 적용을 진행할까요?"
+            "• 적용 후 Restore P1만 가능 (Save P1 → SV는 검증 capability 미구현으로 잠김)"
+            "\n\nRAM 임시 적용을 진행할까요?"
             % (r.kp_v_per_a, r.ki_hz),
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No)
@@ -6789,6 +6947,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _save_current_clicked(self):
         trial = getattr(self, "_p1_gain_trial", None)
+        if (trial is not None
+                and not autotune_current.p1_gain_trial_has_save_authority(
+                    trial)):
+            self._flash(
+                "P1 Save locked: session-bound on-motor verification "
+                "capability is unavailable while E4 remains RED")
+            return
         if trial is None:
             self._flash("저장할 P1 RAM 게인 시험이 없습니다.")
             return
@@ -6804,9 +6969,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._flash("이 P1 시험은 이전 연결 세대입니다 — Restore만 허용됩니다.")
             return
         btn = QtWidgets.QMessageBox.question(
-            self, "P1 게인 영구저장 확인",
-            "RAM에 적용된 KP[1]/KI[1]을 최종 되읽기하고, 임시 적용값과 모두 일치할 때만 "
-            "SV로 영구저장합니다.\n\nP1 게인을 저장할까요?",
+            self, "P1 legacy/offline 저장 경로 확인",
+            "Production에서는 도달할 수 없는 legacy/offline 경로입니다. RAM의 KP[1]/KI[1]을 "
+            "최종 되읽기하고 임시 적용값과 모두 일치할 때만 SV를 검사합니다.\n\n계속할까요?",
             QtWidgets.QMessageBox.StandardButton.Yes |
             QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No)
@@ -6867,9 +7032,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._at_result_path = self._dump_autotune_result(res)
         # Apply is offered only for an applicable (GREEN/YELLOW) result — a RED/aborted
         # run must never leave the previous run's Apply enabled.
-        self.btn_tune_apply.setEnabled(
-            on and not trial_active and
-            res.status in (autotune_current.GREEN, autotune_current.YELLOW))
+        self.btn_tune_apply.setEnabled(False)
         g = self.tune_gain_fields
         if res.r_pp_ohm is not None:
             g["r_pp"].setText("%.6g Ω" % res.r_pp_ohm)
@@ -6893,11 +7056,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if res.status == autotune_current.GREEN:
             self._set_tune_stage(-1, done_upto=self._AT_PHASE1_LAST)
             saved = ("  ·  저장: %s" % self._at_result_path) if self._at_result_path else ""
-            self.tune_status.setText("✅ GREEN — 산출 완료. Apply P1 → RAM으로 시험 적용할 수 있습니다.%s" % saved)
-            self.btn_tune_apply.setEnabled(on and not trial_active)
+            self.tune_status.setText(
+                "✅ GREEN — 후보 산출 완료. Hardware P1 Apply는 durable "
+                "RAM-trial WAL 대기 중 잠김.%s" % saved)
+            self.btn_tune_apply.setEnabled(False)
         elif res.status == autotune_current.YELLOW:
-            self.tune_status.setText("⚠ YELLOW — %s (검토 후 Apply 가능)" % (res.reason or ""))
-            self.btn_tune_apply.setEnabled(on and not trial_active)
+            self.tune_status.setText(
+                "⚠ YELLOW — %s (후보 검토만 가능; Hardware Apply 잠김)"
+                % (res.reason or ""))
+            self.btn_tune_apply.setEnabled(False)
         else:
             self.tune_status.setText("⛔ RED — %s" % (res.reason or "실패"))
         self._set_connected_ui(bool(getattr(self, "_ui_connected", False)))
@@ -6935,7 +7102,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._p1_trial_generation = getattr(
                     self, "_tuning_authority_generation", 0)
                 self.tune_status.setText(
-                    "P1 게인 RAM 임시 적용 완료 — SV 미실행. Restore 또는 Save P1을 선택하세요.")
+                    "P1 게인 RAM 임시 적용 완료 — SV 미실행. "
+                    "Save P1은 잠김; Restore P1로 원본을 복원하세요.")
             else:
                 if MainWindow._retain_failed_gain_trial(trial):
                     self._p1_gain_trial = trial
@@ -6962,7 +7130,7 @@ class MainWindow(QtWidgets.QMainWindow):
             if ok:
                 self._p1_gain_trial = None
                 self._p1_trial_generation = None
-                self.tune_status.setText("✅ P1 게인 SV 영구저장 완료.")
+                self.tune_status.setText("✅ P1 legacy/offline SV 경로 완료.")
             else:
                 if MainWindow._retain_failed_gain_trial(trial):
                     self._p1_gain_trial = trial
@@ -7014,9 +7182,14 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (p1 or p2):
             return False
         phase = "P1" if p1 else "P2"
-        save_gate = "Save P1 → SV" if p1 else "GREEN 검증 후 Save P2 → SV"
-        msg = ("%s RAM 임시 게인이 남아 있습니다. 먼저 Restore로 복원하거나, %s를 "
-               "완료한 뒤 %s하세요." % (phase, save_gate, action))
+        if p1:
+            msg = ("P1 RAM 임시 게인이 남아 있습니다. Save P1은 검증 "
+                   "capability 미구현으로 잠겨 있으므로, Restore로 복원한 "
+                   "뒤 %s하세요." % action)
+        else:
+            msg = ("P2 RAM 임시 게인이 남아 있습니다. Production Save는 "
+                   "durable pre-assignment trial WAL 부재로 잠겨 있으므로, "
+                   "Restore로 복원한 뒤 %s하세요." % action)
         self._flash(msg)
         self.tune_status.setText("⚠ 미저장 %s 게인 보호 — %s" % (phase, msg))
         return True
@@ -7101,6 +7274,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.start_velpos_autotune(ov)     # cap override + module defaults
 
     def _apply_velpos_clicked(self):
+        if not PRODUCTION_GAIN_TRIALS_ENABLED:
+            self._flash(
+                "P2 Apply locked: durable pre-assignment RAM-trial WAL is not "
+                "available for hardware links.")
+            return
         if getattr(self, "_motor_write_inflight", False):
             self._flash("Motor profile 저장 중에는 P2 게인을 적용할 수 없습니다.")
             return
@@ -7114,12 +7292,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 or r.status not in (autotune_velpos.GREEN, autotune_velpos.YELLOW)):
             self._flash("적용할 유효한 Phase 2 결과가 없습니다."); return
         btn = QtWidgets.QMessageBox.question(
-            self, "Phase 2 RAM 임시 적용 확인",
+            self, "Phase 2 synthetic/retained RAM trial 확인",
+            "개발 회귀/retained recovery 전용 경로입니다. Production hardware entry는 잠겨 있습니다.\n"
             "산출된 속도/위치 게인을 RAM에만 임시 적용합니다 (모터 OFF에서만).\n"
             "원래 게인을 먼저 저장하며, 이 단계에서는 SV를 실행하지 않습니다.\n\n"
             "• KP[2] = %.6g A/(cnt/s)\n• KI[2] = %.6g Hz\n• KP[3] = %.6g 1/s\n"
-            "• 다음 단계: Run Verify → GREEN이면 Save P2 → SV\n"
-            "• 검증 실패/Abort: 원래 게인 자동 복원\n"
+            "• 이 retained/synthetic 경로도 Production Save 권한은 만들지 않습니다.\n"
+            "• 검증 뒤 Restore로 원래 게인을 복원합니다.\n"
             "(FF[1]은 변경하지 않습니다)\n\nRAM 임시 적용을 진행할까요?"
             % (r.kp_vel, r.ki_vel_hz, r.kp_pos),
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
@@ -7153,6 +7332,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._flash("원래 P2 게인 복원 및 되읽기 확인 중…")
 
     def _save_velpos_clicked(self):
+        if not PRODUCTION_GAIN_TRIALS_ENABLED:
+            self._flash(
+                "P2 Save locked: no production RAM trial can be created "
+                "without durable pre-assignment WAL authority.")
+            return
         trial = getattr(self, "_vp_gain_trial", None)
         if (trial is None or not getattr(self, "_vp_trial_verified_green", False)
                 or getattr(self, "_vp_verified_trial", None) is not trial):
@@ -7170,8 +7354,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._flash("이 P2 시험은 이전 연결 세대입니다 — Restore만 허용됩니다.")
             return
         btn = QtWidgets.QMessageBox.question(
-            self, "검증된 P2 게인 영구저장 확인",
-            "방금 검증런에서 GREEN을 받은 RAM 게인을 SV로 영구저장합니다.\n\n"
+            self, "P2 legacy/offline 저장 경로 확인",
+            "Production에서는 도달할 수 없는 legacy/offline 경로입니다. 검증런 GREEN을 받은 "
+            "RAM 게인의 persistence state machine만 검사합니다.\n\n"
             "저장 직전에 KP[2]/KI[2]/KP[3] 전체를 다시 읽어 임시 적용값과 "
             "일치할 때만 SV를 보냅니다.\n\n영구저장할까요?",
             QtWidgets.QMessageBox.StandardButton.Yes |
@@ -7194,6 +7379,13 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         if not (self.worker and self.worker.isRunning()):
             self._flash("연결 후 사용하세요."); return
+        if not self._motion_signature_is_current():
+            self._flash(
+                "P2 Verify locked: this connection requires Commutation "
+                "Signature GREEN first.")
+            return
+        signature_generation = self._motion_signature_generation
+        signature_token = self._motion_signature_token
         btn = QtWidgets.QMessageBox.warning(
             self, "게인 검증런 실행 확인 (⚠ 실제 회전)",
             "⚠ F2 검증런은 모터를 실제로 회전시킵니다 (JV 스텝 300 → 900 rpm).\n\n"
@@ -7207,6 +7399,13 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QMessageBox.StandardButton.No)
         if btn != QtWidgets.QMessageBox.StandardButton.Yes:
             return
+        if (not self._motion_signature_is_current()
+                or self._motion_signature_generation != signature_generation
+                or self._motion_signature_token != signature_token):
+            self._flash(
+                "P2 Verify locked: Commutation Signature changed while "
+                "confirmation was open.")
+            return
         trial = getattr(self, "_vp_gain_trial", None)
         if (trial is not None and
                 getattr(self, "_vp_trial_generation", None) !=
@@ -7216,7 +7415,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._claim_tune_dispatch("verify", trial):
             return
         self.worker.start_verify_vp(
-            {}, trial)  # defaults (300, 900)
+            {}, trial, signature_token=signature_token)  # defaults (300, 900)
 
     def _on_verify_started(self):
         if not self._tune_signal_is_current("verify"):
@@ -7275,7 +7474,7 @@ class MainWindow(QtWidgets.QMainWindow):
                     getattr(self, "_p1_gain_trial", None) is None)
         self.btn_tune.setEnabled(on and no_trial)
         self.btn_tune_vp.setEnabled(
-            on and no_trial and self._motion_signature_green
+            on and no_trial and self._motion_signature_is_current()
             and bool(self._p1_model_overrides_for_p2()))
         self.btn_tune_signature.setEnabled(on and no_trial)
         trial_state = (getattr(trial, "persistence_state", "RAM_TRIAL")
@@ -7286,20 +7485,13 @@ class MainWindow(QtWidgets.QMainWindow):
                           and not getattr(trial, "restore_only", False))
         self.btn_tune_verify.setEnabled(
             on and getattr(self, "_p1_gain_trial", None) is None
-            and (trial is None or normal_allowed))
-        self.btn_tune_apply.setEnabled(
-            on and no_trial and getattr(self, "_at_result", None) is not None
-            and self._at_result.status in
-            (autotune_current.GREEN, autotune_current.YELLOW))
-        self.btn_tune_vp_apply.setEnabled(
-            on and no_trial and getattr(self, "_vp_result", None) is not None
-            and self._vp_result.status in (autotune_velpos.GREEN, autotune_velpos.YELLOW))
+            and (trial is None or normal_allowed)
+            and self._motion_signature_is_current())
+        self.btn_tune_apply.setEnabled(False)
+        self.btn_tune_vp_apply.setEnabled(False)
         self.btn_tune_vp_restore.setEnabled(
             on and restore_allowed)
-        self.btn_tune_vp_save.setEnabled(
-            on and normal_allowed
-            and self._vp_trial_verified_green
-            and self._vp_verified_trial is trial)
+        self.btn_tune_vp_save.setEnabled(False)
         steps = (res.evidence or {}).get("verify", {}).get("steps", [])
         parts = ["%.0frpm: OS %.1f%% 정착 %s I_ss %.3fA %s"
                  % (s["rpm"], 100 * s["overshoot_frac"],
@@ -7313,7 +7505,7 @@ class MainWindow(QtWidgets.QMainWindow):
                             else " — 원래 게인 자동 복원 실패")
         elif (trial is not None and res.status == autotune_velpos.GREEN
               and verification_matches):
-            restore_text = " — RAM 게인 유지, Save P2 → SV 가능"
+            restore_text = " — RAM 게인 유지, Production Save 잠금·Restore만 가능"
         elif trial is not None and res.status == autotune_velpos.GREEN:
             restore_text = " — 검증 토큰 불일치, Save 차단·재검증 필요"
         self.tune_status.setText(
@@ -7383,11 +7575,12 @@ class MainWindow(QtWidgets.QMainWindow):
                         getattr(self, "_vp_gain_trial", None) is not None)
         self.btn_tune.setEnabled(on and not trial_active)
         self.btn_tune_vp.setEnabled(
-            on and not trial_active and self._motion_signature_green
+            on and not trial_active and self._motion_signature_is_current()
             and bool(self._p1_model_overrides_for_p2()))
         self.btn_tune_signature.setEnabled(on and not trial_active)
         self.btn_tune_verify.setEnabled(
-            on and getattr(self, "_p1_gain_trial", None) is None)
+            on and getattr(self, "_p1_gain_trial", None) is None
+            and self._motion_signature_is_current())
         self._vp_result_path = self._dump_velpos_result(res)
         evidence = res.evidence or {}
         signature = (self._vp_signature_run or
@@ -7418,9 +7611,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vp_result_generation = getattr(
             self, "_tuning_authority_generation", 0)
         # RED/aborted must never leave a previous run's Apply enabled (Phase-1 fix)
-        self.btn_tune_vp_apply.setEnabled(
-            on and not trial_active and
-            res.status in (autotune_velpos.GREEN, autotune_velpos.YELLOW))
+        self.btn_tune_vp_apply.setEnabled(False)
         g = self.tune_gain_fields
         if res.k_a is not None:
             g["k_a"].setText("%.5g cnt/s²/A" % res.k_a)
@@ -7442,9 +7633,11 @@ class MainWindow(QtWidgets.QMainWindow):
         if res.status == autotune_velpos.GREEN:
             self._set_tune_stage(-1, done_upto=self._AT_PHASE2_LAST)
             saved = ("  ·  저장: %s" % self._vp_result_path) if self._vp_result_path else ""
-            self.tune_status.setText("✅ Phase 2 GREEN — 산출 완료. Apply P2로 적용 가능.%s" % saved)
+            self.tune_status.setText(
+                "✅ Phase 2 GREEN — 후보 산출 완료. Hardware P2 Apply/Save는 "
+                "durable RAM-trial WAL 대기 중 잠김.%s" % saved)
         elif res.status == autotune_velpos.YELLOW:
-            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (검토 후 Apply 가능)"
+            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (후보 검토만 가능; Hardware Apply 잠김)"
                                      % (res.reason or ""))
         else:
             self.tune_status.setText("⛔ Phase 2 RED — %s" % (res.reason or "실패"))
@@ -7478,7 +7671,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._vp_verified_trial = None
                 self._vp_verified_generation = None
                 self.tune_status.setText(
-                    "P2 게인 RAM 임시 적용 완료 — SV 미실행. Run Verify를 실행하세요.")
+                    "P2 synthetic/retained RAM trial 완료 — Production Save 잠금; Verify 후 Restore하세요.")
             else:
                 # begin returns a trial only when automatic rollback could not
                 # be proven; retain it so the operator can retry Restore.
@@ -7519,7 +7712,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._vp_trial_verified_green = False
                 self._vp_verified_trial = None
                 self._vp_verified_generation = None
-                self.tune_status.setText("✅ P2 검증 게인 SV 영구저장 완료.")
+                self.tune_status.setText("✅ P2 legacy/offline SV 경로 완료.")
             else:
                 if MainWindow._retain_failed_gain_trial(trial):
                     self._vp_gain_trial = trial
@@ -7631,6 +7824,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vp_verified_trial = None
         self._vp_verified_generation = None
         self._motion_signature_green = False
+        self._motion_signature_token = None
+        self._motion_signature_generation = None
         self._update_persistence_badge()
         # A status update may refine an already admitted connection, but it
         # must never create ONLINE authority by itself while a rejected worker
@@ -8473,6 +8668,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._invalidate_tuning_result_authority()
         return self._tuning_authority_generation
 
+    def _motion_signature_is_current(self):
+        return bool(
+            getattr(self, "_motion_signature_green", False)
+            and isinstance(getattr(self, "_motion_signature_token", None), str)
+            and self._motion_signature_token
+            and getattr(self, "_motion_signature_generation", None) ==
+            getattr(self, "_tuning_authority_generation", 0))
+
     def _set_connected_ui(self, on: bool):
         if not on:
             self._invalidate_tuning_result_authority()
@@ -8504,7 +8707,9 @@ class MainWindow(QtWidgets.QMainWindow):
             "RAM_TRIAL", "RESTORE_FAILED", "AUTHORITY_INVALID")
         p1_save_allowed = (p1_active and p1_trial_current
                            and p1_state == "RAM_TRIAL"
-                           and not getattr(self._p1_gain_trial, "restore_only", False))
+                           and not getattr(self._p1_gain_trial, "restore_only", False)
+                           and autotune_current.p1_gain_trial_has_save_authority(
+                               self._p1_gain_trial))
         vp_restore_allowed = vp_active and vp_state in ("RAM_TRIAL", "RESTORE_FAILED")
         vp_normal_allowed = (vp_active and vp_trial_current
                              and vp_state == "RAM_TRIAL"
@@ -8548,11 +8753,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_tune_vp.setEnabled(
                 telemetry_trusted and not trial_active and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked
-                and self._motion_signature_green and p1_model_ready)
+                and self._motion_signature_is_current() and p1_model_ready)
         if hasattr(self, "btn_tune_verify"):
             self.btn_tune_verify.setEnabled(
                 telemetry_trusted and not p1_active
                 and (not vp_active or vp_normal_allowed)
+                and self._motion_signature_is_current()
                 and not dispatch_inflight and not motor_write_inflight
                 and not persistence_locked)
         if hasattr(self, "btn_tune_apply"):
@@ -8560,10 +8766,7 @@ class MainWindow(QtWidgets.QMainWindow):
                           getattr(self, "_at_result_generation", None) == generation and
                           self._at_result.status in
                           (autotune_current.GREEN, autotune_current.YELLOW))
-            self.btn_tune_apply.setEnabled(
-                telemetry_trusted and not trial_active and applicable
-                and not dispatch_inflight and not motor_write_inflight
-                and not persistence_locked)
+            self.btn_tune_apply.setEnabled(False)
         if hasattr(self, "btn_tune_p1_restore"):
             self.btn_tune_p1_restore.setEnabled(
                 telemetry_trusted and p1_restore_allowed and not dispatch_inflight
@@ -8577,27 +8780,19 @@ class MainWindow(QtWidgets.QMainWindow):
                 telemetry_trusted and vp_restore_allowed and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_vp_save"):
-            self.btn_tune_vp_save.setEnabled(
-                telemetry_trusted and vp_normal_allowed and
-                getattr(self, "_vp_trial_verified_green", False) and
-                getattr(self, "_vp_verified_trial", None) is
-                getattr(self, "_vp_gain_trial", None)
-                and getattr(self, "_vp_verified_generation", None) == generation
-                and not dispatch_inflight and not motor_write_inflight
-                and not persistence_locked)
+            self.btn_tune_vp_save.setEnabled(False)
         if hasattr(self, "btn_tune_vp_apply"):
             applicable = (getattr(self, "_vp_result", None) is not None and
                           getattr(self, "_vp_result_generation", None) == generation and
                           self._vp_result.status in
                           (autotune_velpos.GREEN, autotune_velpos.YELLOW))
-            self.btn_tune_vp_apply.setEnabled(
-                telemetry_trusted and not trial_active and applicable
-                and not dispatch_inflight and not motor_write_inflight
-                and not persistence_locked)
+            self.btn_tune_vp_apply.setEnabled(False)
         if persistence_locked and hasattr(self, "btn_tune_abort"):
             self.btn_tune_abort.setEnabled(False)
         if not on:
             self._motion_signature_green = False
+            self._motion_signature_token = None
+            self._motion_signature_generation = None
             self._motion_inflight = False
             self._motion_stop_pending = False
             for b in ("btn_tune_abort", "btn_tune_apply", "btn_tune_p1_restore",
@@ -8903,8 +9098,8 @@ def _smoke_autotune(app, win):
     """Headless acceptance for the auto-tune UI glue (no hardware, offscreen).
 
     Drives the DriveWorker->GUI signal handlers with synthetic progress + a GREEN
-    result and asserts the stage wizard, measured/gain fields, and Apply gating.
-    Then feeds a RED result and asserts Apply is re-disabled. Saves a screenshot.
+    result and asserts the stage wizard, measured/gain fields, and production
+    Apply lock. Then feeds a RED result and asserts the lock remains. Saves a screenshot.
     """
     sys.stdout.reconfigure(encoding="utf-8")
     ac = autotune_current
@@ -8944,13 +9139,15 @@ def _smoke_autotune(app, win):
     chk("KP[1] populated", g["kp_cur"].text().startswith("0.0711") and "V/A" in g["kp_cur"].text())
     chk("KI[1] populated", g["ki_cur"].text().startswith("812") and "Hz" in g["ki_cur"].text())
     chk("PM populated", "°" in g["pm"].text())
-    chk("Apply ENABLED after GREEN", win.btn_tune_apply.isEnabled())
+    chk("Apply remains production-locked after GREEN",
+        not win.btn_tune_apply.isEnabled()
+        and "LOCKED" in win.btn_tune_apply.text())
     chk("Abort disabled after result", not win.btn_tune_abort.isEnabled())
     chk("stages 0..2 all done (●)", all("●" in win.tune_stage_lbls[i].text() for i in range(3)))
     chk("status shows GREEN", "GREEN" in win.tune_status.text())
-    chk("result cached for Apply", win._at_result is res)
+    chk("result cached for candidate review", win._at_result is res)
 
-    # --- RED result re-disables Apply ---
+    # --- RED result keeps Apply disabled ---
     win._on_autotune_result(ac.AutotuneResult(status=ac.RED, reason="SE 미주입 (U1)"))
     app.processEvents()
     chk("Apply disabled after RED", not win.btn_tune_apply.isEnabled())
@@ -8974,8 +9171,8 @@ def _smoke_velpos(app, win):
     progress_fn/cancel_fn->signals) against the T3 VPSim plant and checks the
     P0..DONE progress stream + gain oracles.
     Part B — HANDLERS: drives the GUI slots with synthetic progress + GREEN
-    result and asserts wizard stages 3..5, result fields, Apply gating, and
-    that a RED result re-disables Apply.  Saves a screenshot.  No hardware.
+    result and asserts wizard stages 3..5, result fields, the production Apply
+    lock, and that a RED result keeps Apply disabled. Saves a screenshot. No hardware.
     """
     sys.stdout.reconfigure(encoding="utf-8")
     fails = []
@@ -9149,21 +9346,25 @@ def _smoke_velpos(app, win):
         return _smoke_refresh_ui(win, smoke_sequence, mo=0)
     app.processEvents()
     chk("Run Signature enabled on connect", win.btn_tune_signature.isEnabled())
-    chk("Run Phase 2 enabled on connect", win.btn_tune_vp.isEnabled())
+    chk("Phase 2 locked until current signature + P1 model",
+        not win.btn_tune_vp.isEnabled())
+    chk("Verify locked until current commutation signature",
+        not win.btn_tune_verify.isEnabled())
     chk("Apply P2 disabled initially", not win.btn_tune_vp_apply.isEnabled())
-    chk("P1/P2 action vocabulary is RAM -> Restore/Save",
-        win.btn_tune_apply.text() == "Apply P1 → RAM"
+    chk("P1/P2 production Apply/Save vocabulary is visibly locked",
+        win.btn_tune_apply.text() == "Apply P1 → RAM (LOCKED)"
         and win.btn_tune_p1_restore.text() == "Restore P1 → Original"
-        and win.btn_tune_p1_save.text() == "Save P1 → SV"
-        and win.btn_tune_vp_apply.text() == "Apply P2 → RAM")
+        and win.btn_tune_p1_save.text() == "Save P1 → SV (LOCKED)"
+        and win.btn_tune_vp_apply.text() == "Apply P2 → RAM (LOCKED)"
+        and win.btn_tune_vp_save.text() == "Save P2 → SV (LOCKED)")
     p1_gui_trial = autotune_current.GainTrialP1(
         original={"KP[1]": 0.06, "KI[1]": 700.0},
         applied={"KP[1]": 0.0712, "KI[1]": 812.9})
     p1_gui_trial.persistence_state = "RAM_TRIAL"
     win._on_current_gain_action("begin", True, "P1 RAM trial", p1_gui_trial)
     win._set_connected_ui(True)
-    chk("P1 trial exposes Restore/Save and locks motion/config",
-        win.btn_tune_p1_restore.isEnabled() and win.btn_tune_p1_save.isEnabled()
+    chk("P1 trial is Restore-only and locks motion/config",
+        win.btn_tune_p1_restore.isEnabled() and not win.btn_tune_p1_save.isEnabled()
         and not win.btn_tune_vp.isEnabled() and not win.btn_zero.isEnabled())
     p1_gui_trial.persistence_state = "UNKNOWN"
     win._on_current_gain_action(
@@ -9236,12 +9437,13 @@ def _smoke_velpos(app, win):
     chk("PM vel populated (GM 병기)", "°" in g["pm_vel"].text()
         and "GM" in g["pm_vel"].text())
     chk("PM pos populated", "°" in g["pm_pos"].text())
-    chk("Apply P2 ENABLED after GREEN", win.btn_tune_vp_apply.isEnabled())
+    chk("Apply P2 remains production-locked after GREEN",
+        not win.btn_tune_vp_apply.isEnabled())
     chk("Abort disabled after result", not win.btn_tune_abort.isEnabled())
     chk("stages 3..5 all done (●)",
         all("●" in win.tune_stage_lbls[i].text() for i in (3, 4, 5)))
     chk("status shows GREEN", "GREEN" in win.tune_status.text())
-    chk("result cached for Apply", win._vp_result is res)
+    chk("result cached as a review-only candidate", win._vp_result is res)
     # RED result must re-disable Apply (Phase-1 bug-fix carried over)
     win._on_velpos_result(ac.AutotuneVPResult(status=ac.RED, reason="G4 실패 (모의)"))
     app.processEvents()
@@ -9251,7 +9453,12 @@ def _smoke_velpos(app, win):
 
     # ---- Part B2: verify-run handlers ----------------------------------------------------
     win._set_connected_ui(True)                   # re-ground: connected state
-    chk("Run Verify enabled on connect", win.btn_tune_verify.isEnabled())
+    win._on_motion_authority(False, "smoke: signature revoked")
+    chk("Run Verify remains locked without current signature",
+        not win.btn_tune_verify.isEnabled())
+    win._on_motion_authority(True, "smoke: current signature GREEN")
+    chk("Run Verify enabled only with current signature",
+        win.btn_tune_verify.isEnabled())
     first_claim = win._claim_tune_dispatch("p2")
     second_claim = win._claim_tune_dispatch("verify")
     chk("GUI dispatch lock rejects rapid duplicate tune/verify",
@@ -9312,8 +9519,8 @@ def _smoke_velpos(app, win):
     win._claim_tune_dispatch("verify", gui_trial)
     win._on_verify_result(trial_green)
     win._set_connected_ui(True)
-    chk("trial UI: Save enabled only after GREEN",
-        win.btn_tune_vp_save.isEnabled() and win.btn_tune_vp_restore.isEnabled()
+    chk("trial UI: production Save remains locked after GREEN",
+        not win.btn_tune_vp_save.isEnabled() and win.btn_tune_vp_restore.isEnabled()
         and win._vp_verified_trial is gui_trial)
     gui_trial.persistence_state = "UNKNOWN"
     win._on_velpos_gain_action(

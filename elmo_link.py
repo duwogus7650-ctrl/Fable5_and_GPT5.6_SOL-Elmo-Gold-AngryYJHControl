@@ -21,6 +21,7 @@ import threading
 import time
 import uuid
 import zipfile
+from decimal import Decimal, InvalidOperation
 
 import persistence_audit
 
@@ -53,6 +54,83 @@ _MOTOR_INTEGER_REGISTERS = frozenset((
 ))
 _MOTOR_TYPE_ENUM = frozenset((0, 1, 2, 3, 4, 6))
 _MOTOR_SAFETY_REGISTERS = ("MO", "SO", "VX", "PS", "MF")
+_P1_CONFIG_REGISTERS = persistence_audit.PHASE_REGISTERS["P1_CONFIG"]
+_P1_CONFIG_BOUNDED_REGISTERS = frozenset((
+    "KP[1]", "KI[1]", "SE[2]", "SE[3]", "TC",
+))
+_P1_CONFIG_EXACT_RESTORE_REGISTERS = frozenset((
+    "UM", "SC[8]", "CA[42]", "CA[43]", "CA[44]", "CA[70]",
+    "SE[1]", "SE[4]", "SE[5]", "SE[6]", "SE[7]",
+))
+_P2_LIMITS_REGISTERS = persistence_audit.PHASE_REGISTERS["P2_LIMITS"]
+_P2_LIMITS_BOUNDED_REGISTERS = frozenset(("TC", "JV", "PA", "UM"))
+
+
+def _normalize_p1_config_mutation_bounds(value):
+    if not isinstance(value, dict) or set(value) != _P1_CONFIG_BOUNDED_REGISTERS:
+        raise ValueError(
+            "P1_CONFIG mutation bounds must cover exactly %s" %
+            (tuple(sorted(_P1_CONFIG_BOUNDED_REGISTERS)),))
+    normalized = {}
+    for register in sorted(_P1_CONFIG_BOUNDED_REGISTERS):
+        bounds = value[register]
+        if (not isinstance(bounds, (tuple, list)) or len(bounds) != 2
+                or any(isinstance(item, bool)
+                       or not isinstance(item, (int, float))
+                       or not math.isfinite(float(item)) for item in bounds)):
+            raise ValueError(
+                "P1_CONFIG mutation bounds for %s must be two finite numbers" %
+                register)
+        lower, upper = (float(bounds[0]), float(bounds[1]))
+        if lower > upper:
+            raise ValueError(
+                "P1_CONFIG mutation bounds for %s are reversed" % register)
+        if register in {"KP[1]", "KI[1]", "SE[3]"} and lower <= 0.0:
+            raise ValueError(
+                "P1_CONFIG mutation bounds for %s must stay positive" % register)
+        if register in {"SE[2]", "TC"} and lower < 0.0:
+            raise ValueError(
+                "P1_CONFIG mutation bounds for %s must stay nonnegative" %
+                register)
+        if register == "KP[1]" and upper > 100.0:
+            raise ValueError("P1_CONFIG KP[1] bound exceeds 100")
+        if register == "KI[1]" and upper > 5000.0:
+            raise ValueError("P1_CONFIG KI[1] bound exceeds 5000")
+        normalized[register] = (lower, upper)
+    return normalized
+
+
+def _normalize_p2_limits_mutation_bounds(value):
+    if not isinstance(value, dict) or set(value) != _P2_LIMITS_BOUNDED_REGISTERS:
+        raise ValueError(
+            "P2_LIMITS mutation bounds must cover exactly %s" %
+            (tuple(sorted(_P2_LIMITS_BOUNDED_REGISTERS)),))
+    normalized = {}
+    for register in sorted(_P2_LIMITS_BOUNDED_REGISTERS):
+        bounds = value[register]
+        if (not isinstance(bounds, (tuple, list)) or len(bounds) != 2
+                or any(isinstance(item, bool)
+                       or not isinstance(item, (int, float))
+                       or not math.isfinite(float(item)) for item in bounds)):
+            raise ValueError(
+                "P2_LIMITS mutation bounds for %s must be two finite numbers" %
+                register)
+        lower, upper = (float(bounds[0]), float(bounds[1]))
+        if lower > upper:
+            raise ValueError(
+                "P2_LIMITS mutation bounds for %s are reversed" % register)
+        if register in {"TC", "JV"} and not (lower <= 0.0 <= upper):
+            raise ValueError(
+                "P2_LIMITS %s bounds must include zero" % register)
+        if register == "PA":
+            if (not lower.is_integer() or not upper.is_integer()
+                    or lower < -(1 << 31) or upper > (1 << 31) - 1):
+                raise ValueError(
+                    "P2_LIMITS PA bounds must be signed 32-bit integers")
+        if register == "UM" and {lower, upper} != {3.0, 5.0}:
+            raise ValueError("P2_LIMITS UM values must be exactly 3 and 5")
+        normalized[register] = (lower, upper)
+    return normalized
 
 
 class TelemetrySnapshotError(IOError):
@@ -212,13 +290,15 @@ def _is_motion_command(core: str) -> bool:
     """Fail-closed classification for power-enable and motion commands."""
     if core.startswith("MO="):
         raw_value = core[3:]
-        try:
-            value = float(raw_value)
-        except (TypeError, ValueError, OverflowError):
-            return True
+        value = _finite_decimal(raw_value)
         # Only a finite numeric zero is a proven disable operation.  Every
         # nonzero/nonfinite spelling is power-enable capable and motion-gated.
-        return not math.isfinite(value) or value != 0.0
+        return value is None or value != Decimal(0)
+    if core.startswith("TW[80]="):
+        value = _finite_decimal(core[len("TW[80]="):])
+        # TW[80]=1 starts the armed sine reference and can inject current.
+        # Only an exact finite zero is a proven generator stop.
+        return value is None or value != Decimal(0)
     return any(core.startswith(prefix)
                for prefix in _NON_MO_MOTION_PREFIXES)
 
@@ -227,13 +307,10 @@ def _is_safe_deenergizing_command(core: str) -> bool:
     """Return True only for narrowly proven software shutdown commands."""
     if core == "ST":
         return True
-    for prefix in ("MO=", "TC="):
+    for prefix in ("MO=", "TC=", "TW[80]="):
         if core.startswith(prefix):
-            try:
-                value = float(core[len(prefix):])
-            except (TypeError, ValueError, OverflowError):
-                return False
-            return math.isfinite(value) and value == 0.0
+            value = _finite_decimal(core[len(prefix):])
+            return value is not None and value == Decimal(0)
     return False
 
 
@@ -250,6 +327,94 @@ def _to_num(s: str):
         return float(t)
     except ValueError:
         return t
+
+
+def _finite_decimal(value) -> Decimal | None:
+    """Parse one complete finite numeric token without binary rounding."""
+
+    if value is None:
+        return None
+    token = str(value).strip().rstrip(";").strip()
+    try:
+        number = Decimal(token)
+    except (InvalidOperation, ValueError):
+        return None
+    return number if number.is_finite() else None
+
+
+def _strict_integer_response(value, register: str) -> int:
+    number = _finite_decimal(value)
+    if number is None or number != number.to_integral_value():
+        raise ValueError(
+            "%s readback must be an exact integer literal: %r" %
+            (register, value))
+    return int(number)
+
+
+def _strict_float_response(value, register: str) -> float:
+    """Parse a finite decimal only when binary conversion preserves its value."""
+
+    number = _finite_decimal(value)
+    if number is None:
+        raise ValueError(
+            "%s readback must be a finite numeric literal: %r" %
+            (register, value))
+    observed = float(number)
+    if not math.isfinite(observed) or number != Decimal(str(observed)):
+        raise ValueError(
+            "%s readback exceeds exact numeric precision: %r" %
+            (register, value))
+    return observed
+
+
+def _decimal_equals(number: Decimal | None, expected) -> bool:
+    if number is None:
+        return False
+    try:
+        return number == Decimal(str(expected))
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def _decimal_in_closed_range(number: Decimal | None, lower, upper) -> bool:
+    if number is None:
+        return False
+    try:
+        return Decimal(str(lower)) <= number <= Decimal(str(upper))
+    except (InvalidOperation, ValueError):
+        return False
+
+
+def _numeric_response_preserving_decimal_mismatch(
+        value, expected_values=()):
+    """Return numeric readback without rounding a near-target decimal to target.
+
+    The pure audit layer accepts only ``int``/``float`` values.  This adapter
+    maps an exact textual match back to the frozen expected value, but moves a
+    different decimal to a neighbouring representable float when binary
+    conversion alone would otherwise make it appear equal.
+    """
+
+    number = _finite_decimal(value)
+    if number is None:
+        return _to_num(value)
+    expected_values = tuple(expected_values)
+    for expected in expected_values:
+        if _decimal_equals(number, expected):
+            return expected
+    observed = float(number)
+    finite_targets = {
+        float(expected) for expected in expected_values
+        if not isinstance(expected, bool)
+        and isinstance(expected, (int, float))
+        and math.isfinite(float(expected))
+    }
+    while math.isfinite(observed) and observed in finite_targets:
+        shifted = math.nextafter(observed, math.inf)
+        if shifted == observed:
+            break
+        observed = shifted
+    return observed
 
 
 def _drive_numeric_literal(value) -> str:
@@ -296,6 +461,9 @@ def _normalize_motor_writes(writes) -> dict[str, float]:
 class ElmoLink:
     """Read-oriented transport to a single Gold drive over USB (default COM3)."""
 
+    p1_gain_trial_durability_mode = "LOCKED_PENDING_DURABLE_WAL"
+    p2_gain_trial_durability_mode = "LOCKED_PENDING_DURABLE_WAL"
+
     def __init__(self, com_port: str = "COM3"):
         self.com_port = com_port
         self._comm = None
@@ -308,6 +476,9 @@ class ElmoLink:
         self._persistence_unknown_latched = False
         self._prepared_persistence_attempt_id = None
         self._acknowledged_persistence_attempt_id = None
+        self._prepared_p1_config_bounds = None
+        self._prepared_p2_limits_bounds = None
+        self._verified_p2_limits_applied_id = None
         # Serializes capability adjudication, consumption, and vendor I/O.
         # In particular two concurrent callers can never consume one SV
         # capability twice.
@@ -333,20 +504,53 @@ class ElmoLink:
         return EAS
 
     def connect(self):
+        """Create one transport session atomically with persistence commands."""
+        with self._persistence_command_lock:
+            return self._connect_locked()
+
+    def _connect_locked(self):
+        if self._comm is not None:
+            raise RuntimeError(
+                "connect requires a fully disconnected link; call disconnect "
+                "before creating a replacement transport session")
         EAS = self._ns()
-        self._factory = EAS.DriveCommunicationFactory()
-        info = self._factory.CreateUSBCommunicationInfo(self.com_port)
-        self._comm = self._factory.CreateCommunication(info)
+        factory = EAS.DriveCommunicationFactory()
+        info = factory.CreateUSBCommunicationInfo(self.com_port)
+        comm = factory.CreateCommunication(info)
         # Connect has one OUT param (errorObj) -> omit from call, returned in tuple
-        ok, err = self._comm.Connect()
+        try:
+            ok, err = comm.Connect()
+        except Exception:
+            try:
+                comm.Disconnect()
+            except Exception:
+                pass
+            self._invalidate_transport_authority()
+            raise
         if not ok:
-            raise ConnectionError(f"Connect failed on {self.com_port}: {err}")
+            cleanup_error = None
+            try:
+                comm.Disconnect()
+            except Exception as exc:
+                cleanup_error = exc
+            self._invalidate_transport_authority()
+            suffix = ("; provisional Disconnect also failed: %s" %
+                      cleanup_error) if cleanup_error is not None else ""
+            raise ConnectionError(
+                f"Connect failed on {self.com_port}: {err}{suffix}")
+        # Publish the new vendor objects only after Connect returned definite
+        # success while the lifecycle/command mutex remained held.
+        self._factory = factory
+        self._comm = comm
         # One token per successful transport session.  A disconnect/reconnect on
         # the same ElmoLink object must invalidate every prior GREEN capability.
         self._transaction_session_token = object()
         self._connection_epoch = str(uuid.uuid4())
         self._prepared_persistence_attempt_id = None
         self._acknowledged_persistence_attempt_id = None
+        self._prepared_p1_config_bounds = None
+        self._prepared_p2_limits_bounds = None
+        self._verified_p2_limits_applied_id = None
         # Do not issue an implicit drive command here.  The worker's explicit
         # read-only identity handshake calls transaction_identity(); until then
         # any recorder marker on this port remains conservatively latched.
@@ -356,6 +560,22 @@ class ElmoLink:
         self._refresh_persistence_state()
         self._refresh_recorder_recovery_state()
         return True
+
+    def _invalidate_transport_authority(self):
+        """Forget every capability that belongs to a transport session."""
+        self._comm = None
+        self._factory = None
+        self._connected_drive_identity = None
+        self._prepared_persistence_attempt_id = None
+        self._acknowledged_persistence_attempt_id = None
+        self._prepared_p1_config_bounds = None
+        self._prepared_p2_limits_bounds = None
+        self._verified_p2_limits_applied_id = None
+        self._transaction_session_token = object()
+        self._connection_epoch = None
+        self._connected_firmware_context = {
+            "firmware": None, "pal": None, "boot": None}
+        self._refresh_persistence_state()
 
     @property
     def is_connected(self) -> bool:
@@ -414,6 +634,11 @@ class ElmoLink:
     def latch_persistence_unknown(self) -> None:
         """Block later SV and enable/motion I/O on this link instance."""
         self._persistence_unknown_latched = True
+        self._prepared_persistence_attempt_id = None
+        self._acknowledged_persistence_attempt_id = None
+        self._prepared_p1_config_bounds = None
+        self._prepared_p2_limits_bounds = None
+        self._verified_p2_limits_applied_id = None
 
     def persistence_status(self) -> dict:
         """Return a JSON-safe summary without exposing raw drive identity."""
@@ -512,7 +737,7 @@ class ElmoLink:
 
     def prepare_persistence_attempt(
             self, *, phase, registers, original, applied,
-            initial_state="PERSISTING") -> str:
+            initial_state="PERSISTING", mutation_bounds=None) -> str:
         """Durably journal one frozen profile transaction.
 
         This method performs filesystem I/O only.  It never sends a drive
@@ -526,6 +751,46 @@ class ElmoLink:
         expected = persistence_audit.PHASE_REGISTERS.get(str(phase))
         if expected is None or tuple(registers) != tuple(expected):
             raise ValueError("persistence register set does not match phase")
+        if str(phase) == "P1_CONFIG":
+            normalized_p1_bounds = _normalize_p1_config_mutation_bounds(
+                mutation_bounds)
+            if not isinstance(original, dict) or not isinstance(applied, dict):
+                raise ValueError(
+                    "P1_CONFIG original/applied profiles must be mappings")
+            for profile_name, profile in (
+                    ("original", original), ("applied", applied)):
+                for register in _P1_CONFIG_EXACT_RESTORE_REGISTERS:
+                    value = profile.get(register)
+                    if (isinstance(value, bool)
+                            or not isinstance(value, (int, float))
+                            or not math.isfinite(float(value))
+                            or not float(value).is_integer()):
+                        raise ValueError(
+                            "P1_CONFIG %s %s must be an exact integer" %
+                            (profile_name, register))
+            for register, bounds in normalized_p1_bounds.items():
+                if register not in applied:
+                    continue
+                value = applied[register]
+                if (isinstance(value, bool)
+                        or not isinstance(value, (int, float))
+                        or not math.isfinite(float(value))
+                        or not bounds[0] <= float(value) <= bounds[1]):
+                    raise ValueError(
+                        "P1_CONFIG applied %s lies outside prepared mutation "
+                        "bounds" % register)
+            normalized_p2_bounds = None
+        elif str(phase) == "P2_LIMITS":
+            normalized_p1_bounds = None
+            normalized_p2_bounds = _normalize_p2_limits_mutation_bounds(
+                mutation_bounds)
+        else:
+            if mutation_bounds is not None:
+                raise ValueError(
+                    "mutation bounds are supported only for P1_CONFIG or "
+                    "P2_LIMITS")
+            normalized_p1_bounds = None
+            normalized_p2_bounds = None
         identity = self._connected_drive_identity
         epoch = self._connection_epoch
         context = dict(self._connected_firmware_context)
@@ -563,7 +828,73 @@ class ElmoLink:
                 "connection changed after persistence journal prepare")
         self._prepared_persistence_attempt_id = record.record_id
         self._acknowledged_persistence_attempt_id = None
+        self._prepared_p1_config_bounds = (
+            (record.record_id, normalized_p1_bounds, False)
+            if normalized_p1_bounds is not None else None)
+        self._prepared_p2_limits_bounds = (
+            (record.record_id, session, normalized_p2_bounds, "FORWARD")
+            if normalized_p2_bounds is not None else None)
+        self._verified_p2_limits_applied_id = None
         return record.record_id
+
+    def begin_persistence_ram_rollback(self, record_id) -> None:
+        """Irreversibly replace forward authority with safe rollback."""
+
+        with self._persistence_command_lock:
+            record = self._require_matching_persistence_record(record_id)
+            if (record.phase not in {"P1_CONFIG", "P2_LIMITS"}
+                    or record.state != "RAM_APPLYING"
+                    or not self.is_connected
+                    or self._persistence_ledger_error is not None
+                    or self._persistence_unknown_latched
+                    or record.connect_epoch != self._connection_epoch
+                    or self._prepared_persistence_attempt_id
+                    != record.record_id):
+                raise RuntimeError(
+                    "%s rollback transition lacks a prepared "
+                    "same-session attempt" % record.phase)
+
+            if record.phase == "P1_CONFIG":
+                capability = self._prepared_p1_config_bounds
+                capability_valid = bool(
+                    isinstance(capability, tuple)
+                    and len(capability) == 3
+                    and capability[0] == record.record_id)
+            else:
+                capability = self._prepared_p2_limits_bounds
+                capability_valid = bool(
+                    isinstance(capability, tuple)
+                    and len(capability) == 4
+                    and capability[0] == record.record_id
+                    and capability[1]
+                    is self.transaction_session_identity()
+                    and capability[3] in {"FORWARD", "APPLIED_PROVEN"})
+            if not capability_valid:
+                raise RuntimeError(
+                    "%s rollback transition lacks a prepared "
+                    "same-session attempt" % record.phase)
+
+            session = self.transaction_session_identity()
+            for register in ("MO", "SO", "VX"):
+                raw = self.command(register)
+                observed = _finite_decimal(raw)
+                if observed is None or observed != Decimal(0):
+                    raise RuntimeError(
+                        "%s rollback requires disabled stationary proof; "
+                        "%s=%r" % (record.phase, register, raw))
+            if (session is None
+                    or self.transaction_session_identity() is not session
+                    or record.connect_epoch != self._connection_epoch):
+                raise RuntimeError(
+                    "%s rollback safety proof changed session" % record.phase)
+
+            if record.phase == "P1_CONFIG":
+                self._prepared_p1_config_bounds = (
+                    capability[0], capability[1], True)
+            else:
+                self._verified_p2_limits_applied_id = None
+                self._prepared_p2_limits_bounds = (
+                    capability[0], capability[1], capability[2], "ROLLBACK")
 
     def mark_persistence_attempt_persisting(self, record_id) -> None:
         """Advance a verified RAM profile to the single-use SV boundary."""
@@ -576,18 +907,151 @@ class ElmoLink:
         self._persistence_ledger.mark_persisting(str(record_id))
         self._refresh_persistence_state()
 
-    def resolve_persistence_ram_rollback(self, record_id) -> None:
-        """Archive a pre-SV Motor attempt after exact RAM restoration."""
-        record = self._require_matching_persistence_record(record_id)
-        if (not self.is_connected
-                or record.connect_epoch != self._connection_epoch
-                or self._prepared_persistence_attempt_id != record.record_id):
+    def _read_p2_limits_exact_sweeps(self, record, expected, label):
+        """Read all P2 limits forward and reverse without a TOCTOU gap."""
+        session = self.transaction_session_identity()
+        sweeps = {}
+        failures = []
+        directions = (
+            ("forward", tuple(record.registers)),
+            ("reverse", tuple(reversed(record.registers))),
+        )
+        for sweep_name, registers in directions:
+            observed_profile = {}
+            for register in registers:
+                try:
+                    observed = _strict_integer_response(
+                        self.command(register), register)
+                except Exception as exc:
+                    failures.append(
+                        "%s.%s(read-error=%s)" %
+                        (sweep_name, register, exc))
+                    continue
+                observed_profile[register] = observed
+                if observed != int(expected[register]):
+                    failures.append(
+                        "%s.%s(expected=%r observed=%r)" %
+                        (sweep_name, register, expected[register], observed))
+            sweeps[sweep_name] = observed_profile
+        if (session is None
+                or self.transaction_session_identity() is not session
+                or record.connect_epoch != self._connection_epoch):
             raise RuntimeError(
-                "RAM rollback close-out lacks a prepared same-session attempt")
-        self._persistence_ledger.resolve_ram_rollback(str(record_id))
-        self._prepared_persistence_attempt_id = None
-        self._acknowledged_persistence_attempt_id = None
-        self._refresh_persistence_state()
+                "P2_LIMITS %s readback changed session" % label)
+        if failures or any(
+                len(sweeps[name]) != len(record.registers)
+                for name in ("forward", "reverse")):
+            raise RuntimeError(
+                "P2_LIMITS %s mismatch: %s" %
+                (label, ", ".join(failures)))
+        return sweeps
+
+    def verify_persistence_ram_applied(self, record_id):
+        """Mint P2 motion authority only after two exact full-set sweeps."""
+        with self._persistence_command_lock:
+            record = self._require_matching_persistence_record(record_id)
+            capability = self._prepared_p2_limits_bounds
+            if (record.phase != "P2_LIMITS"
+                    or record.state != "RAM_APPLYING"
+                    or not self.is_connected
+                    or record.connect_epoch != self._connection_epoch
+                    or self._prepared_persistence_attempt_id
+                    != record.record_id
+                    or not isinstance(capability, tuple)
+                    or len(capability) != 4
+                    or capability[0] != record.record_id
+                    or capability[1]
+                    is not self.transaction_session_identity()
+                    or capability[3] != "FORWARD"):
+                raise RuntimeError(
+                    "P2_LIMITS applied proof lacks a prepared same-session "
+                    "attempt")
+            self._verified_p2_limits_applied_id = None
+            verified = self._read_p2_limits_exact_sweeps(
+                record, record.applied, "applied-profile readback")
+            self._prepared_p2_limits_bounds = (
+                capability[0], capability[1], capability[2],
+                "APPLIED_PROVEN")
+            self._verified_p2_limits_applied_id = record.record_id
+            return verified
+
+    def resolve_persistence_ram_rollback(self, record_id):
+        """Archive a RAM transaction only after link-owned original readback."""
+        with self._persistence_command_lock:
+            record = self._require_matching_persistence_record(record_id)
+            if (not self.is_connected
+                    or record.connect_epoch != self._connection_epoch
+                    or self._prepared_persistence_attempt_id != record.record_id):
+                raise RuntimeError(
+                    "RAM rollback close-out lacks a prepared same-session attempt")
+
+            verified_readback = None
+            if record.phase == "P1_CONFIG":
+                capability = self._prepared_p1_config_bounds
+                if (not isinstance(capability, tuple)
+                        or len(capability) != 3
+                        or capability[0] != record.record_id
+                        or capability[2] is not True):
+                    raise RuntimeError(
+                        "P1_CONFIG close-out requires the one-way rollback "
+                        "transition")
+                session = self.transaction_session_identity()
+                verified_readback = {}
+                mismatches = []
+                for register in record.registers:
+                    raw = self.command(register)
+                    decimal_value = _finite_decimal(raw)
+                    if decimal_value is None:
+                        mismatches.append(
+                            "%s(non-finite=%r)" % (register, raw))
+                        continue
+                    expected = record.original[register]
+                    if register in _P1_CONFIG_EXACT_RESTORE_REGISTERS:
+                        try:
+                            value = _strict_integer_response(raw, register)
+                        except ValueError:
+                            mismatches.append(
+                                "%s(non-integer=%r)" % (register, raw))
+                            continue
+                    else:
+                        value = float(decimal_value)
+                    verified_readback[register] = value
+                    matches = _decimal_equals(decimal_value, expected)
+                    if not matches:
+                        mismatches.append(
+                            "%s(expected=%r observed=%r)" %
+                            (register, expected, value))
+                if (session is None
+                        or self.transaction_session_identity() is not session
+                        or record.connect_epoch != self._connection_epoch):
+                    raise RuntimeError(
+                        "P1_CONFIG original-profile readback changed session")
+                if mismatches or len(verified_readback) != len(record.registers):
+                    raise RuntimeError(
+                        "P1_CONFIG original-profile readback mismatch: %s" %
+                        ", ".join(mismatches))
+            elif record.phase == "P2_LIMITS":
+                capability = self._prepared_p2_limits_bounds
+                if (not isinstance(capability, tuple)
+                        or len(capability) != 4
+                        or capability[0] != record.record_id
+                        or capability[1]
+                        is not self.transaction_session_identity()
+                        or capability[3] != "ROLLBACK"):
+                    raise RuntimeError(
+                        "P2_LIMITS close-out requires the one-way rollback "
+                        "transition")
+                verified_readback = self._read_p2_limits_exact_sweeps(
+                    record, record.original, "original-profile readback")
+
+            self._persistence_ledger.resolve_ram_rollback(str(record_id))
+            self._prepared_persistence_attempt_id = None
+            self._acknowledged_persistence_attempt_id = None
+            self._prepared_p1_config_bounds = None
+            self._prepared_p2_limits_bounds = None
+            self._verified_p2_limits_applied_id = None
+            self._refresh_persistence_state()
+            return verified_readback
 
     def _require_matching_persistence_record(self, record_id):
         self._refresh_persistence_state()
@@ -610,6 +1074,9 @@ class ElmoLink:
         self._persistence_ledger.resolve_sv_success(str(record_id))
         self._prepared_persistence_attempt_id = None
         self._acknowledged_persistence_attempt_id = None
+        self._prepared_p1_config_bounds = None
+        self._prepared_p2_limits_bounds = None
+        self._verified_p2_limits_applied_id = None
         self._refresh_persistence_state()
 
     def mark_persistence_attempt_unknown(self, record_id, reason) -> None:
@@ -621,6 +1088,9 @@ class ElmoLink:
         finally:
             self._prepared_persistence_attempt_id = None
             self._acknowledged_persistence_attempt_id = None
+            self._prepared_p1_config_bounds = None
+            self._prepared_p2_limits_bounds = None
+            self._verified_p2_limits_applied_id = None
             self._persistence_unknown_latched = True
             self._refresh_persistence_state()
 
@@ -725,7 +1195,25 @@ class ElmoLink:
             token = self.transaction_session_identity()
             values = {}
             for command in commands:
-                values[command] = _to_num(self.command(command))
+                raw = self.command(command)
+                if command in {"MO", "SO", "VX"}:
+                    values[command] = \
+                        _numeric_response_preserving_decimal_mismatch(
+                            raw, (0,))
+                elif command == "PS":
+                    values[command] = \
+                        _numeric_response_preserving_decimal_mismatch(
+                            raw, (-2, -1))
+                elif (command in record.registers
+                      and record.phase in {
+                          "MOTOR", "P1_CONFIG", "P2_LIMITS"}):
+                    values[command] = \
+                        _numeric_response_preserving_decimal_mismatch(
+                            raw,
+                            (record.original[command],
+                             record.applied[command]))
+                else:
+                    values[command] = _to_num(raw)
             if token is None or self.transaction_session_identity() is not token:
                 raise RuntimeError("transport session changed during readback")
             return values
@@ -834,23 +1322,36 @@ class ElmoLink:
         prepared = self._persistence_record
         authorized_sv = bool(
             is_sv and prepared is not None
+            and self.is_connected
             and self._persistence_ledger_error is None
             and str(persistence_attempt_id) == prepared.record_id
             and self._prepared_persistence_attempt_id == prepared.record_id
             and prepared.drive_identity == self._connected_drive_identity
             and prepared.connect_epoch == self._connection_epoch
+            and prepared.phase in {"P2", "MOTOR"}
             and prepared.state == "PERSISTING")
 
         assignment_register = None
         assignment_value = None
+        assignment_decimal = None
         if "=" in core and core.count("=") == 1:
             assignment_register, literal = core.split("=", 1)
+            assignment_decimal = _finite_decimal(literal)
             try:
                 assignment_value = float(literal)
             except (TypeError, ValueError, OverflowError):
                 assignment_value = None
+        motor_profile_value = bool(
+            prepared is not None
+            and prepared.phase == "MOTOR"
+            and assignment_register in _MOTOR_TARGET_REGISTERS
+            and any(
+                _decimal_equals(
+                    assignment_decimal, profile[assignment_register])
+                for profile in (prepared.original, prepared.applied)))
         authorized_motor_assignment = bool(
             prepared is not None
+            and self.is_connected
             and prepared.phase == "MOTOR"
             and prepared.state == "RAM_APPLYING"
             and self._persistence_ledger_error is None
@@ -861,10 +1362,165 @@ class ElmoLink:
             and assignment_register in _MOTOR_TARGET_REGISTERS
             and assignment_value is not None
             and math.isfinite(assignment_value)
-            and any(assignment_value == float(profile[assignment_register])
-                    for profile in (prepared.original, prepared.applied)))
+            and motor_profile_value)
+        bounds_capability = self._prepared_p1_config_bounds
+        p1_config_bounds = (
+            bounds_capability[1]
+            if (isinstance(bounds_capability, tuple)
+                and len(bounds_capability) == 3
+                and prepared is not None
+                and bounds_capability[0] == prepared.record_id)
+            else None)
+        p1_config_rollback = bool(
+            isinstance(bounds_capability, tuple)
+            and len(bounds_capability) == 3
+            and prepared is not None
+            and bounds_capability[0] == prepared.record_id
+            and bounds_capability[2] is True)
+        p1_config_capability = bool(
+            prepared is not None
+            and self.is_connected
+            and prepared.phase == "P1_CONFIG"
+            and prepared.state == "RAM_APPLYING"
+            and self._persistence_ledger_error is None
+            and not self._persistence_unknown_latched
+            and str(persistence_attempt_id) == prepared.record_id
+            and self._prepared_persistence_attempt_id == prepared.record_id
+            and prepared.drive_identity == self._connected_drive_identity
+            and prepared.connect_epoch == self._connection_epoch
+            and p1_config_bounds is not None)
+        p1_config_bounded_value = bool(
+            assignment_decimal is not None
+            and assignment_register in _P1_CONFIG_BOUNDED_REGISTERS
+            and p1_config_bounds is not None
+            and _decimal_in_closed_range(
+                assignment_decimal,
+                p1_config_bounds[assignment_register][0],
+                p1_config_bounds[assignment_register][1]))
+        p1_config_applied_value = False
+        p1_config_original_value = False
+        if (prepared is not None
+                and prepared.phase == "P1_CONFIG"
+                and assignment_value is not None
+                and math.isfinite(assignment_value)
+                and assignment_register in _P1_CONFIG_REGISTERS):
+            p1_config_applied_value = _decimal_equals(
+                assignment_decimal,
+                prepared.applied[assignment_register])
+            p1_config_original_value = _decimal_equals(
+                assignment_decimal,
+                prepared.original[assignment_register])
+        authorized_p1_config_mutation = bool(
+            p1_config_capability
+            and assignment_value is not None
+            and math.isfinite(assignment_value)
+            and (
+                (p1_config_rollback
+                 and assignment_register in _P1_CONFIG_REGISTERS
+                 and p1_config_original_value)
+                or (
+                    not p1_config_rollback
+                    and (
+                        (assignment_register
+                         in _P1_CONFIG_EXACT_RESTORE_REGISTERS
+                         and p1_config_applied_value)
+                        or (assignment_register
+                            in _P1_CONFIG_BOUNDED_REGISTERS
+                            and p1_config_bounded_value)
+                        or (assignment_register == "MO"
+                            and _decimal_equals(assignment_decimal, 1))
+                        or (assignment_register == "TC"
+                            and p1_config_bounded_value)
+                        or (assignment_register == "TW[80]"
+                            and any(
+                                _decimal_equals(assignment_decimal, expected)
+                                for expected in (0, 1)))
+                    )
+                )))
+
+        p2_bounds_capability = self._prepared_p2_limits_bounds
+        p2_limits_bounds = (
+            p2_bounds_capability[2]
+            if (isinstance(p2_bounds_capability, tuple)
+                and len(p2_bounds_capability) == 4
+                and prepared is not None
+                and p2_bounds_capability[0] == prepared.record_id
+                and p2_bounds_capability[1]
+                is self.transaction_session_identity())
+            else None)
+        p2_limits_state = (
+            p2_bounds_capability[3]
+            if (isinstance(p2_bounds_capability, tuple)
+                and len(p2_bounds_capability) == 4
+                and prepared is not None
+                and p2_bounds_capability[0] == prepared.record_id
+                and p2_bounds_capability[1]
+                is self.transaction_session_identity())
+            else None)
+        p2_limits_capability = bool(
+            prepared is not None
+            and self.is_connected
+            and prepared.phase == "P2_LIMITS"
+            and prepared.state == "RAM_APPLYING"
+            and self._persistence_ledger_error is None
+            and not self._persistence_unknown_latched
+            and str(persistence_attempt_id) == prepared.record_id
+            and self._prepared_persistence_attempt_id == prepared.record_id
+            and prepared.drive_identity == self._connected_drive_identity
+            and prepared.connect_epoch == self._connection_epoch
+            and p2_limits_bounds is not None)
+        p2_limits_profile_value = bool(
+            p2_limits_capability
+            and assignment_register in _P2_LIMITS_REGISTERS
+            and assignment_decimal is not None
+            and assignment_decimal == assignment_decimal.to_integral_value()
+            and (
+                (p2_limits_state == "FORWARD"
+                 and _decimal_equals(
+                     assignment_decimal,
+                     prepared.applied[assignment_register]))
+                or (p2_limits_state == "ROLLBACK"
+                    and _decimal_equals(
+                        assignment_decimal,
+                        prepared.original[assignment_register]))))
+        p2_applied_proven = bool(
+            p2_limits_capability
+            and p2_limits_state == "APPLIED_PROVEN"
+            and self._verified_p2_limits_applied_id == prepared.record_id)
+        p2_bounded_value = bool(
+            p2_applied_proven
+            and assignment_register in {"TC", "JV", "PA"}
+            and assignment_decimal is not None
+            and _decimal_in_closed_range(
+                assignment_decimal,
+                p2_limits_bounds[assignment_register][0],
+                p2_limits_bounds[assignment_register][1])
+            and (assignment_register != "PA"
+                 or (assignment_decimal
+                     == assignment_decimal.to_integral_value())))
+        p2_um_value = bool(
+            p2_applied_proven
+            and assignment_register == "UM"
+            and assignment_decimal is not None
+            and assignment_decimal == assignment_decimal.to_integral_value()
+            and any(
+                _decimal_equals(assignment_decimal, expected)
+                for expected in p2_limits_bounds["UM"]))
+        authorized_p2_limits_mutation = bool(
+            p2_limits_profile_value
+            or (p2_applied_proven and core == "BG")
+            or (p2_applied_proven and core == "PA")
+            or (p2_applied_proven and assignment_register == "MO"
+                and _decimal_equals(assignment_decimal, 1))
+            or p2_bounded_value
+            or p2_um_value)
 
         if is_sv and not authorized_sv:
+            if (prepared is not None and prepared.phase == "P1"
+                    and prepared.state == "PERSISTING"):
+                raise RuntimeError(
+                    "P1 SV blocked: session-bound on-motor verification "
+                    "capability is unavailable")
             if persistence_unknown:
                 raise RuntimeError(
                     "command blocked: persistence state UNKNOWN on this link")
@@ -875,7 +1531,9 @@ class ElmoLink:
         if (persistence_unknown and persistence_mutation
                 and not safe_deenergizing
                 and not authorized_sv
-                and not authorized_motor_assignment):
+                and not authorized_motor_assignment
+                and not authorized_p1_config_mutation
+                and not authorized_p2_limits_mutation):
             raise RuntimeError(
                 "command blocked: persistence state UNKNOWN on this link")
         if not self._comm:
@@ -886,6 +1544,13 @@ class ElmoLink:
             # Consume before vendor I/O so no exception path can repeat SV.
             self._prepared_persistence_attempt_id = None
             self._acknowledged_persistence_attempt_id = None
+            self._prepared_p1_config_bounds = None
+            self._prepared_p2_limits_bounds = None
+            self._verified_p2_limits_applied_id = None
+        if p2_limits_profile_value:
+            # Any later limit mutation invalidates the motion proof before
+            # vendor I/O, including a lost assignment reply.
+            self._verified_p2_limits_applied_id = None
         # SendCommandAnalyzeError(command, OUT response, OUT errorObj, timeout).
         # pythonnet needs placeholders passed for the OUT params ("", None);
         # returns (retval, response, errorObj).
@@ -1059,7 +1724,12 @@ class ElmoLink:
         def finite_snapshot():
             values = {}
             for register in _MOTOR_SAFETY_REGISTERS + _MOTOR_PROFILE_REGISTERS:
-                value = _to_num(self.command(register))
+                raw = self.command(register)
+                if (register in _MOTOR_SAFETY_REGISTERS
+                        or register in _MOTOR_INTEGER_REGISTERS):
+                    value = _strict_integer_response(raw, register)
+                else:
+                    value = _strict_float_response(raw, register)
                 if (isinstance(value, bool)
                         or not isinstance(value, (int, float))
                         or not math.isfinite(float(value))):
@@ -1138,11 +1808,8 @@ class ElmoLink:
         touched = []
 
         def read_exact(register, expected):
-            observed = _to_num(self.command(register))
-            return (not isinstance(observed, bool)
-                    and isinstance(observed, (int, float))
-                    and math.isfinite(float(observed))
-                    and float(observed) == float(expected))
+            observed = _finite_decimal(self.command(register))
+            return _decimal_equals(observed, expected)
 
         def assert_safe_mutation_boundary(context):
             """Query the exact no-motion/no-fault gate at a RAM-write boundary.
@@ -1153,10 +1820,10 @@ class ElmoLink:
             """
             state = {}
             for register in _MOTOR_SAFETY_REGISTERS:
-                value = _to_num(self.command(register))
-                if (isinstance(value, bool)
-                        or not isinstance(value, (int, float))
-                        or not math.isfinite(float(value))):
+                raw = self.command(register)
+                try:
+                    value = _strict_integer_response(raw, register)
+                except ValueError:
                     raise RuntimeError(
                         "%s: %s safety readback is invalid" %
                         (context, register))
@@ -1925,6 +2592,11 @@ class ElmoLink:
         return self.record_fetch(timeout_s=timeout_s, poll_s=poll_s)
 
     def disconnect(self):
+        """Tear down the transport atomically with persistence commands."""
+        with self._persistence_command_lock:
+            return self._disconnect_locked()
+
+    def _disconnect_locked(self):
         failures = []
         comm = self._comm
         try:
@@ -1995,6 +2667,9 @@ class ElmoLink:
             self._connected_drive_identity = None
             self._prepared_persistence_attempt_id = None
             self._acknowledged_persistence_attempt_id = None
+            self._prepared_p1_config_bounds = None
+            self._prepared_p2_limits_bounds = None
+            self._verified_p2_limits_applied_id = None
             self._transaction_session_token = object()
             self._connection_epoch = None
             self._connected_firmware_context = {

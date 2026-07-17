@@ -20,6 +20,20 @@ def test_catalog_classifies_the_user_facing_hardware_boundaries():
     assert {key: catalog.operation_spec(key).risk for key in expected} == expected
 
 
+def test_gain_mutation_catalog_is_need_data_and_installed_verify_uses_signature_gate():
+    for operation_id in (
+            "tuning.p1.apply", "tuning.p1.save",
+            "tuning.p2.apply", "tuning.p2.save"):
+        spec = catalog.operation_spec(operation_id)
+        assert spec.status is catalog.OperationStatus.NEED_DATA
+        assert "durable pre-assignment gain-trial WAL" in spec.summary
+
+    verify = catalog.operation_spec("tuning.p2.verify")
+    assert "commutation_signature" in verify.gates
+    assert "trial_capability" not in verify.gates
+    assert "currently installed" in verify.summary
+
+
 def test_every_mutating_operation_declares_fail_closed_gates():
     for spec in catalog.OPERATIONS.values():
         if spec.risk not in catalog.DRIVE_MUTATING_RISKS:

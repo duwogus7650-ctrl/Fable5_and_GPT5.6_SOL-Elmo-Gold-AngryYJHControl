@@ -82,9 +82,11 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Callable, Optional, Sequence
 
 import numpy as np
+import persistence_audit
 
 __all__ = ["AutotuneParams", "AutotuneResult", "run_current_autotune",
            "apply_gains", "verify_run", "loop_margins", "design_gains",
@@ -92,9 +94,15 @@ __all__ = ["AutotuneParams", "AutotuneResult", "run_current_autotune",
            "pi_continuous", "loopgain_crossover_hz", "GainTrialP1",
            "begin_gain_trial_p1", "restore_gain_trial_p1",
            "commit_gain_trial_p1", "adopt_gain_trial_p1_for_restore",
-           "GREEN", "YELLOW", "RED"]
+           "p1_gain_trial_has_save_authority",
+           "P1_CONFIG_NAMES", "GREEN", "YELLOW", "RED"]
 
 GREEN, YELLOW, RED = "GREEN", "YELLOW", "RED"
+P1_CONFIG_NAMES = persistence_audit.PHASE_REGISTERS["P1_CONFIG"]
+_P1_CONFIG_INTEGER_NAMES = frozenset((
+    "UM", "SC[8]", "CA[42]", "CA[43]", "CA[44]", "CA[70]",
+    "SE[1]", "SE[4]", "SE[5]", "SE[6]", "SE[7]",
+))
 
 # --- calibration & gate constants (SPEC §4) -------------------------------------------
 WC_TS_CAL = 0.2010        # wc*TS single-point calibration (EAS: KP/L_np*TS)
@@ -238,6 +246,31 @@ def _to_num(s):
         return float(t)
     except ValueError:
         return t
+
+
+def _exact_config_snapshot_number(value, register: str):
+    """Reject any P1_CONFIG snapshot value that float conversion would alter."""
+
+    if isinstance(value, bool) or value is None:
+        raise ValueError("%s is not a numeric literal: %r" % (register, value))
+    token = str(value).strip().rstrip(";").strip()
+    try:
+        number = Decimal(token)
+    except (InvalidOperation, ValueError):
+        raise ValueError(
+            "%s is not a numeric literal: %r" % (register, value)) from None
+    if not number.is_finite():
+        raise ValueError("%s is not finite: %r" % (register, value))
+    if register in _P1_CONFIG_INTEGER_NAMES:
+        if number != number.to_integral_value():
+            raise ValueError(
+                "%s is not an exact integer: %r" % (register, value))
+        return int(number)
+    observed = float(number)
+    if not math.isfinite(observed) or number != Decimal(str(observed)):
+        raise ValueError(
+            "%s exceeds exact numeric precision: %r" % (register, value))
+    return observed
 
 
 def demod(x: np.ndarray, f_hz: float, dt_s: float) -> complex:
@@ -393,6 +426,7 @@ class _Ctx:
         self.link = link
         self.params = params
         self.readings: dict = {}
+        self.raw_readings: dict = {}
         self.evidence: dict = {}
         self.warnings: list = []
         self.snapshot: dict = {}
@@ -416,6 +450,8 @@ class _Ctx:
         self.duty_fs: float = DUTY_FS   # G0-derived duty full scale (never hardcoded)
         self.g0: dict = {}              # G0 platform-grounding gate record
         self.g1p: dict = {}             # G1' idle-leg/Vbus gate record
+        self.config_attempt_id: Optional[str] = None
+        self.config_restore_finalized = False
 
 
 def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
@@ -424,7 +460,16 @@ def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
     last = None
     for _ in range(retries + 1):
         try:
-            resp = ctx.link.command(cmd, timeout_ms=1000, allow_motion=allow_motion)
+            kwargs = {
+                "timeout_ms": 1000,
+                "allow_motion": allow_motion,
+            }
+            if ctx.config_attempt_id is not None:
+                kwargs["_persistence_attempt_id"] = ctx.config_attempt_id
+            resp = ctx.link.command(cmd, **kwargs)
+            core = "".join(str(cmd).split()).upper().rstrip(";")
+            if "=" not in core:
+                ctx.raw_readings[core] = resp
             val = _to_num(resp)
             if isinstance(val, float) and math.isnan(val):
                 raise AbortError("NaN 응답 (%s) — 즉시 중단" % cmd)
@@ -709,28 +754,231 @@ _RESTORE_ORDER = ("SE[1]", "SE[2]", "SE[3]", "SE[4]", "SE[5]", "SE[6]", "SE[7]",
                   "KP[1]", "KI[1]")
 
 
+def _p1_config_journal_api(ctx: _Ctx):
+    names = (
+        "prepare_persistence_attempt",
+        "begin_persistence_ram_rollback",
+        "resolve_persistence_ram_rollback",
+        "mark_persistence_attempt_unknown",
+    )
+    try:
+        methods = tuple(getattr(ctx.link, name, None) for name in names)
+    except Exception as exc:
+        raise PreflightError(
+            "P1 configuration journal API inspection failed: %s" % exc)
+    if all(method is None for method in methods):
+        try:
+            synthetic_mode = getattr(
+                ctx.link, "p1_config_durability_mode", None)
+        except Exception as exc:
+            raise PreflightError(
+                "P1 configuration journal mode inspection failed: %s" % exc)
+        if synthetic_mode == "SYNTHETIC_NO_HARDWARE":
+            return None
+        raise PreflightError(
+            "P1 configuration journal API is required for a hardware-capable "
+            "link")
+    if not all(callable(method) for method in methods):
+        raise PreflightError(
+            "P1 configuration journal API is incomplete")
+    return methods
+
+
+def _latch_p1_config_unknown(ctx: _Ctx, attempt_id, reason: str):
+    """Retain a durable incident; fall back to the runtime mutation latch."""
+    mark_error = None
+    try:
+        marker = getattr(ctx.link, "mark_persistence_attempt_unknown", None)
+        if not callable(marker):
+            raise RuntimeError("configuration journal marker unavailable")
+        marker(attempt_id, str(reason) or "CONFIGURATION_RESTORE_UNKNOWN")
+    except Exception as exc:
+        mark_error = "%s: %s" % (type(exc).__name__, exc)
+        try:
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                latch()
+        except Exception:
+            pass
+    finally:
+        ctx.config_attempt_id = None
+    return mark_error
+
+
+def _prepare_p1_config_journal(
+        ctx: _Ctx, original: dict, applied: dict,
+        mutation_bounds: dict):
+    api = _p1_config_journal_api(ctx)
+    if api is None:
+        return
+    prepare, _begin_rollback, _resolve, _mark = api
+    _check_cancel_before_mutation(ctx)
+    try:
+        attempt_id = prepare(
+            phase="P1_CONFIG",
+            registers=P1_CONFIG_NAMES,
+            original=original,
+            applied=applied,
+            initial_state="RAM_APPLYING",
+            mutation_bounds=mutation_bounds,
+        )
+    except Exception as exc:
+        try:
+            latched = getattr(ctx.link, "persistence_unknown_latched", None)
+            if callable(latched) and latched():
+                ctx.evidence["configuration_state"] = "UNKNOWN"
+        except Exception:
+            ctx.evidence["configuration_state"] = "UNKNOWN"
+        raise PreflightError(
+            "P1 configuration journal preflight failed: %s" % exc) from None
+    if not isinstance(attempt_id, str) or not attempt_id:
+        try:
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                latch()
+        except Exception:
+            pass
+        ctx.evidence["configuration_state"] = "UNKNOWN"
+        raise PreflightError(
+            "P1 configuration journal returned no record capability")
+    ctx.config_attempt_id = attempt_id
+    ctx.evidence["configuration_transaction"] = {
+        "phase": "P1_CONFIG",
+        "record_id": attempt_id,
+        "state": "RAM_APPLYING",
+    }
+
+
 def _restore_snapshot(ctx: _Ctx):
-    """A4/E1: restore only what we actually wrote, in fixed order, from snapshot."""
-    restored, failed = [], []
+    """A4/E1: restore touched values and prove the full bounded config set."""
+    if ctx.config_restore_finalized:
+        evidence = ctx.evidence.get("configuration_restore", {})
+        return list(evidence.get("failures", ()))
+    ctx.config_restore_finalized = True
+    attempted, write_errors = [], []
     dirty = set(ctx.dirty)
+    targets = [cmd for cmd in P1_CONFIG_NAMES if cmd in ctx.snapshot]
+    rollback_transition_error = None
+    if ctx.config_attempt_id is not None:
+        try:
+            begin_rollback = getattr(
+                ctx.link, "begin_persistence_ram_rollback", None)
+            if not callable(begin_rollback):
+                raise RuntimeError(
+                    "configuration journal rollback transition unavailable")
+            begin_rollback(ctx.config_attempt_id)
+        except Exception as exc:
+            rollback_transition_error = "%s: %s" % (
+                type(exc).__name__, exc)
     for cmd in _RESTORE_ORDER:
-        if cmd not in dirty or cmd not in ctx.snapshot:
+        if (cmd not in P1_CONFIG_NAMES or cmd not in dirty
+                or cmd not in ctx.snapshot):
             continue
+        if rollback_transition_error is not None:
+            continue
+        attempted.append(cmd)
         try:
             _cmd(ctx, "%s=%s" % (cmd, _fmt(ctx.snapshot[cmd])), retries=1)
-            restored.append(cmd)
         except Exception as e:
-            failed.append("%s(%s)" % (cmd, e))
-    if failed:
-        ctx.warnings.append("복원 실패 %s — 전원 재투입 시 스냅숏(%s)으로 복원 필요"
-                            % (", ".join(failed), ctx.snapshot_path))
+            # A lost assignment reply is not itself proof of failure.  The
+            # independent query below adjudicates the actual RAM state.
+            write_errors.append("%s(%s)" % (cmd, e))
+
+    readback, read_errors, mismatches, restored = {}, [], [], []
+    if rollback_transition_error is not None:
+        read_errors.append(
+            "rollback transition failed: %s" % rollback_transition_error)
+    if (ctx.config_attempt_id is not None
+            and tuple(targets) != tuple(P1_CONFIG_NAMES)):
+        missing = [name for name in P1_CONFIG_NAMES if name not in targets]
+        read_errors.append("missing snapshot values: %s" % ", ".join(missing))
+    for cmd in targets:
+        try:
+            observed = _cmd(ctx, cmd, retries=1)
+            readback[cmd] = observed
+        except Exception as e:
+            read_errors.append("%s(%s)" % (cmd, e))
+            continue
+        expected = _to_num(ctx.snapshot[cmd])
+        if (isinstance(expected, (int, float))
+                and not isinstance(expected, bool)
+                and isinstance(observed, (int, float))
+                and not isinstance(observed, bool)):
+            matches = bool(
+                math.isfinite(float(expected))
+                and math.isfinite(float(observed))
+                and observed == expected)
+        else:
+            matches = observed == expected
+        if matches:
+            restored.append(cmd)
+        else:
+            mismatches.append("%s(expected=%r observed=%r)" % (
+                cmd, expected, observed))
+
+    failed = read_errors + mismatches
+    ram_passed = not failed and len(restored) == len(targets)
+    journal = {
+        "record_id": ctx.config_attempt_id,
+        "closeout": "NOT_REQUIRED",
+        "error": None,
+        "mark_unknown_error": None,
+        "verified_original_readback": None,
+    }
+    if ctx.config_attempt_id is not None:
+        attempt_id = ctx.config_attempt_id
+        if ram_passed:
+            try:
+                resolver = getattr(
+                    ctx.link, "resolve_persistence_ram_rollback", None)
+                if not callable(resolver):
+                    raise RuntimeError(
+                        "configuration journal rollback resolver unavailable")
+                verified_original = resolver(attempt_id)
+                if (not isinstance(verified_original, dict)
+                        or set(verified_original) != set(P1_CONFIG_NAMES)):
+                    raise RuntimeError(
+                        "configuration journal resolver returned incomplete "
+                        "original-profile evidence")
+                ctx.config_attempt_id = None
+                journal["closeout"] = "RAM_ROLLBACK_VERIFIED"
+                journal["verified_original_readback"] = dict(
+                    verified_original)
+            except Exception as exc:
+                journal["closeout"] = "UNKNOWN"
+                journal["error"] = "%s: %s" % (type(exc).__name__, exc)
+                failed.append("journal closeout failed: %s" % journal["error"])
+                journal["mark_unknown_error"] = _latch_p1_config_unknown(
+                    ctx, attempt_id, "CONFIGURATION_JOURNAL_CLOSEOUT_FAILED")
+        else:
+            journal["closeout"] = "UNKNOWN"
+            journal["mark_unknown_error"] = _latch_p1_config_unknown(
+                ctx, attempt_id, "CONFIGURATION_RESTORE_UNVERIFIED")
+    passed = not failed and ram_passed and journal["closeout"] != "UNKNOWN"
     ctx.evidence["restored"] = restored
+    ctx.evidence["configuration_restore"] = {
+        "attempted": attempted,
+        "write_errors": write_errors,
+        "readback": readback,
+        "read_errors": read_errors,
+        "mismatches": mismatches,
+        "ram_pass": ram_passed,
+        "journal": journal,
+        "failures": list(failed),
+        "pass": passed,
+    }
+    ctx.evidence["configuration_state"] = (
+        "RESTORED" if passed else "UNKNOWN")
+    if failed:
+        ctx.warnings.append(
+            "복원 되읽기 실패 %s — 설정 상태 UNKNOWN, 스냅숏(%s)으로 복구 필요"
+            % (", ".join(failed), ctx.snapshot_path))
     return failed
 
 
 def _do_abort(ctx: _Ctx, reason: str):
     if ctx.aborted:
-        return
+        return ctx.evidence.get("configuration_state") != "UNKNOWN"
     ctx.aborted = True
     steps = []
 
@@ -741,16 +989,16 @@ def _do_abort(ctx: _Ctx, reason: str):
         except Exception as e:
             ctx.warnings.append("abort %s 실패: %s" % (label, e))
 
-    _try("A1 MO=0", lambda: ctx.link.command("MO=0", timeout_ms=1000))
+    _try("A1 MO=0", lambda: _cmd(ctx, "MO=0", retries=0))
     a1_ok = "A1 MO=0" in steps
     ctx.motor_on = False
-    _try("A2 TW[80]=0", lambda: ctx.link.command("TW[80]=0", timeout_ms=1000))
+    _try("A2 TW[80]=0", lambda: _cmd(ctx, "TW[80]=0", retries=0))
     # A3 TC=0 — after a SUCCESSFUL A1 the drive is expected to answer
     # "Drive error 58: Servo must be on" (torque command void with the bridge
     # off).  That is harmless: log it as an expected step, NOT a warning.
     # Any other failure (or err58 while A1 itself failed) stays a warning.
     try:
-        ctx.link.command("TC=0", timeout_ms=1000, allow_motion=True)
+        _cmd(ctx, "TC=0", allow_motion=True, retries=0)
         steps.append("A3 TC=0")
     except Exception as e:
         msg = str(e)
@@ -759,9 +1007,15 @@ def _do_abort(ctx: _Ctx, reason: str):
             steps.append("A3 TC=0 (err58 예상 — MO=0 탈전 확정 상태, 무해)")
         else:
             ctx.warnings.append("abort A3 TC=0 실패: %s" % e)
-    _try("A4 restore", lambda: _restore_snapshot(ctx))
-    _try("A5 RR=0", lambda: ctx.link.command("RR=0", timeout_ms=1000))
+    restore_failed = _restore_snapshot(ctx)
+    if restore_failed:
+        ctx.warnings.append(
+            "abort A4 restore UNKNOWN: %s" % ", ".join(restore_failed))
+    else:
+        steps.append("A4 restore")
+    _try("A5 RR=0", lambda: _cmd(ctx, "RR=0", retries=0))
     ctx.evidence["abort"] = {"reason": reason, "steps_done": steps}
+    return not restore_failed
 
 
 def _red(ctx: _Ctx, reason: str) -> AutotuneResult:
@@ -796,13 +1050,25 @@ def run_current_autotune(link, params: Optional[AutotuneParams] = None) -> Autot
     try:
         return _pipeline(ctx)
     except PreflightError as e:
-        return _red(ctx, str(e))
+        reason = str(e)
+        if ctx.dirty or ctx.config_attempt_id is not None:
+            restored = _do_abort(
+                ctx, "late PreflightError after mutation: %s" % reason)
+            if not restored:
+                reason += "; configuration restore UNKNOWN"
+        elif ctx.evidence.get("configuration_state") == "UNKNOWN":
+            reason += "; configuration state UNKNOWN"
+        return _red(ctx, reason)
     except AbortError as e:
-        _do_abort(ctx, str(e))
-        return _red(ctx, str(e))
+        reason = str(e)
+        if not _do_abort(ctx, reason):
+            reason += "; configuration restore UNKNOWN"
+        return _red(ctx, reason)
     except Exception as e:                          # never die on an exception
-        _do_abort(ctx, "내부 예외: %r" % (e,))
-        return _red(ctx, "내부 예외: %r" % (e,))
+        reason = "내부 예외: %r" % (e,)
+        if not _do_abort(ctx, reason):
+            reason += "; configuration restore UNKNOWN"
+        return _red(ctx, reason)
 
 
 def _pipeline(ctx: _Ctx) -> AutotuneResult:
@@ -900,6 +1166,19 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     # ---- P4 (before any write): recorder signal resolution ----------------------------
     ctx.sig = _resolve_signals(ctx)
 
+    # ---- P4b (before any write): feedback-socket admission ---------------------------
+    # This is an admission decision, not a recoverable setup failure.  Resolve it
+    # before bootstrap gains, UM, or SC[8] can touch drive RAM.
+    used_sockets = {ctx.readings.get(k) for k in ("CA[45]", "CA[46]", "CA[47]")}
+    ctx.socket = None
+    for s in (4, 3, 2):
+        sid = ctx.readings.get("CA[4%d]" % s)
+        if s not in used_sockets and sid != 8:
+            ctx.socket = s
+            break
+    if ctx.socket is None:
+        raise PreflightError("SE용 빈 피드백 소켓 없음 (CA[42..44] 만석/ID8 선점)")
+
     # ---- P3: snapshot to disk (I1 invariant: BEFORE first drive write) ----------------
     ctx.snapshot = dict(ctx.readings)
     os.makedirs(p.snapshot_dir, exist_ok=True)
@@ -910,6 +1189,74 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
                   ensure_ascii=False, indent=1)
     ctx.evidence["snapshot_path"] = ctx.snapshot_path
     _emit(ctx, "SNAPSHOT", "드라이브 상태 스냅숏 저장: %s" % ctx.snapshot_path)
+
+    # Freeze and durably prepare the complete temporary configuration before
+    # the first assignment.  The later B3 fallback may choose bootstrap gains
+    # after this target was frozen; that intermediate state intentionally
+    # matches neither audit profile and therefore remains fail-closed.
+    kp0 = ctx.readings["KP[1]"]
+    planned_kp, planned_ki = kp0, ctx.readings["KI[1]"]
+    if not isinstance(kp0, (int, float)) or kp0 <= 0:
+        if not (l_np_ph and r_np_ph):
+            raise PreflightError(
+                "KP[1]<=0 and nameplate(명판) R/L are unavailable for "
+                "bootstrap(부트스트랩)")
+        planned_kp = (0.05 / ctx.ts_s) * p.nameplate_l_pp_h
+        planned_ki = r_np_ph / (2 * math.pi * l_np_ph)
+
+    original_config = {}
+    for name in P1_CONFIG_NAMES:
+        raw_value = ctx.raw_readings.get(name, ctx.snapshot.get(name))
+        try:
+            value = _exact_config_snapshot_number(raw_value, name)
+        except ValueError as exc:
+            raise PreflightError(
+                "P1 configuration snapshot is not exact: %s" % exc) from None
+        original_config[name] = value
+    applied_config = dict(original_config)
+    applied_config.update({
+        "KP[1]": float(_to_num(_fmt(planned_kp))),
+        "KI[1]": float(_to_num(_fmt(planned_ki))),
+        "UM": 3.0,
+        "SC[8]": 0.0,
+        "CA[4%d]" % ctx.socket: 8.0,
+        "CA[70]": float(ctx.socket),
+        "SE[1]": 1.0,
+        "SE[2]": 0.0,
+        "SE[3]": float(_to_num(_fmt(ctx.freqs[0]))),
+        "SE[4]": 0.0,
+        "SE[5]": 0.0,
+        "SE[6]": 0.0,
+        "SE[7]": 50.0,
+    })
+    kp_candidates = [
+        value for value in (
+            original_config["KP[1]"], applied_config["KP[1]"])
+        if value > 0.0]
+    ki_candidates = [
+        value for value in (
+            original_config["KI[1]"], applied_config["KI[1]"])
+        if value > 0.0]
+    if (isinstance(l_np_ph, (int, float)) and l_np_ph > 0.0
+            and isinstance(r_np_ph, (int, float)) and r_np_ph > 0.0):
+        kp_candidates.append(float(_to_num(_fmt(
+            (0.05 / ctx.ts_s) * p.nameplate_l_pp_h))))
+        ki_candidates.append(float(_to_num(_fmt(
+            r_np_ph / (2 * math.pi * l_np_ph)))))
+    if not kp_candidates or not ki_candidates:
+        raise PreflightError(
+            "P1 configuration mutation bounds require positive KP[1]/KI[1]")
+    se3_max = max(
+        (2.0 * f if 2.0 * f <= f_max else f) for f in ctx.freqs)
+    mutation_bounds = {
+        "KP[1]": (min(kp_candidates), max(kp_candidates)),
+        "KI[1]": (min(ki_candidates), max(ki_candidates)),
+        "SE[2]": (0.0, 0.8 * i1),
+        "SE[3]": (min(ctx.freqs), se3_max),
+        "TC": (0.0, max(i2, 0.10 * ctx.cl1)),
+    }
+    _prepare_p1_config_journal(
+        ctx, original_config, applied_config, mutation_bounds)
 
     # ---- P5: gain bootstrap if current loop is unconfigured ---------------------------
     kp0 = ctx.readings["KP[1]"]
@@ -932,16 +1279,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     if ctx.readings["SC[8]"] not in (0, None):
         _write(ctx, "SC[8]", 0)
 
-    # ---- A2: claim a free feedback socket for Virtual-2-Sine (ID 8) -------------------
-    used_sockets = {ctx.readings.get(k) for k in ("CA[45]", "CA[46]", "CA[47]")}
-    ctx.socket = None
-    for s in (4, 3, 2):
-        sid = ctx.readings.get("CA[4%d]" % s)
-        if s not in used_sockets and sid != 8:
-            ctx.socket = s
-            break
-    if ctx.socket is None:
-        raise PreflightError("SE용 빈 피드백 소켓 없음 (CA[42..44] 만석/ID8 선점)")
+    # ---- A2: claim the preflight-admitted socket for Virtual-2-Sine (ID 8) ------------
     _write(ctx, "CA[4%d]" % ctx.socket, 8)
     _write(ctx, "CA[70]", ctx.socket)
 
@@ -1283,7 +1621,11 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     _ramp_tc(ctx, 0.0, T_RAMP_DOWN_S, 10)
     _cmd(ctx, "MO=0")
     ctx.motor_on = False
-    _restore_snapshot(ctx)
+    restore_failed = _restore_snapshot(ctx)
+    if restore_failed:
+        raise AbortError(
+            "E1 configuration restore UNKNOWN: %s" %
+            ", ".join(restore_failed))
     try:
         ctx.link.command("RR=0", timeout_ms=1000)   # leave recorder idle
     except Exception:
@@ -1409,7 +1751,7 @@ def _measure_sine(ctx: _Ctx, f_hz: float, a_cmd: float):
     _write(ctx, "SE[2]", a_cmd)
     if ctx.tc_now + a_cmd > 0.85 * ctx.cl1:         # I2 invariant (TC+SE)
         raise AbortError("전류지령 총합 %.1fA > 0.85*CL[1]" % (ctx.tc_now + a_cmd))
-    _write(ctx, "TW[80]", 1)
+    _write(ctx, "TW[80]", 1, allow_motion=True)
     try:
         waited = 0.0
         while _cmd(ctx, "WS[75]") != 2:
@@ -1421,7 +1763,7 @@ def _measure_sine(ctx: _Ctx, f_hz: float, a_cmd: float):
         rec = _record(ctx, T_SINE_RECORD_S)
     finally:
         try:
-            ctx.link.command("TW[80]=0", timeout_ms=1000)
+            _cmd(ctx, "TW[80]=0", retries=0)
         except Exception:
             pass
     dt = rec["dt"]
@@ -1450,6 +1792,7 @@ def _fmt_gain(v: float) -> str:
 
 
 P1_GAIN_NAMES = ("KP[1]", "KI[1]")
+P1_GAIN_TRIAL_SYNTHETIC_MODE = "SYNTHETIC_NO_HARDWARE"
 P1_TRIAL_PREPARING = "PREPARING"
 P1_TRIAL_RAM = "RAM_TRIAL"
 P1_TRIAL_RESTORING = "RESTORING"
@@ -1459,6 +1802,16 @@ P1_TRIAL_PERSISTING = "PERSISTING"
 P1_TRIAL_PERSISTED = "PERSISTED"
 P1_TRIAL_UNKNOWN = "UNKNOWN"
 P1_TRIAL_AUTHORITY_INVALID = "AUTHORITY_INVALID"
+
+
+def _p1_gain_trial_is_explicit_synthetic(link) -> bool:
+    """Allow RAM-only trials solely for an explicit no-hardware contract."""
+    try:
+        mode = getattr(link, "p1_gain_trial_durability_mode", None)
+    except Exception:
+        return False
+    return (type(mode) is str
+            and mode == P1_GAIN_TRIAL_SYNTHETIC_MODE)
 
 
 @dataclass
@@ -1603,6 +1956,13 @@ def _p1_applied_plan(trial: GainTrialP1) -> dict:
     if mutable_fingerprint != trial.applied_fingerprint:
         raise ValueError("P1 applied authority fingerprint changed")
     return frozen
+
+
+def p1_gain_trial_has_save_authority(trial: GainTrialP1) -> bool:
+    """Return False until real E4 can mint a sealed on-motor capability."""
+    # E4 is an honest RED stub.  This must remain a reviewed code boundary,
+    # never an environment/configuration bypass.
+    return False
 
 
 def _freeze_p1_transaction_identity(value):
@@ -1861,6 +2221,11 @@ def begin_gain_trial_p1(link, result: AutotuneResult):
     if result is None or result.status not in (GREEN, YELLOW):
         return False, "P1 RAM 적용 불가: 결과 상태 %s" % (
             result.status if result else None), None
+    if not _p1_gain_trial_is_explicit_synthetic(link):
+        return False, (
+            "P1 RAM gain trial locked: durable pre-assignment trial WAL is "
+            "not available for hardware-capable links; no drive command "
+            "executed"), None
     if _p1_persistence_unknown_latched(link):
         return False, ("P1 RAM trial blocked: link persistence state UNKNOWN; "
                        "no drive command executed"), None
@@ -1925,6 +2290,10 @@ def commit_gain_trial_p1(link, trial: GainTrialP1):
         trial.persistence_state = P1_TRIAL_AUTHORITY_INVALID
         return False, ("P1 applied authority invalid: %s; SV not executed" %
                        exc)
+    if not p1_gain_trial_has_save_authority(trial):
+        return False, (
+            "P1 save blocked: session-bound on-motor verification capability "
+            "is unavailable while E4 remains RED; SV not executed")
     try:
         _assert_p1_motor_off(link)
         actual = _read_p1_gain_values(link)
@@ -2087,6 +2456,11 @@ def apply_gains(link, result: AutotuneResult, persist: bool = False):
         return False, ("legacy persist=True blocked before RAM write; use "
                        "begin_gain_trial_p1 then commit_gain_trial_p1; "
                        "SV not executed")
+    if not _p1_gain_trial_is_explicit_synthetic(link):
+        return False, (
+            "P1 RAM gain apply locked: durable pre-assignment trial WAL is "
+            "not available for hardware-capable links; no drive command "
+            "executed")
     if result is None or result.status not in (GREEN, YELLOW) \
             or result.kp_v_per_a is None or result.ki_hz is None:
         return False, "적용 불가: 결과 상태 %s" % (result.status if result else None)

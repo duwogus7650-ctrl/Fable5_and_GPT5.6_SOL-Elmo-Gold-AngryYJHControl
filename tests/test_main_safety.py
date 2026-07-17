@@ -202,18 +202,62 @@ def test_worker_malformed_persistence_status_stays_read_only_locked_and_cleans_u
     assert link.disconnected
 
 
+def test_worker_preserves_motor_unknown_record_at_startup_for_read_only_audit(
+        monkeypatch):
+    payload = {
+        "status": "RESET_NOT_ATTESTED",
+        "resolved": False,
+        "detail": "cold reset evidence still required",
+        "lock_active": True,
+        "record_id": "motor-audit-record-001",
+        "phase": "MOTOR",
+        "other_active_count": 0,
+        "ledger_error": None,
+    }
+    worker = DriveWorker("COM_TEST")
+
+    class MotorPersistenceLink(_HandshakeLink):
+        @staticmethod
+        def read_telemetry():
+            return _full_disabled_telemetry()
+
+        @staticmethod
+        def persistence_status():
+            return dict(payload)
+
+    link = MotorPersistenceLink()
+    connected = []
+
+    def stop_after_read_only_admission(info):
+        connected.append(info)
+        worker.stop()
+
+    worker.connected.connect(stop_after_read_only_admission)
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+
+    worker.run()
+
+    assert connected[0]["persistence_status"] == payload
+    assert worker._persistence_recovery_unknown is True
+    assert worker._trial_job_guard("persistence_audit", None) == (True, "")
+    assert link.disconnected is True
+
+
 def test_worker_trial_allowlist_and_exact_p2_identity():
     worker = _worker_with_fresh_px()
     current = object()
     foreign = object()
     worker._vp_gain_trial = current
+    worker._commutation_signature_green = True
+    worker._commutation_signature_token = "current-signature"
 
-    assert worker._trial_job_guard("verify_vp", ({}, current))[0]
+    assert worker._trial_job_guard(
+        "verify_vp", ({}, current, "current-signature"))[0]
     assert worker._trial_job_guard("vp_trial_restore", current)[0]
     assert worker._trial_job_guard("vp_trial_commit", current)[0]
 
     for kind, payload in (
-            ("verify_vp", ({}, foreign)),
+            ("verify_vp", ({}, foreign, "current-signature")),
             ("vp_trial_restore", foreign),
             ("vp_trial_commit", foreign),
             ("velpos", {}),
@@ -619,6 +663,45 @@ def test_motion_stop_latch_invalidates_moves_queued_until_stop_finishes():
     assert worker._jobs[1][1][0] <= worker._motion_cancelled_through
 
 
+@pytest.mark.parametrize("starter", [
+    lambda worker: worker.start_autotune({}),
+    lambda worker: worker.start_velpos_autotune({}),
+    lambda worker: worker.start_verify_vp({}),
+])
+def test_motion_stop_latch_cannot_be_cleared_by_direct_tuning_start(starter):
+    worker = DriveWorker("COM_TEST")
+    worker.request_motion_stop()
+
+    token = starter(worker)
+
+    assert worker._cancel_at is True
+    assert worker._motion_stop_requested is True
+    assert token <= worker._tune_cancelled_through
+    queued_token = worker._jobs[-1][1][0]
+    assert queued_token == token
+    assert queued_token <= worker._tune_cancelled_through
+
+
+@pytest.mark.parametrize("starter,cancel", [
+    (lambda worker: worker.start_autotune({}),
+     lambda worker: worker.cancel_autotune()),
+    (lambda worker: worker.start_velpos_autotune({}),
+     lambda worker: worker.cancel_velpos()),
+    (lambda worker: worker.start_verify_vp({}),
+     lambda worker: worker.cancel_velpos()),
+])
+def test_abort_after_enqueue_cancels_tuning_generation_before_dispatch(
+        starter, cancel):
+    worker = DriveWorker("COM_TEST")
+    token = starter(worker)
+
+    cancel(worker)
+
+    assert worker._cancel_at is True
+    assert token <= worker._tune_cancelled_through
+    assert worker._jobs[-1][1][0] == token
+
+
 def test_config_write_revokes_green_commutation_authority():
     worker = DriveWorker("COM_TEST")
     worker._commutation_signature_green = True
@@ -631,13 +714,15 @@ def test_config_write_revokes_green_commutation_authority():
     assert events == [(False, "Feedback write requested")]
 
 
-def test_worker_p1_phase_allows_only_exact_restore_or_commit():
+def test_worker_p1_phase_allows_restore_but_locks_unverified_commit():
     worker = _worker_with_fresh_px()
     current = object()
     worker._p1_gain_trial = current
 
     assert worker._trial_job_guard("p1_trial_restore", current)[0]
-    assert worker._trial_job_guard("p1_trial_commit", current)[0]
+    allowed, message = worker._trial_job_guard("p1_trial_commit", current)
+    assert not allowed
+    assert "on-motor" in message.lower() and "verification" in message.lower()
     assert not worker._trial_job_guard("p1_trial_restore", object())[0]
     assert not worker._trial_job_guard("verify_vp", ({}, None))[0]
     assert not worker._trial_job_guard("soft_zero", None)[0]
@@ -726,6 +811,30 @@ def test_phase2_requires_current_connection_commutation_signature():
             "r_pp_ohm": 0.139,
             "l_pp_h": 41.6e-6,
         }) == (True, "")
+
+
+@pytest.mark.parametrize("with_trial", [False, True])
+def test_phase2_verify_requires_current_connection_commutation_signature(
+        with_trial):
+    worker = _worker_with_fresh_px()
+    trial = None
+    if with_trial:
+        trial = SimpleNamespace(
+            persistence_state="RAM_TRIAL", restore_only=False)
+        worker._vp_gain_trial = trial
+    payload = ({}, trial, "signature-A")
+
+    allowed, message = worker._trial_job_guard("verify_vp", payload)
+
+    assert not allowed
+    assert "Commutation Signature" in message
+    worker._commutation_signature_green = True
+    worker._commutation_signature_token = "signature-A"
+    assert worker._trial_job_guard("verify_vp", payload) == (True, "")
+    stale, stale_message = worker._trial_job_guard(
+        "verify_vp", ({}, trial, "signature-stale"))
+    assert not stale
+    assert "Commutation Signature" in stale_message
 
 
 @pytest.mark.parametrize("phase", ["P1", "P2"])

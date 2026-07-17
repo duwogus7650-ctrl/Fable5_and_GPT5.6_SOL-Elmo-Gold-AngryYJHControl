@@ -37,6 +37,8 @@ DESIRED_WRITES = {
     "CA[19]": 10,
     "CA[28]": 2,
 }
+P2_ORIGINAL = {"KP[2]": 0.00008, "KI[2]": 9.5, "KP[3]": 80.0}
+P2_APPLIED = {"KP[2]": 0.00009, "KI[2]": 10.7, "KP[3]": 85.2}
 
 
 class FakeComm:
@@ -120,9 +122,8 @@ def test_clear_link_rejects_unprepared_sv_before_vendor_io():
 def test_one_prepared_capability_cannot_send_two_concurrent_sv_calls():
     link, comm = _new_link()
     record_id = link.prepare_persistence_attempt(
-        phase="P1", registers=("KP[1]", "KI[1]"),
-        original={"KP[1]": 0.05, "KI[1]": 700.0},
-        applied={"KP[1]": 0.06, "KI[1]": 800.0})
+        phase="P2", registers=pa.PHASE_REGISTERS["P2"],
+        original=P2_ORIGINAL, applied=P2_APPLIED)
     gate = threading.Barrier(3)
     outcomes = []
 
@@ -150,9 +151,8 @@ def test_one_prepared_capability_cannot_send_two_concurrent_sv_calls():
 def test_foreign_attempt_id_cannot_consume_prepared_sv_capability():
     link, comm = _new_link()
     record_id = link.prepare_persistence_attempt(
-        phase="P1", registers=("KP[1]", "KI[1]"),
-        original={"KP[1]": 0.05, "KI[1]": 700.0},
-        applied={"KP[1]": 0.06, "KI[1]": 800.0})
+        phase="P2", registers=pa.PHASE_REGISTERS["P2"],
+        original=P2_ORIGINAL, applied=P2_APPLIED)
     comm.commands.clear()
 
     with pytest.raises(RuntimeError, match="persistence state UNKNOWN"):
@@ -174,6 +174,40 @@ def test_motor_cannot_prepare_directly_in_sv_ready_state(isolated_ledger):
             initial_state="PERSISTING")
 
     assert not isolated_ledger.exists()
+
+
+def test_motor_capability_rejects_sub_ulp_profile_literal_before_vendor_io():
+    link, comm = _new_link()
+    applied = {**ORIGINAL, "PL[1]": 12.0}
+    record_id = link.prepare_persistence_attempt(
+        phase="MOTOR", registers=tuple(ORIGINAL),
+        original=ORIGINAL, applied=applied,
+        initial_state="RAM_APPLYING")
+    comm.commands.clear()
+
+    with pytest.raises(RuntimeError, match="persistence state UNKNOWN"):
+        link.command(
+            "PL[1]=12.0000000000000001",
+            _persistence_attempt_id=record_id)
+
+    assert comm.commands == []
+
+
+@pytest.mark.parametrize("register,readback", [
+    ("VH[2]", "10000.0000000000000001"),
+    ("PL[1]", "10.0000000000000001"),
+])
+def test_motor_preflight_rejects_lossy_decimal_readback_before_mutation(
+        register, readback):
+    comm = FakeComm(corrupt_readback={register: readback})
+    link, comm = _new_link(comm=comm)
+
+    ok, message = link.write_motor_params(DESIRED_WRITES, persist=True)
+
+    assert not ok
+    assert "preflight read failed" in message
+    assert not any("=" in command or command == "SV"
+                   for command in comm.commands)
 
 
 def test_motor_wal_exists_before_first_assignment_and_sv_is_single_use(

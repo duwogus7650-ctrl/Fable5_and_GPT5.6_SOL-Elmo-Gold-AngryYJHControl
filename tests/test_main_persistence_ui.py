@@ -93,6 +93,8 @@ def _seed_phase2_run_authority(win) -> None:
     )
     win._at_result_generation = generation
     win._motion_signature_green = True
+    win._motion_signature_token = "offline-ui-signature"
+    win._motion_signature_generation = generation
     _seed_authoritative_connection(win)
 
 
@@ -112,6 +114,9 @@ class _WorkerSpy:
         self.axis_calls = 0
         self.stop_calls = 0
         self.motor_writes = []
+        self.verify_calls = []
+        self.p1_commit_calls = []
+        self.signature_token = "offline-ui-signature"
 
     @staticmethod
     def isRunning():
@@ -134,6 +139,15 @@ class _WorkerSpy:
 
     def write_motor(self, writes, *, ca18_basis=None):
         self.motor_writes.append((dict(writes), ca18_basis))
+
+    def current_commutation_signature_token(self):
+        return self.signature_token
+
+    def start_verify_vp(self, kw, trial=None, signature_token=None):
+        self.verify_calls.append((dict(kw), trial, signature_token))
+
+    def commit_current_gain_trial(self, trial):
+        self.p1_commit_calls.append(trial)
 
 
 class _WorkerEmitter(QtCore.QObject):
@@ -273,6 +287,20 @@ def test_audit_button_is_enabled_only_for_connected_durable_unknown(window):
 
     _seed_authoritative_connection(win)
     assert win.btn_persistence_audit.isEnabled()
+
+
+def test_motor_unknown_payload_keeps_record_and_query_only_audit_available(window):
+    win, _spy = window
+    _seed_authoritative_connection(win)
+    payload = _audit_payload(locked=True, phase="MOTOR")
+
+    win._on_persistence_audit_status(payload)
+
+    assert win._persistence_audit_summary == payload
+    assert win._persistence_audit_summary["record_id"] == "audit-record-001"
+    assert win._persistence_audit_summary["ledger_error"] is None
+    assert win.btn_persistence_audit.isEnabled()
+    assert "MOTOR" in win.lbl_persistence_badge.text()
 
 
 @pytest.mark.parametrize(
@@ -491,8 +519,27 @@ def _seed_applicable_tuning_results(win):
     win._at_result_generation = generation
     win._vp_result_generation = generation
     _seed_authoritative_connection(win)
-    assert win.btn_tune_apply.isEnabled()
-    assert win.btn_tune_vp_apply.isEnabled()
+    assert not win.btn_tune_apply.isEnabled()
+    assert not win.btn_tune_vp_apply.isEnabled()
+    assert "LOCKED" in win.btn_tune_apply.text()
+    assert "LOCKED" in win.btn_tune_vp_apply.text()
+
+
+def test_production_gain_apply_ui_rejects_before_confirmation(
+        window, monkeypatch):
+    win, _spy = window
+    _seed_applicable_tuning_results(win)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "question",
+        lambda *_args, **_kwargs: pytest.fail(
+            "production gain Apply must reject before confirmation"))
+
+    win._apply_autotune_clicked()
+    win._apply_velpos_clicked()
+
+    assert win._tune_dispatch_inflight is None
+    assert win._p1_gain_trial is None
+    assert win._vp_gain_trial is None
 
 
 def _assert_tuning_result_authority_invalidated(win):
@@ -620,7 +667,10 @@ def test_current_worker_matching_dispatch_generation_result_is_accepted(
 
     assert getattr(win, result_attr) is result
     assert getattr(win, "%s_generation" % result_attr) == generation
-    assert getattr(win, button_name).isEnabled()
+    button = getattr(win, button_name)
+    assert not button.isEnabled()
+    assert "LOCKED" in button.text()
+    assert "pre-assignment RAM-trial WAL" in button.toolTip()
     assert win._tune_dispatch_inflight is None
 
 
@@ -651,6 +701,42 @@ def test_old_worker_delayed_gain_begin_after_reconnect_cannot_refill_trial(
     assert getattr(win, trial_attr) is None
     assert not win.btn_tune_p1_save.isEnabled()
     assert not win.btn_tune_vp_save.isEnabled()
+
+
+def test_p1_save_stays_disabled_and_direct_handler_rejects_before_dialog(
+        window, monkeypatch):
+    win, spy = window
+    _seed_authoritative_connection(win)
+    trial = SimpleNamespace(
+        persistence_state="RAM_TRIAL", restore_only=False)
+    win._p1_gain_trial = trial
+    win._p1_trial_generation = win._tuning_authority_generation
+    win._set_connected_ui(True)
+
+    def dialog_must_not_open(*_args, **_kwargs):
+        raise AssertionError("unverified P1 Save opened a confirmation dialog")
+
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "question", dialog_must_not_open)
+
+    assert not win.btn_tune_p1_save.isEnabled()
+    win._save_current_clicked()
+
+    assert spy.p1_commit_calls == []
+    assert win._tune_dispatch_inflight is None
+
+
+def test_autotune_smoke_matches_production_gain_lock_without_writing_media(
+        window, qapp, monkeypatch):
+    win, _spy = window
+    monkeypatch.setattr(win, "_dump_autotune_result", lambda _result: None)
+    saved_paths = []
+    monkeypatch.setattr(
+        win, "grab",
+        lambda: SimpleNamespace(save=lambda path: saved_paths.append(path) or True))
+
+    assert app_main._smoke_autotune(qapp, win) == 0
+    assert saved_paths
 
 
 def test_current_worker_late_tuning_results_during_motor_write_are_ignored(
@@ -733,6 +819,80 @@ def test_motor_write_inflight_disables_and_blocks_all_tuning_starts(window):
     assert win._tune_dispatch_inflight is None
 
 
+def test_p2_verify_button_requires_current_connection_commutation_signature(
+        window):
+    win, _spy = window
+    _seed_authoritative_connection(win)
+
+    assert not win._motion_signature_green
+    assert not win.btn_tune_verify.isEnabled()
+
+
+def test_p2_verify_direct_ui_path_rejects_before_confirmation_or_dispatch(
+        window, monkeypatch):
+    win, spy = window
+    _seed_authoritative_connection(win)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "warning",
+        lambda *_args, **_kwargs: pytest.fail(
+            "verification confirmation must not open without signature GREEN"))
+
+    win._run_verify_clicked()
+
+    assert spy.verify_calls == []
+    assert win._tune_dispatch_inflight is None
+
+
+def test_p2_verify_dispatch_carries_current_signature_token(
+        window, monkeypatch):
+    win, spy = window
+    _seed_phase2_run_authority(win)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "warning",
+        lambda *_args, **_kwargs:
+        QtWidgets.QMessageBox.StandardButton.Yes)
+
+    win._run_verify_clicked()
+
+    assert len(spy.verify_calls) == 1
+    _kw, _trial, token = spy.verify_calls[0]
+    assert token == win._motion_signature_token
+
+
+def test_p2_verify_revoked_during_confirmation_never_dispatches(
+        window, monkeypatch):
+    win, spy = window
+    _seed_phase2_run_authority(win)
+
+    def revoke_while_modal(*_args, **_kwargs):
+        win._on_motion_authority(False, "signature revoked in modal")
+        return QtWidgets.QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "warning", revoke_while_modal)
+
+    win._run_verify_clicked()
+
+    assert spy.verify_calls == []
+    assert win._tune_dispatch_inflight is None
+
+
+def test_p2_verify_stale_candidate_generation_rejects_before_confirmation(
+        window, monkeypatch):
+    win, spy = window
+    _seed_phase2_run_authority(win)
+    win._advance_tuning_authority_generation()
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "warning",
+        lambda *_args, **_kwargs: pytest.fail(
+            "stale signature generation must reject before confirmation"))
+
+    win._run_verify_clicked()
+
+    assert spy.verify_calls == []
+    assert win._tune_dispatch_inflight is None
+
+
 def test_reconnected_retained_p2_trial_is_restore_only_in_ui(window):
     win, _spy = window
     _seed_authoritative_connection(win)
@@ -743,7 +903,7 @@ def test_reconnected_retained_p2_trial_is_restore_only_in_ui(window):
     win._vp_verified_trial = trial
     win._vp_verified_generation = trial_generation
     _seed_authoritative_connection(win)
-    assert win.btn_tune_vp_save.isEnabled()
+    assert not win.btn_tune_vp_save.isEnabled()
 
     win._on_stopped()
     win._on_connected(_connected_info(win, fw="NEXT_FW"))

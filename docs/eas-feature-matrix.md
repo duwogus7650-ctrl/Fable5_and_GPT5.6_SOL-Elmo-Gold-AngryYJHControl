@@ -29,7 +29,8 @@ Recorder 상단 리본의 항목별 쉬운 설명과 구현/잠금 상태는
 애플리케이션 메뉴 v1이다. 원본 EAS 메뉴 동등성은 주장하지 않는다. 공통
 `OperationSpec` 카탈로그가 `LOCAL UI / LOCAL FILE / DRIVE READ / DRIVE STATE / RAM WRITE /
 ENERGIZES / MOTION / PERSIST-SV / SAFETY STOP / NEED-DATA`를 분류하며, Quick/Expert 메뉴는
-같은 Tuning 엔진을 안내형 식별·설계 화면과 RAM trial·검증·복원·저장 화면으로 나눠 보여준다.
+같은 Tuning 엔진을 안내형 식별·설계와 후보 검토·installed-gain Verify 화면으로 나눠 보여준다.
+하드웨어 게인 Apply/Save는 durable pre-assignment gain-trial WAL이 생길 때까지 잠긴다.
 
 | 영역 | 현재 상태 | 근거 수준 | 다음 게이트 |
 |---|---|---|---|
@@ -43,12 +44,12 @@ ENERGIZES / MOTION / PERSIST-SV / SAFETY STOP / NEED-DATA`를 분류하며, Quic
 | Personality upload와 레코더 신호 목록 | 구현 | LIVE | 연결 generation별 재발견; 펌웨어별 신호 이름·단위 검정 |
 | 고속 Drive Recording | Immediate finite v1 구현 | LIVE positional key + OFFLINE lifecycle/반례 | Normal/Auto/Interval/Rollover trigger 계약과 post-Configure timing 실기 readback |
 | Recorder CSV/provenance | 구현 | OFFLINE | raw CSV + UTC/target/timing/SHA-256 metadata sidecar의 현장 capture 검증 |
-| Phase 1 R/L 식별과 전류 PI 설계 | 구현 | LIVE: 식별/설계 | 신규 P1 `RAM → Restore/Save` 트랜잭션 실기 되읽기 |
-| P1 게인 임시 적용/복원/SV | 구현 | OFFLINE 전체 회귀시험·세션/UNKNOWN fault injection | 정지축에서 apply/readback/restore, 감독하 전원 재인가 persistence audit |
+| Phase 1 R/L 식별과 전류 PI 설계 | 구현 | LIVE: 식별/설계 | 최신 코드로 감독 식별·후보 산출 재검증; gain Apply와 분리 |
+| P1 게인 임시 적용/복원/SV | production Apply/Save pre-I/O 잠금; state machine은 synthetic-only | OFFLINE 전체 회귀·drive I/O 0 fail-closed 반례 | P2_LIMITS와 공존하는 durable pre-assignment gain-trial WAL 및 real session-bound verifier 전에는 잠금 유지 |
 | 커뮤테이션 서명 | 구현 | LIVE + OFFLINE 회귀 | 매 전원 투입 시 제한 전류·방향·최종 `TC=0/MO=0` 확인 |
 | Phase 2 속도/위치 식별·설계 | 구현 | LIVE 이력 + OFFLINE 회귀 | 현재 EAS 설정 provenance를 독립 되읽기한 뒤 재개 |
-| P2 RAM 적용·모터 검증·복원·SV | 구현 | LIVE 이력 + OFFLINE 세션/권한/UNKNOWN 회귀 | 최신 코드로 apply→검증→restore/persist 전체 실기 재시험 |
-| P1/P2/Motor `SV` UNKNOWN durable ledger | 구현 | OFFLINE crash/write/readback/손상/identity/interprocess 반례 | 실제 SV 응답 유실 뒤 냉간 OFF/ON + query-only audit 현장 검증 |
+| P2 게인 적용·검증·복원·SV | installed-gain Verify 구현; production Apply/Save pre-I/O 잠금; trial state machine은 synthetic-only | 과거 LIVE 이력 + OFFLINE 세션/권한/UNKNOWN·drive I/O 0 반례 | durable pre-assignment gain-trial WAL 전에는 새 trial/Save 금지; installed-gain Verify는 판정만 제공 |
+| P1_CONFIG/P2_LIMITS/Motor durable ledger + legacy P2 audit | active production scope 구현; legacy P2 record 판정 엔진 유지 | OFFLINE crash/write/readback/손상/identity/interprocess 반례 | 임시 구성 rollback·Motor SV 응답 유실 뒤 냉간 OFF/ON + query-only audit 현장 검증 |
 | 자동 설정 프로필 | Motor v1 구현; Feedback 잠금 | Motor OFFLINE, Feedback NEED-DATA | Feedback versioned registry → RAM trial/readback/rollback → 별도 SV |
 | 유한 Single-Axis PTP | backend/STOP transaction 구현, live 잠금 | OFFLINE 42-test kernel | 기계 envelope·정방향·limit·정지거리·독립 E-stop/STO evidence 전에는 gate 해제 금지 |
 | 일반 수동 Jog/Homing/Current/Sine | 미구현 | NEED-DATA | 별도 안전 요구사항·limit·watchdog·fault-state 설계 후에만 추가 |
@@ -134,7 +135,8 @@ ENERGIZES / MOTION / PERSIST-SV / SAFETY STOP / NEED-DATA`를 분류하며, Quic
 
 ## 자동 설정의 실행 계약
 
-자동화 가능한 것은 계산·비교·RAM 시험·되읽기·복원이다. 다음 순서를 공통으로 사용한다.
+자동화 가능한 것은 계산·비교와 각 기능이 명시적으로 허용한 bounded transaction의 되읽기·복원이다.
+다음 순서를 공통으로 사용한다.
 
 1. 해시된 drive identity, 정확한 연결 세션 토큰과 펌웨어, 현재 전체 설정 스냅숏을 기록한다.
 2. 적용 전 변경 목록과 단위 변환을 보여준다.
@@ -144,34 +146,40 @@ ENERGIZES / MOTION / PERSIST-SV / SAFETY STOP / NEED-DATA`를 분류하며, Quic
    레지스터를 독립 되읽기한다.
 5. Motor의 pre-SV 일부 실패·timeout·불일치는 역순 원값 복원과 전체 되읽기를 수행한다.
    복원이 확인되면 `SV` 없이 종료하고, 확인되지 않으면 `UNKNOWN`으로 잠가 새 시험·enable·motion·반복 `SV`를 금지한다.
-6. P1/P2는 RAM 시험과 복원/검증/Save를 분리한다. Motor v1은 현재 한 확인창에서 RAM 적용과
-   단일 `SV`까지의 bounded transaction 전체를 명시하며 중복 요청을 잠근다.
+6. Production P1/P2 gain Apply와 Save는 durable pre-assignment gain-trial WAL이 없으므로 첫 drive
+   I/O 전에 fail-closed한다. trial/restore/Save state machine은 exact `SYNTHETIC_NO_HARDWARE`
+   회귀에서만 열린다. `Verify Installed P2 on Motor`는 현재 설치 게인을 대상으로 commutation
+   signature와 `P2_LIMITS` WAL을 요구하지만 판정만 반환하며 Apply/Save 권한을 만들지 않는다.
+   Motor v1은 한 확인창에서 RAM 적용과 단일 `SV`까지의 bounded transaction 전체를 명시하며
+   중복 요청을 잠근다.
 7. 영구 `SV`는 전체 readback이 일치하고 해당 request의 record ID-bound durable authority가 있을 때 정확히 한 번만 실행한다.
    `PERSISTING` fsync 뒤 full profile/안전 snapshot과 마지막 안전 조회도 재검증하며, 실패하면 UNKNOWN·SV 미실행이다.
 
 위 재조회는 외부 EAS/CAN/EtherCAT master와 원자적 interlock이 아니다. 실기 프로필 저장은 다른
 master의 배타적 제어권이 확인될 때까지 `NEED-DATA`다. Motor 변경·연결 세대 변경 시 과거 P1/P2
-Apply authority는 폐기하고 이전 worker의 지연 신호도 무시한다.
+결과와 복구 trial authority는 폐기하고 이전 worker의 지연 신호도 무시한다.
 
-P1/P2 `SV` 직전과 Motor RAM mutation 전에는 해시된 drive identity, 정확한
-VR/VP/VB·connection epoch,
-원래/적용 게인 전체를 checkout 밖 `%LOCALAPPDATA%\AngryYJHControl\safety`의 SHA-256 검증 원장에
-interprocess lock으로 먼저 atomic 기록한다. 따라서 SV 응답 유실이나
-강제 프로세스 종료 뒤에도 `UNKNOWN` 잠금이 유지된다. 해제는 사용자가 UNKNOWN 이후 냉간
-OFF/ON 또는 동등한 reset을 현장에서 확인하고, 새 connection epoch의 동일 drive identity와
-동일 VR/VP/VB에서 `MO=0·SO=0·VX=0`, 안정된 2회 게인 readback을 query-only로 확인한 때만
-가능하다. Motor record는 `PL[1]`, `CL[1]`, `VH[2]`, `CA[19]`, `CA[28]` 프로파일과
-검증 의존값을 사용한다. `SV`, `LD`, `RS`, assignment는 audit에서 보내지 않는다.
-해제 record에는 reset attestation, 새 epoch, 정확한 software context, 두 query-only snapshot과
-별도 evidence SHA-256을 archive한다. P1/P2는 0.1% 허용오차, Motor는 exact comparator에서
-original/applied가 구별되지 않으면 attempt와 `SV`를 사전에 거부한다. 이 원장을 모르는 구버전
-checkout은 UNKNOWN 중 제어용으로 사용하지 않는다.
+Production에서 mutation 가능한 P1_CONFIG, P2_LIMITS, Motor는 첫 RAM assignment 전에 해시된
+drive identity, 정확한 VR/VP/VB·connection epoch와 original/applied profile을 checkout 밖
+`%LOCALAPPDATA%\AngryYJHControl\safety`의 SHA-256 검증 원장에 interprocess lock으로 atomic
+기록한다. Motor만 전체 applied readback 뒤 `PERSISTING`으로 전이해 단일 `SV` authority를 얻는다.
+기존 P2 gain audit 엔진은 legacy/offline ambiguous-SV record를 판정할 수 있지만 현재 production
+UI/domain은 새 P2 trial 또는 gain `SV` record를 만들지 않는다. P1 gain Save도 잠겨 있다.
+
+원장 기록 뒤 응답 유실이나 강제 프로세스 종료가 발생해도 `UNKNOWN` 잠금은 유지된다. 해제는
+사용자가 UNKNOWN 이후 냉간 OFF/ON 또는 동등한 reset을 현장에서 확인하고, 새 connection epoch의
+동일 drive identity·VR/VP/VB에서 disabled 안전 상태와 안정된 두 query-only snapshot을 확인한
+때만 가능하다. `SV`, `LD`, `RS`, assignment는 audit에서 보내지 않는다. 해제 record에는 reset
+attestation, 새 epoch, 정확한 software context, 두 snapshot과 별도 evidence SHA-256을 archive한다.
+P1_CONFIG/P2_LIMITS/Motor는 exact 비교를 사용하고 legacy P2 gain record만 0.1% 판정 허용오차를
+사용한다. 이 원장을 모르는 구버전 checkout은 UNKNOWN 중 제어용으로 사용하지 않는다.
 
 Audit 결과는 `RESOLVED_APPLIED_PROFILE` 또는 `RESOLVED_ORIGINAL_PROFILE`처럼 전원 재인가 뒤
-관측된 durable 게인/Motor profile만 말한다. 특정 `SV`의 인과적 성공/실패, whole-drive flash 동일성,
-커뮤테이션 유효성, motion safety는 계속 `UNKNOWN`이며 별도 검증이 필요하다. 현재 durable
-원장 범위는 P1/P2 게인과 Motor profile이다. Feedback assignment/SV는 이 원장만 재사용해
-임의로 열지 않으며, versioned write registry와 sensor-ID side-effect/rollback 계약이 먼저다.
+관측된 durable configuration/gain/Motor profile만 말한다. 특정 `SV`의 인과적 성공/실패,
+whole-drive flash 동일성, 커뮤테이션 유효성, motion safety는 계속 `UNKNOWN`이며 별도 검증이
+필요하다. 현재 active production 원장 범위는 P1_CONFIG, P2_LIMITS, Motor이고 legacy P2 record
+판정만 호환 유지한다. Feedback assignment/SV는 이 원장만 재사용해 임의로 열지 않으며,
+versioned write registry와 sensor-ID side-effect/rollback 계약이 먼저다.
 
 모터 enable, motion, 커뮤테이션 전류 인가, 영구 encoder datum 변경, 안전 한계 확대는
 설정 프로필의 자동 실행 항목에 포함하지 않는다.

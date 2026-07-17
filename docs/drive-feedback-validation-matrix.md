@@ -34,7 +34,8 @@
 5. counts/rev, multi-turn 범위, index/Hall sequence, electrical/mechanical direction과 zero 의미
 6. FLS/RLS/STOP, brake, STO/E-stop wiring, polarity와 reaction evidence
 7. live command support와 readback semantics: `UM/MO/SO/MF/SR/CA/KP/KI/CL/PL/VH/VL/XM`
-8. snapshot, RAM trial, full readback, rollback, `UNKNOWN`, separate `SV`와 cold audit
+8. 기능별 first-assignment durable WAL, full readback, rollback, `UNKNOWN`, 별도 `SV`와 cold audit.
+   Gain trial은 P2_LIMITS와 공존하는 pre-assignment WAL이 구현되기 전까지 admission하지 않는다.
 
 하나라도 빠지면 기존 profile을 적용하지 않고 `NEED-DATA`로 유지한다.
 
@@ -44,8 +45,9 @@
 2. query-only identity/feedback routing/range 수집
 3. disable·정지·무전류 closeout oracle 확인
 4. sensor direction/scale/index 또는 Hall sequence의 제한 에너지 검증
-5. Quick Tuning P1 → commutation signature → P2
-6. RAM trial → verify → restore; `SV`는 별도 승인
+5. Quick Tuning P1 후보 → commutation signature → P2 후보
+6. 현재 설치 P2 게인 Verify. Gain Apply/Save는 durable pre-assignment trial WAL이 구현된 미래의
+   별도 admission 단계이며 현재 production 순서에는 포함하지 않는다.
 7. finite PTP는 물리 envelope와 독립 stop evidence 뒤 최저 에너지부터
 8. abort, sensor fault, comms loss, reconnect, power cycle, durability
 

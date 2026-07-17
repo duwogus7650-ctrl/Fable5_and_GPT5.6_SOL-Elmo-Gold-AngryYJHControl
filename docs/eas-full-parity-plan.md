@@ -40,7 +40,8 @@
 - Current, commutation, velocity/position identification, design, verification
 - Single Axis Motion과 Gold 적용 Application Tools
 - Recorder, View Design, Status Monitor, Parameters Explorer/Comparison
-- Gold parameter upload/download, 제한된 RAM trial, restore, SV
+- Gold parameter upload/download, 제한된 RAM trial, restore, SV의 장기 목표. 현재 production gain
+  trial/Save는 durable pre-assignment trial WAL 전까지 잠금
 - Gold firmware/PAL/reset/load는 Scope A의 마지막 조건부 단계로만 계획한다
 
 Scope A는 EAS native 파일 형식이나 Elmo 내부 알고리즘과 byte-identical임을 기본 목표로 삼지 않는다.
@@ -469,5 +470,6 @@ mutation이 본질적으로 없는 LOCAL/READ 기능은 해당 비중을 offline
 먼저 Scope A의 EAS 직접 관찰을 LOCAL과 READ 기능에 대해 끝내고, 구현된 host-observed v0.1을
 기반으로 drive-origin Full Fault/Ack/Clear와 Recorder lifecycle을 별도 완성한다. 그 다음 versioned
 RAM command registry를 확장한다. ENERGY와 MOTION은 기능별 작은 승인으로
-진행하고, SV는 복구 가능한 RAM trial 뒤에만 연다. Scope B와 C는 UI placeholder와 catalog만 유지하며,
+진행하고, SV는 crash-safe pre-assignment WAL로 복구 가능한 RAM trial 뒤에만 연다. 현재 gain
+trial은 이 조건을 만족하지 않아 production에서 잠긴다. Scope B와 C는 UI placeholder와 catalog만 유지하며,
 해당 fixture와 공개 API가 준비되기 전에는 backend를 추측해 구현하지 않는다.

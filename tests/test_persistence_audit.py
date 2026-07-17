@@ -73,6 +73,81 @@ def _prepare_motor(ledger, *, original=None, applied=None):
     )
 
 
+def _p1_config_profile(**overrides):
+    values = {
+        "KP[1]": 0.07177,
+        "KI[1]": 812.94,
+        "UM": 5,
+        "SC[8]": 0,
+        "CA[42]": 0,
+        "CA[43]": 0,
+        "CA[44]": 0,
+        "CA[70]": 0,
+        "SE[1]": 0,
+        "SE[2]": 0,
+        "SE[3]": 0,
+        "SE[4]": 0,
+        "SE[5]": 0,
+        "SE[6]": 0,
+        "SE[7]": 0,
+    }
+    values.update(overrides)
+    return values
+
+
+def _prepare_p1_config(ledger, *, original=None, applied=None):
+    return ledger.prepare(
+        phase="P1_CONFIG",
+        drive_identity=IDENTITY_A,
+        com_port="COM3",
+        firmware="Twitter 01.01.16.00 08Mar2020B01G",
+        pal="90",
+        boot="DSP Boot 1.0.1.6 12Feb2014G",
+        connect_epoch=EPOCH_A,
+        original=original or _p1_config_profile(),
+        applied=applied or _p1_config_profile(**{
+            "UM": 3,
+            "CA[44]": 8,
+            "CA[70]": 4,
+            "SE[1]": 1,
+            "SE[3]": 200,
+            "SE[7]": 50,
+        }),
+        initial_state="RAM_APPLYING",
+    )
+
+
+def _p2_limits_profile(**overrides):
+    values = {
+        "SD": 2_000_000.0,
+        "HL[2]": 1_500_000.0,
+        "LL[2]": -1_500_000.0,
+        "ER[2]": 1_000.0,
+    }
+    values.update(overrides)
+    return values
+
+
+def _prepare_p2_limits(ledger, *, original=None, applied=None):
+    return ledger.prepare(
+        phase="P2_LIMITS",
+        drive_identity=IDENTITY_A,
+        com_port="COM3",
+        firmware="Twitter 01.01.16.00 08Mar2020B01G",
+        pal="90",
+        boot="DSP Boot 1.0.1.6 12Feb2014G",
+        connect_epoch=EPOCH_A,
+        original=original or _p2_limits_profile(),
+        applied=applied or _p2_limits_profile(**{
+            "SD": 4_000_000.0,
+            "HL[2]": 1_970_000.0,
+            "LL[2]": -1_970_000.0,
+            "ER[2]": 2_000.0,
+        }),
+        initial_state="RAM_APPLYING",
+    )
+
+
 def _context(**overrides):
     values = dict(
         drive_identity=IDENTITY_A,
@@ -153,6 +228,216 @@ def test_motor_profile_accepts_vh_max_and_pl_equal_mc(tmp_path):
     assert record.original["VH[2]"] == float(vh_max)
     assert record.original["PL[1]"] == record.original["MC"]
     assert record.original["CL[1]"] < record.original["MC"]
+
+
+def test_p1_config_write_ahead_record_resolves_only_after_verified_rollback(
+        tmp_path):
+    path = tmp_path / "ledger.json"
+    ledger = pa.PersistenceLedger(path)
+
+    record = _prepare_p1_config(ledger)
+
+    assert record.phase == "P1_CONFIG"
+    assert record.state == "RAM_APPLYING"
+    assert record.registers == tuple(_p1_config_profile())
+    assert pa.PersistenceLedger(path).active_for_identity(IDENTITY_A) == record
+
+    archived = ledger.resolve_ram_rollback(record.record_id)
+
+    assert archived.state == "RESOLVED"
+    assert archived.resolution == "RAM_ROLLBACK_VERIFIED"
+    assert pa.PersistenceLedger(path).active_for_identity(IDENTITY_A) is None
+
+
+def test_p1_config_restore_unknown_survives_new_ledger_instance(tmp_path):
+    path = tmp_path / "ledger.json"
+    ledger = pa.PersistenceLedger(path)
+    record = _prepare_p1_config(ledger)
+
+    ledger.mark_unknown(record.record_id, "CONFIGURATION_RESTORE_UNVERIFIED")
+    reloaded = pa.PersistenceLedger(path).active_for_identity(IDENTITY_A)
+
+    assert reloaded is not None
+    assert reloaded.phase == "P1_CONFIG"
+    assert reloaded.state == "UNKNOWN"
+    assert reloaded.reason == "CONFIGURATION_RESTORE_UNVERIFIED"
+
+
+def test_p1_config_post_reset_audit_clears_only_the_original_profile(tmp_path):
+    ledger = pa.PersistenceLedger(tmp_path / "ledger.json")
+    record = _prepare_p1_config(ledger)
+    ledger.mark_unknown(record.record_id, "CONFIGURATION_RESTORE_UNVERIFIED")
+
+    temporary = pa.adjudicate_read_only(
+        record, _context(), _readback(record, "applied"), True)
+    original = pa.adjudicate_read_only(
+        record, _context(), _readback(record, "original"), True)
+    near_original = pa.adjudicate_read_only(
+        record, _context(), _readback(
+            record, "original",
+            **{"KI[1]": record.original["KI[1]"] * 1.0005}), True)
+
+    assert temporary.resolved is False
+    assert temporary.status == "TEMPORARY_CONFIGURATION_AFTER_RESET"
+    assert original.resolved is True
+    assert original.resolution == "ORIGINAL_PROFILE_AFTER_RESET"
+    assert near_original.resolved is False
+    assert near_original.status == "CONFIG_DRIFT_UNKNOWN"
+
+
+def test_p1_config_post_reset_near_applied_remains_unknown(tmp_path):
+    ledger = pa.PersistenceLedger(tmp_path / "ledger.json")
+    record = _prepare_p1_config(ledger)
+    near_applied = pa.adjudicate_read_only(
+        record,
+        _context(),
+        _readback(
+            record,
+            "applied",
+            **{"KI[1]": math.nextafter(
+                float(record.applied["KI[1]"]), math.inf)},
+        ),
+        True,
+    )
+
+    assert near_applied.resolved is False
+    assert near_applied.status == "CONFIG_DRIFT_UNKNOWN"
+
+
+def test_p1_config_rejects_discrete_values_beyond_exact_integer_range(
+        tmp_path):
+    ledger = pa.PersistenceLedger(tmp_path / "ledger.json")
+    original = _p1_config_profile(**{"CA[42]": 1 << 53})
+    applied = dict(original)
+    applied.update({"UM": 3, "CA[44]": 8, "CA[70]": 4})
+
+    with pytest.raises(ValueError, match="exact integer range"):
+        _prepare_p1_config(
+            ledger,
+            original=original,
+            applied=applied,
+        )
+
+
+def test_p1_config_rejects_forged_applied_profile_resolution(tmp_path):
+    ledger = pa.PersistenceLedger(tmp_path / "ledger.json")
+    record = _prepare_p1_config(ledger)
+    ledger.mark_unknown(record.record_id, "CONFIGURATION_RESTORE_UNVERIFIED")
+    context = _context()
+    forged = pa.AuditDecision(
+        status="RESOLVED_APPLIED_PROFILE",
+        resolved=True,
+        resolution="APPLIED_PROFILE_AFTER_RESET",
+        detail="forged temporary-profile authority",
+        record_id=record.record_id,
+        drive_identity=record.drive_identity,
+        connect_epoch=context.connect_epoch,
+    )
+    evidence = pa.build_audit_evidence(
+        record, context,
+        _audit_snapshot(record, "applied"),
+        _audit_snapshot(record, "applied"),
+        True, "APPLIED_PROFILE_AFTER_RESET")
+
+    with pytest.raises(ValueError, match="P1_CONFIG.*original"):
+        ledger.resolve_from_audit(record.record_id, forged, evidence)
+
+    assert ledger.active_for_identity(IDENTITY_A) is not None
+
+
+def test_p2_limits_write_ahead_record_resolves_only_after_verified_rollback(
+        tmp_path):
+    path = tmp_path / "ledger.json"
+    ledger = pa.PersistenceLedger(path)
+
+    record = _prepare_p2_limits(ledger)
+
+    assert record.phase == "P2_LIMITS"
+    assert record.state == "RAM_APPLYING"
+    assert record.registers == tuple(_p2_limits_profile())
+    assert pa.PersistenceLedger(path).active_for_identity(IDENTITY_A) == record
+
+    archived = ledger.resolve_ram_rollback(record.record_id)
+
+    assert archived.state == "RESOLVED"
+    assert archived.resolution == "RAM_ROLLBACK_VERIFIED"
+    assert pa.PersistenceLedger(path).active_for_identity(IDENTITY_A) is None
+
+
+def test_p2_limits_restore_unknown_survives_new_ledger_instance(tmp_path):
+    path = tmp_path / "ledger.json"
+    ledger = pa.PersistenceLedger(path)
+    record = _prepare_p2_limits(ledger)
+
+    ledger.mark_unknown(record.record_id, "LIMIT_RESTORE_UNVERIFIED")
+    reloaded = pa.PersistenceLedger(path).active_for_identity(IDENTITY_A)
+
+    assert reloaded is not None
+    assert reloaded.phase == "P2_LIMITS"
+    assert reloaded.state == "UNKNOWN"
+    assert reloaded.reason == "LIMIT_RESTORE_UNVERIFIED"
+
+
+def test_p2_limits_post_reset_audit_clears_only_exact_original_profile(
+        tmp_path):
+    ledger = pa.PersistenceLedger(tmp_path / "ledger.json")
+    record = _prepare_p2_limits(ledger)
+    ledger.mark_unknown(record.record_id, "LIMIT_RESTORE_UNVERIFIED")
+
+    temporary = pa.adjudicate_read_only(
+        record, _context(), _readback(record, "applied"), True)
+    original = pa.adjudicate_read_only(
+        record, _context(), _readback(record, "original"), True)
+    near_original = pa.adjudicate_read_only(
+        record, _context(), _readback(
+            record, "original", SD=record.original["SD"] + 1.0), True)
+
+    assert temporary.resolved is False
+    assert temporary.status == "TEMPORARY_CONFIGURATION_AFTER_RESET"
+    assert original.resolved is True
+    assert original.resolution == "ORIGINAL_PROFILE_AFTER_RESET"
+    assert near_original.resolved is False
+    assert near_original.status == "CONFIG_DRIFT_UNKNOWN"
+
+
+def test_p2_limits_rejects_forged_applied_profile_resolution(tmp_path):
+    ledger = pa.PersistenceLedger(tmp_path / "ledger.json")
+    record = _prepare_p2_limits(ledger)
+    ledger.mark_unknown(record.record_id, "LIMIT_RESTORE_UNVERIFIED")
+    context = _context()
+    forged = pa.AuditDecision(
+        status="RESOLVED_APPLIED_PROFILE",
+        resolved=True,
+        resolution="APPLIED_PROFILE_AFTER_RESET",
+        detail="forged temporary-profile authority",
+        record_id=record.record_id,
+        drive_identity=record.drive_identity,
+        connect_epoch=context.connect_epoch,
+    )
+    evidence = pa.build_audit_evidence(
+        record, context,
+        _audit_snapshot(record, "applied"),
+        _audit_snapshot(record, "applied"),
+        True, "APPLIED_PROFILE_AFTER_RESET")
+
+    with pytest.raises(ValueError, match="P2_LIMITS.*original"):
+        ledger.resolve_from_audit(record.record_id, forged, evidence)
+
+    assert ledger.active_for_identity(IDENTITY_A) is not None
+
+
+def test_p2_limits_one_count_change_is_distinguishable_at_prepare(tmp_path):
+    original = _p2_limits_profile()
+    applied = dict(original)
+    applied["SD"] += 1
+
+    record = _prepare_p2_limits(
+        pa.PersistenceLedger(tmp_path / "ledger.json"),
+        original=original,
+        applied=applied,
+    )
+
+    assert record.original["SD"] != record.applied["SD"]
 
 
 @pytest.mark.parametrize("field", ["original", "applied"])
@@ -590,6 +875,21 @@ def test_prepare_refuses_indistinguishable_profiles_before_any_ledger_write(
                  original=same, applied=same)
 
     assert not path.exists()
+
+
+def test_p2_limits_no_change_record_resolves_only_exact_original_after_reset(
+        tmp_path):
+    path = tmp_path / "ledger.json"
+    original = _p2_limits_profile()
+    record = _prepare_p2_limits(
+        pa.PersistenceLedger(path), original=original, applied=original)
+
+    decision = pa.adjudicate_read_only(
+        record, _context(), _readback(record), True)
+
+    assert decision.resolved is True
+    assert decision.status == "RESOLVED_ORIGINAL_PROFILE"
+    assert decision.resolution == "ORIGINAL_PROFILE_AFTER_RESET"
 
 
 def test_adjudicate_mixed_or_neither_target_stays_unknown(tmp_path):

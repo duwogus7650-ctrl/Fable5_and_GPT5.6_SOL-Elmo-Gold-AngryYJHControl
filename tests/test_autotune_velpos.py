@@ -132,6 +132,8 @@ class VPSim:
         self.write_silent_store = {}
 
     is_connected = True
+    p2_limits_durability_mode = "SYNTHETIC_NO_HARDWARE"
+    p2_gain_trial_durability_mode = "SYNTHETIC_NO_HARDWARE"
     is_synthetic = True     # kernel quarantines ALL persistence (snapshot +
                             # K_a baseline) into snapshot_dir/synthetic — a
                             # sim GREEN must never re-baseline a live unit
@@ -374,6 +376,183 @@ class VPSim:
         if name in self.regs:
             return str(self.regs[name])
         raise IOError("unknown query %r" % name)
+
+
+class CriticalLimitFaultSim(VPSim):
+    """Stage-aware faults for the four temporary Phase-2 safety limits."""
+
+    def __init__(self, *, target="SD", mode=None, **kwargs):
+        super().__init__(**kwargs)
+        self.limit_target = target
+        self.limit_fault_mode = mode
+        self.limit_apply_complete = False
+
+    def command(self, cmd, timeout_ms=1000, allow_motion=False):
+        core = cmd.replace(" ", "").upper().rstrip(";")
+        if (self.limit_fault_mode == "read_timeout"
+                and self.limit_apply_complete and "=" not in core
+                and core == self.limit_target.upper()):
+            self.log.append((cmd, allow_motion))
+            raise IOError("synthetic critical-limit read timeout")
+        result = super().command(
+            cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+        if (self.limit_fault_mode == "read_side_effect"
+                and self.limit_apply_complete and "=" not in core
+                and core == "HL[2]"):
+            # A later query changes an earlier register.  A forward-only
+            # sweep sees the old SD value and would falsely pass.
+            self.regs["SD"] = float(dict(vp.LIMIT_WRITES)["SD"]) + 1.0
+        return result
+
+    def _write(self, name, value):
+        requested = dict(vp.LIMIT_WRITES)
+        if name in requested and float(value) == float(requested[name]):
+            if (name == self.limit_target
+                    and self.limit_fault_mode == "refusal"):
+                raise IOError("synthetic critical-limit refusal")
+            if (name == self.limit_target
+                    and self.limit_fault_mode == "silent_mismatch"):
+                self.regs[name] = float(value) + 1.0
+                if name == "ER[2]":
+                    self.limit_apply_complete = True
+                return ""
+            result = super()._write(name, value)
+            if name == "ER[2]":
+                self.limit_apply_complete = True
+                if self.limit_fault_mode == "cross_register_mismatch":
+                    self.regs["SD"] = float(requested["SD"]) + 1.0
+            return result
+        if (name == self.limit_target
+                and self.limit_fault_mode == "restore_silent_mismatch"):
+            return ""
+        return super()._write(name, value)
+
+
+class LimitsJournalVPSim(VPSim):
+    """Offline durable P2_LIMITS journal/capability stand-in."""
+
+    p2_limits_durability_mode = None
+
+    def __init__(self, *, prepare_fail=False, resolve_fail=False,
+                 closeout_readback_fault=None, prepare_return="VALID",
+                 lost_restore_reply_register=None,
+                 **kwargs):
+        super().__init__(**kwargs)
+        self.prepare_fail = bool(prepare_fail)
+        self.resolve_fail = bool(resolve_fail)
+        self.closeout_readback_fault = closeout_readback_fault
+        self.prepare_return = prepare_return
+        self.lost_restore_reply_register = lost_restore_reply_register
+        self.limits_attempt_id = None
+        self.limits_incident_active = False
+        self.limits_applied_verified = False
+        self.limits_rollback_active = False
+        self.journal_events = []
+        self._attempt_seq = 0
+        self._journal_original = None
+
+    def prepare_persistence_attempt(
+            self, *, phase, registers, original, applied,
+            initial_state="PERSISTING", mutation_bounds=None):
+        self.journal_events.append("prepare")
+        if self.prepare_fail:
+            raise IOError("synthetic P2_LIMITS WAL prepare failure")
+        assert phase == "P2_LIMITS"
+        assert tuple(registers) == tuple(name for name, _ in vp.LIMIT_WRITES)
+        assert initial_state == "RAM_APPLYING"
+        assert set(original) == set(applied) == set(registers)
+        assert mutation_bounds is not None
+        self._attempt_seq += 1
+        self.limits_attempt_id = "p2-limits-attempt-%d" % self._attempt_seq
+        self.limits_incident_active = True
+        self.limits_applied_verified = False
+        self.limits_rollback_active = False
+        self._journal_original = dict(original)
+        return (self.limits_attempt_id
+                if self.prepare_return == "VALID" else self.prepare_return)
+
+    def verify_persistence_ram_applied(self, record_id):
+        self.journal_events.append("verify_applied")
+        assert record_id == self.limits_attempt_id
+        expected = dict(vp.LIMIT_WRITES)
+        if any(float(self.regs[name]) != float(expected[name])
+               for name in expected):
+            raise RuntimeError("synthetic applied-profile mismatch")
+        self.limits_applied_verified = True
+        return {"forward": dict(expected), "reverse": dict(expected)}
+
+    def begin_persistence_ram_rollback(self, record_id):
+        self.journal_events.append("begin_rollback")
+        assert record_id == self.limits_attempt_id
+        assert self.limits_incident_active
+        self.limits_applied_verified = False
+        self.limits_rollback_active = True
+
+    def resolve_persistence_ram_rollback(self, record_id):
+        self.journal_events.append("resolve")
+        assert record_id == self.limits_attempt_id
+        assert self.limits_rollback_active
+        if self.resolve_fail:
+            raise IOError("synthetic durable closeout failure")
+        expected = dict(self._journal_original)
+        if any(float(self.regs[name]) != float(expected[name])
+               for name in expected):
+            raise RuntimeError("synthetic original-profile mismatch")
+        closeout = {"forward": dict(expected), "reverse": dict(expected)}
+        if self.closeout_readback_fault == "none":
+            return None
+        if self.closeout_readback_fault == "incomplete":
+            del closeout["reverse"]["SD"]
+            return closeout
+        if self.closeout_readback_fault == "changed":
+            closeout["reverse"]["SD"] += 1.0
+            return closeout
+        self.limits_attempt_id = None
+        self.limits_incident_active = False
+        self.limits_applied_verified = False
+        self.limits_rollback_active = False
+        return closeout
+
+    def mark_persistence_attempt_unknown(self, record_id, reason):
+        self.journal_events.append("mark_unknown:%s" % reason)
+        assert record_id == self.limits_attempt_id
+        self.limits_attempt_id = None
+        self.limits_applied_verified = False
+        self.limits_rollback_active = False
+        self._persistence_unknown_latched = True
+
+    def command(self, cmd, timeout_ms=1000, allow_motion=False,
+                _persistence_attempt_id=None):
+        core = cmd.replace(" ", "").upper().rstrip(";")
+        self.journal_events.append("wire:%s" % core)
+        mutation = "=" in core or core in {"BG", "SV"}
+        safe = core in {"ST", "MO=0", "TC=0"}
+        if (self.limits_attempt_id is not None and mutation and not safe
+                and _persistence_attempt_id != self.limits_attempt_id):
+            raise RuntimeError("synthetic persistence state UNKNOWN")
+        limit_write = any(
+            core.startswith(name + "=") for name, _ in vp.LIMIT_WRITES)
+        p2_motion = core.startswith((
+            "MO=1", "TC=", "JV=", "PA=", "UM=")) or core == "BG"
+        if (self.limits_attempt_id is not None and p2_motion
+                and not limit_write and not self.limits_applied_verified):
+            raise RuntimeError("synthetic P2_LIMITS applied proof missing")
+        if limit_write:
+            self.limits_applied_verified = False
+        lose_restore_reply = False
+        if (self.lost_restore_reply_register is not None
+                and self._journal_original is not None and "=" in core):
+            register, literal = core.split("=", 1)
+            lose_restore_reply = bool(
+                register == self.lost_restore_reply_register
+                and register in self._journal_original
+                and float(literal) == float(self._journal_original[register]))
+        result = super().command(
+            cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
+        if lose_restore_reply:
+            raise TimeoutError(
+                "synthetic reply lost after accepted limit rollback write")
+        return result
 
 
 def _params(drive, tmpdir, **kw):
@@ -791,6 +970,9 @@ def test_t3_limits_written_and_restored(green_run):
     assert r["HL[2]"] == pytest.approx(0) and r["LL[2]"] == pytest.approx(0)
     assert r["KP[2]"] == pytest.approx(KP2_ORACLE)   # not applied in Phase 2 run
     assert res.evidence["limits"]["SD"] == pytest.approx(4e6)  # was in force
+    assert res.evidence["critical_limits"]["apply"]["pass"] is True
+    assert res.evidence["critical_limits"]["restore"]["pass"] is True
+    assert res.evidence["configuration_state"] == "RESTORED"
 
 
 def test_t3_snapshot_written(green_run):
@@ -1042,13 +1224,336 @@ def test_nan_response_aborts(tmp_path):
     assert res.status == RED and "NaN" in res.reason
 
 
-def test_hl_write_refused_is_warning_not_red(tmp_path):
-    """U-P4: HL[2]/LL[2] refusal -> warnings only (SW guard covers), YELLOW."""
+def test_hl_write_refused_is_red_before_enable_and_original_is_proven(tmp_path):
     drive = VPSim(hl_writable=False)
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
-    assert res.status == YELLOW
-    assert any("HL[2]" in w for w in res.warnings)
-    assert abs(res.k_a / KA_TRUTH - 1.0) <= 0.02     # measurement unaffected
+    assert res.status == RED
+    assert "HL[2]" in res.reason
+    assert not any(c.replace(" ", "").upper() == "MO=1"
+                   for c, _ in drive.log)
+    assert res.evidence["configuration_state"] == "RESTORED"
+    assert res.evidence["critical_limits"]["restore"]["pass"] is True
+
+
+@pytest.mark.parametrize("register", [name for name, _ in vp.LIMIT_WRITES])
+@pytest.mark.parametrize(
+    "mode", ["refusal", "silent_mismatch", "read_timeout"])
+def test_critical_limit_apply_requires_full_set_proof_before_enable(
+        tmp_path, register, mode):
+    drive = CriticalLimitFaultSim(target=register, mode=mode)
+    ctx = vp._Ctx(drive, _params(drive, tmp_path))
+    ctx.snapshot = {
+        name: drive.regs[name] for name, _ in vp.LIMIT_WRITES}
+
+    with pytest.raises(vp.AbortError):
+        vp._apply_limits_verified(ctx)
+
+    assert not any(c.replace(" ", "").upper() == "MO=1"
+                   for c, _ in drive.log)
+    assert ctx.evidence["critical_limits"]["apply"]["pass"] is False
+    drive.limit_fault_mode = None
+    assert vp._restore_limits(ctx) is True
+    assert ctx.evidence["configuration_state"] == "RESTORED"
+
+
+def test_critical_limit_apply_uses_one_final_full_set_sweep(tmp_path):
+    drive = CriticalLimitFaultSim(mode="cross_register_mismatch")
+    ctx = vp._Ctx(drive, _params(drive, tmp_path))
+    ctx.snapshot = {
+        name: drive.regs[name] for name, _ in vp.LIMIT_WRITES}
+
+    with pytest.raises(vp.AbortError, match="SD"):
+        vp._apply_limits_verified(ctx)
+
+    assert ctx.evidence["critical_limits"]["apply"]["pass"] is False
+    drive.limit_fault_mode = None
+    assert vp._restore_limits(ctx) is True
+
+
+def test_critical_limit_apply_uses_forward_and_reverse_full_set_sweeps(
+        tmp_path):
+    drive = CriticalLimitFaultSim(mode="read_side_effect")
+    ctx = vp._Ctx(drive, _params(drive, tmp_path))
+    ctx.snapshot = {
+        name: drive.regs[name] for name, _ in vp.LIMIT_WRITES}
+
+    with pytest.raises(vp.AbortError, match="SD"):
+        vp._apply_limits_verified(ctx)
+
+    assert ctx.evidence["critical_limits"]["apply"]["pass"] is False
+    assert not any(c.replace(" ", "").upper() == "MO=1"
+                   for c, _ in drive.log)
+
+
+def _journal_limits_ctx(drive, tmp_path, **params):
+    ctx = vp._Ctx(drive, _params(drive, tmp_path, **params))
+    ctx.snapshot = {
+        name: drive.regs[name] for name, _ in vp.LIMIT_WRITES}
+    ctx.snapshot["UM"] = drive.regs["UM"]
+    ctx.cl1 = CL1
+    ctx.vx_guard_cnt = CA18 * vp.GUARD_RPM / 60.0
+    return ctx
+
+
+def test_p2_limits_wal_precedes_first_write_and_closeout_is_durable(tmp_path):
+    drive = LimitsJournalVPSim()
+    ctx = _journal_limits_ctx(drive, tmp_path)
+
+    vp._apply_limits_verified(ctx)
+    assert vp._restore_limits(ctx) is True
+
+    first_write = next(
+        i for i, event in enumerate(drive.journal_events)
+        if event.startswith("wire:SD="))
+    assert drive.journal_events.index("prepare") < first_write
+    assert drive.journal_events.index("verify_applied") > first_write
+    assert "begin_rollback" in drive.journal_events
+    assert drive.journal_events[-1] == "resolve"
+    assert drive.limits_incident_active is False
+    assert ctx.evidence["configuration_state"] == "RESTORED"
+
+
+def test_p2_limits_prepare_failure_has_no_limit_write_or_enable(tmp_path):
+    drive = LimitsJournalVPSim(prepare_fail=True)
+    ctx = _journal_limits_ctx(drive, tmp_path)
+
+    with pytest.raises(vp.PreflightError, match="WAL|journal|prepare"):
+        vp._apply_limits_verified(ctx)
+
+    wires = [event.removeprefix("wire:") for event in drive.journal_events
+             if event.startswith("wire:")]
+    assert not any(core.startswith(tuple(
+        name + "=" for name, _ in vp.LIMIT_WRITES)) for core in wires)
+    assert "MO=1" not in wires
+
+
+def test_p2_limits_sub_ulp_original_is_rejected_before_wal_or_write(tmp_path):
+    class FractionalOriginalLimitsDrive(LimitsJournalVPSim):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False,
+                    _persistence_attempt_id=None):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion,
+                _persistence_attempt_id=_persistence_attempt_id)
+            core = "".join(str(cmd).split()).upper().rstrip(";")
+            if core == "SD":
+                return "2000000.0000000001"
+            return response
+
+    drive = FractionalOriginalLimitsDrive()
+    ctx = _journal_limits_ctx(drive, tmp_path)
+    assert vp._cmd(ctx, "SD") == 2_000_000.0
+
+    with pytest.raises(vp.PreflightError, match="exact integer"):
+        vp._apply_limits_verified(ctx)
+
+    assert "prepare" not in drive.journal_events
+    assert not any(command.startswith(tuple(
+        name + "=" for name, _ in vp.LIMIT_WRITES))
+        for command, _allow_motion in drive.log)
+
+
+def test_p2_limits_prepare_failure_surfaces_existing_durable_unknown(tmp_path):
+    class DurableThenFailSim(LimitsJournalVPSim):
+        def prepare_persistence_attempt(self, **kwargs):
+            self._persistence_unknown_latched = True
+            raise IOError("synthetic failure after durable WAL side effect")
+
+    drive = DurableThenFailSim()
+    ctx = _journal_limits_ctx(drive, tmp_path)
+
+    with pytest.raises(vp.PreflightError, match="WAL|prepare"):
+        vp._apply_limits_verified(ctx)
+
+    assert ctx.evidence["configuration_state"] == "UNKNOWN"
+    critical = ctx.evidence["critical_limits"]
+    assert critical["state"] == "UNKNOWN"
+    assert critical["durability"] == "WAL_PREPARE_OUTCOME_UNKNOWN"
+    assert not any(command.startswith(tuple(
+        name + "=" for name, _ in vp.LIMIT_WRITES))
+        for command, _allow_motion in drive.log)
+
+
+@pytest.mark.parametrize("bad_record_id", [None, "", 17])
+def test_p2_limits_invalid_prepare_record_id_fails_before_vendor_write(
+        tmp_path, bad_record_id):
+    drive = LimitsJournalVPSim(prepare_return=bad_record_id)
+    ctx = _journal_limits_ctx(drive, tmp_path)
+
+    with pytest.raises(vp.PreflightError, match="record|identifier|WAL"):
+        vp._apply_limits_verified(ctx)
+
+    assert not any(command.startswith(tuple(
+        name + "=" for name, _ in vp.LIMIT_WRITES))
+        for command, _allow_motion in drive.log)
+    assert drive.persistence_unknown_latched() is True
+
+
+def test_p2_limits_cancel_after_wal_runs_original_closeout(tmp_path):
+    drive = LimitsJournalVPSim()
+    ctx = _journal_limits_ctx(
+        drive, tmp_path,
+        cancel_fn=lambda: drive.limits_incident_active)
+
+    with pytest.raises(vp.AbortError):
+        vp._apply_limits_verified(ctx)
+    assert vp._do_abort(ctx, "cancel after WAL") is True
+
+    assert drive.journal_events.count("prepare") == 1
+    assert drive.journal_events.count("resolve") == 1
+    assert drive.limits_incident_active is False
+    assert ctx.evidence["configuration_state"] == "RESTORED"
+
+
+def test_p2_limits_closeout_failure_is_marked_durable_unknown(tmp_path):
+    drive = LimitsJournalVPSim()
+    ctx = _journal_limits_ctx(drive, tmp_path)
+    vp._apply_limits_verified(ctx)
+    drive.resolve_fail = True
+
+    assert vp._restore_limits(ctx) is False
+
+    assert any(event.startswith("mark_unknown:")
+               for event in drive.journal_events)
+    assert drive.persistence_unknown_latched() is True
+    assert ctx.evidence["configuration_state"] == "UNKNOWN"
+
+
+def test_p2_limits_lost_restore_reply_passes_on_exact_two_sweep_proof(
+        tmp_path):
+    drive = LimitsJournalVPSim(lost_restore_reply_register="SD")
+    ctx = _journal_limits_ctx(drive, tmp_path)
+    vp._apply_limits_verified(ctx)
+
+    assert vp._restore_limits(ctx) is True
+
+    restore = ctx.evidence["critical_limits"]["restore"]
+    assert restore["write_errors"]
+    assert restore["pass"] is True
+    assert restore["closeout_readback"]["forward"] == \
+        pytest.approx(ctx.evidence["critical_limits"]["snapshot"])
+    assert drive.limits_incident_active is False
+
+
+def test_p2_limits_active_wal_restores_full_set_despite_incomplete_dirty_log(
+        tmp_path):
+    drive = LimitsJournalVPSim()
+    ctx = _journal_limits_ctx(drive, tmp_path)
+    vp._apply_limits_verified(ctx)
+    ctx.dirty[:] = ["SD"]
+    drive.journal_events.clear()
+
+    assert vp._restore_limits(ctx) is True
+
+    restore = ctx.evidence["critical_limits"]["restore"]
+    assert restore["attempted"] == [name for name, _ in vp.LIMIT_WRITES]
+    original = ctx.evidence["critical_limits"]["snapshot"]
+    for name, _temporary in vp.LIMIT_WRITES:
+        assert "wire:%s=%s" % (name, vp._fmt(original[name])) \
+            in drive.journal_events
+    assert drive.journal_events[-1] == "resolve"
+    assert drive.limits_incident_active is False
+
+
+@pytest.mark.parametrize("original_sd", [1_234_567_891, 2_147_483_647])
+def test_p2_limits_restore_preserves_large_original_integer_exactly(
+        tmp_path, original_sd):
+    drive = LimitsJournalVPSim()
+    drive.regs["SD"] = float(original_sd)
+    ctx = _journal_limits_ctx(drive, tmp_path)
+
+    vp._apply_limits_verified(ctx)
+    assert drive._journal_original["SD"] == original_sd
+    assert vp._restore_limits(ctx) is True
+
+    assert drive.regs["SD"] == float(original_sd)
+    assert "wire:SD=%d" % original_sd in drive.journal_events
+    closeout = ctx.evidence["critical_limits"]["restore"][
+        "closeout_readback"]
+    assert closeout["forward"]["SD"] == original_sd
+    assert closeout["reverse"]["SD"] == original_sd
+
+
+def test_p2_limits_already_requested_uses_same_session_wal_proof(
+        tmp_path):
+    drive = LimitsJournalVPSim()
+    for register, value in vp.LIMIT_WRITES:
+        drive.regs[register] = float(value)
+    ctx = _journal_limits_ctx(drive, tmp_path)
+
+    vp._apply_limits_verified(ctx)
+
+    assert drive.journal_events[0] == "prepare"
+    assert "verify_applied" in drive.journal_events
+    assert not any("=" in command for command, _allow_motion in drive.log)
+    apply = ctx.evidence["critical_limits"]["apply"]
+    assert apply["durability"] == "WAL_PREPARED_NO_CHANGE"
+    assert set(apply["sweeps"]) == {"forward", "reverse"}
+
+    drive.log.clear()
+    assert vp._restore_limits(ctx) is True
+
+    assert [command.split("=", 1)[0] for command, _allow_motion in drive.log
+            if "=" in command] == [name for name, _ in vp.LIMIT_WRITES]
+    assert drive.journal_events[-1] == "resolve"
+    assert ctx.evidence["configuration_state"] == "RESTORED"
+
+
+@pytest.mark.parametrize(
+    "fault", ["none", "incomplete", "changed"])
+def test_p2_limits_rejects_unproven_link_owned_closeout_readback(
+        tmp_path, fault):
+    drive = LimitsJournalVPSim(closeout_readback_fault=fault)
+    ctx = _journal_limits_ctx(drive, tmp_path)
+    vp._apply_limits_verified(ctx)
+
+    assert vp._restore_limits(ctx) is False
+
+    restore = ctx.evidence["critical_limits"]["restore"]
+    assert restore["pass"] is False
+    assert restore["closeout_errors"]
+    assert any(event.startswith("mark_unknown:")
+               for event in drive.journal_events)
+    assert ctx.evidence["configuration_state"] == "UNKNOWN"
+
+
+@pytest.mark.parametrize("workflow", ["P2", "VERIFY"])
+def test_p2_and_verify_each_wal_before_limits_and_close_after_restore(
+        tmp_path, workflow):
+    drive = LimitsJournalVPSim()
+    params = _params(drive, tmp_path)
+
+    result = (run_velpos_autotune(drive, params)
+              if workflow == "P2" else verify_run_vp(drive, params))
+
+    assert result.status == GREEN, (result.reason, result.warnings)
+    assert drive.journal_events.count("prepare") == 1
+    assert drive.journal_events.count("verify_applied") == 1
+    assert drive.journal_events.count("resolve") == 1
+    i_prepare = drive.journal_events.index("prepare")
+    i_limit = next(i for i, event in enumerate(drive.journal_events)
+                   if event.startswith("wire:SD="))
+    i_verify = drive.journal_events.index("verify_applied")
+    i_enable = drive.journal_events.index("wire:MO=1")
+    assert i_prepare < i_limit < i_verify < i_enable
+    assert drive.limits_incident_active is False
+    assert result.evidence["configuration_state"] == "RESTORED"
+
+
+@pytest.mark.parametrize("register", [name for name, _ in vp.LIMIT_WRITES])
+def test_critical_limit_restore_mismatch_is_configuration_unknown(
+        tmp_path, register):
+    drive = CriticalLimitFaultSim(target=register)
+    ctx = vp._Ctx(drive, _params(drive, tmp_path))
+    ctx.snapshot = {
+        name: drive.regs[name] for name, _ in vp.LIMIT_WRITES}
+    vp._apply_limits_verified(ctx)
+    drive.limit_fault_mode = "restore_silent_mismatch"
+
+    assert vp._restore_limits(ctx) is False
+    restore = ctx.evidence["critical_limits"]["restore"]
+    assert restore["pass"] is False
+    assert any(register in mismatch for mismatch in restore["mismatches"])
+    assert ctx.evidence["configuration_state"] == "UNKNOWN"
 
 
 # ======================================================================================
@@ -2113,6 +2618,22 @@ def test_begin_gain_trial_vp_captures_originals_and_never_saves():
     assert trial.restore_only is False
     assert _gain_snapshot(drive) == pytest.approx(trial.applied)
     assert not any(c == "SV" for c, _ in drive.log)
+
+
+def test_p2_gain_trial_production_link_is_locked_before_any_drive_io():
+    class ProductionLikeDrive(VPSim):
+        p2_gain_trial_durability_mode = None
+
+    drive = ProductionLikeDrive()
+    original = _gain_snapshot(drive)
+    drive.log.clear()
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+
+    assert not ok and trial is None
+    assert "durable" in msg.lower() and "locked" in msg.lower()
+    assert drive.log == []
+    assert _gain_snapshot(drive) == original
 
 
 def test_internal_command_guard_preserves_exact_trial_session(monkeypatch):
@@ -3333,7 +3854,7 @@ def _elmo_command_probe_link():
 
 @pytest.mark.parametrize("command", [
     "MO=+1", "MO=01", "MO=1.0", "MO=1e0", "MO=2", "MO=-1",
-    "MO=0.0001", "MO=nan", "MO=inf", "MO=garbage", "MO=",
+    "MO=0.0001", "MO=1e-400", "MO=nan", "MO=inf", "MO=garbage", "MO=",
 ])
 def test_elmo_mo_nonzero_or_unparseable_is_fail_closed_motion(command):
     link, comm = _elmo_command_probe_link()
@@ -3345,6 +3866,28 @@ def test_elmo_mo_nonzero_or_unparseable_is_fail_closed_motion(command):
     link.latch_persistence_unknown()
     with pytest.raises(RuntimeError, match="UNKNOWN"):
         link.command(command, allow_motion=True)
+    assert comm.commands == []
+
+
+def test_elmo_subnormal_sine_start_is_motion_and_not_safe_shutdown():
+    link, comm = _elmo_command_probe_link()
+
+    with pytest.raises(PermissionError):
+        link.command("TW[80]=1e-400", allow_motion=False)
+    link.latch_persistence_unknown()
+    with pytest.raises(RuntimeError, match="UNKNOWN"):
+        link.command("TW[80]=1e-400", allow_motion=True)
+
+    assert comm.commands == []
+
+
+def test_elmo_subnormal_torque_is_not_safe_shutdown_while_latched():
+    link, comm = _elmo_command_probe_link()
+    link.latch_persistence_unknown()
+
+    with pytest.raises(RuntimeError, match="UNKNOWN"):
+        link.command("TC=1e-400", allow_motion=True)
+
     assert comm.commands == []
 
 
@@ -3496,6 +4039,9 @@ def test_verify_nominal_green_ladder(tmp_path):
     assert steps[1]["osc_rms_2nd"] < vp.VERIFY_OSC_FLOOR_FRAC * abs(steps[1]["v_ss"])
     assert abs(steps[0]["v_ss"] - 327680.0) <= 0.05 * 327680.0
     assert drive.regs["MO"] == 0
+    assert res.evidence["critical_limits"]["apply"]["pass"] is True
+    assert res.evidence["critical_limits"]["restore"]["pass"] is True
+    assert res.evidence["configuration_state"] == "RESTORED"
     # persistence: result json in the SYNTHETIC quarantine (invariant kept)
     rp = res.evidence["result_path"]
     assert vp.SYNTHETIC_SUBDIR in rp and os.path.exists(rp)

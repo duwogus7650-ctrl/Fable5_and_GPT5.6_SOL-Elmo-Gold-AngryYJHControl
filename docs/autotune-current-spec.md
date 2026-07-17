@@ -43,6 +43,7 @@ KI[1] = R_ph / (2π·L_ph)                # ki_rule="pole_zero"(보수)
 
 ## 5-6. 아키텍처·Abort
 **전역불변식**: I1 쓰기전 스냅숏 JSON 디스크存(`.omc/state/autotune_snapshot_<ts>.json`, 재접속복구). I2 전류지령총합(TC+SE)≤0.85·CL[1]. I3 MO=1 구간 500ms 주기 MF·LC·PX 폴링→MF≠0∥LC==1∥|ΔPX|>θ_abort→abort. I4 SV는 Phase E "적용" 밖 절대금지. I5 command실패=1s타임아웃×2재시도후 abort.
+**P1_CONFIG 원본 정밀도**: WAL에 넣을 원시 drive 응답은 float 변환 전에 `Decimal`로 판정한다. discrete register는 exact integer여야 하고, 연속 register는 float 변환이 수치를 바꾸지 않아야 한다. sub-ULP 소수는 첫 assignment와 WAL 전에 RED다.
 **모션임계(센서·극쌍 파라미터화, 2026-07-13 개정)**: 반극피치=CA[18]/(2·CA[19]) counts; 정렬허용(B1~B3, 래치 전)=반극피치×1.2; **사전정렬 완화가드(B4 램프 구간 한정)=1.5극피치=1.5·CA[18]/CA[19]**(정당 정렬스냅 허용; MF≠0·LC==1 가드는 그대로); θ_abort=max(4, CA[18]·2°/360)(홀 96 저해상도 바닥4) — **측정창 게이트, 절대 완화 금지**(모션은 역기전력로 R 오염: 실기 스냅 ~0.97V vs DC신호 0.37V).
 **Abort(순서고정)**: A1 MO=0(최우선,7.5ms) → A2 TW[80]=0 → A3 TC=0 → A4 스냅숏복원(SE[1..7],CA[4s],CA[70],UM,게인) → A5 RR=0 → A6 RED+사유(복원실패는 warnings+"전원재투입 복원" 안내).
 
@@ -75,14 +76,19 @@ D2 L_ph(f)=sqrt(max(|Z|²−R²,0))/(2πf); |Z|≤1.05·R→f×2 재시도1회
 D3 L_ph=median; spread>0.15→YELLOW
 E1 TC램프다운→0(0.3s); MO=0; 복원(게인은 원값유지)
 E2 §4 게인계산+안정성게이트→status; evidence채워 반환
-E3 [사용자액션 "Apply P1 → RAM"] MO==0 확인→기존 KP[1]/KI[1] 전체 스냅숏→새 게인을
-   평문 소수 ≤6자리로 사전검증(과학표기 금지, 반올림 손실 ≤0.5%)→각 쓰기 직후 되읽기
-   (>0, 전송값 대비 ±0.1%). 이 단계는 SV 금지. 중간 실패는 원래 두 게인을 모두 복원·되읽기하며,
-   복원을 증명하지 못하면 시험 스냅숏을 유지한다.
-E3b [사용자액션 "Restore P1 → Original" | "Save P1 → SV"] Restore는 원래 두 게인을 전부
-   복원·되읽기하고 SV를 보내지 않는다. Save는 현재 두 게인을 다시 읽어 E3의 임시 적용값과 모두
-   일치할 때만 SV를 한 번 보낸다. 실제 드라이브의 신규 P1 트랜잭션 흐름은 감독 실기 미검증.
-E4 [사용자액션 "검증런"] B1~B3 재수행(새게인 TC스텝 I1)→오버슛≤25% AND 2ms정착 AND 무진동→GREEN 확정; 실패→원게인복원+RED
+E3 [production "Apply P1 → RAM" · LOCKED] durable pre-assignment gain-trial WAL이 없으므로
+   hardware-capable link는 persistence query·snapshot·assignment 전에 typed fail-closed한다.
+   아래 apply/rollback 계약은 exact `SYNTHETIC_NO_HARDWARE` 링크의 회귀 전용이다: MO==0 확인→
+   기존 KP[1]/KI[1] 전체 스냅숏→새 게인을 평문 소수 ≤6자리로 사전검증(과학표기 금지,
+   반올림 손실 ≤0.5%)→각 쓰기 직후 되읽기(>0, 전송값 대비 ±0.1%). 중간 실패는 원래 두
+   게인을 모두 복원·되읽기하며, 복원을 증명하지 못하면 시험 스냅숏을 유지한다.
+E3b [synthetic/retained recovery "Restore P1 → Original"] 원래 두 게인을 전부 복원·되읽기하고
+   SV를 보내지 않는다. 새 production trial은 만들 수 없으며 retained recovery도 Restore-only다.
+   현재 E4는 정직한 RED stub이므로 session-bound on-motor verification capability를 발급할 수
+   없다. 따라서 `Save P1 → SV`는 UI, worker, domain, transport 최종 경계에서 모두 잠긴다.
+E4 [향후 사용자액션 "검증런" · 현재 NEED-DATA/LOCKED] 새 게인으로 B1~B3를 재수행하고,
+   같은 drive identity·connection generation·trial fingerprint에 결속된 on-motor GREEN을
+   증명하는 구현이 완료된 뒤에만 별도 Save capability 설계를 재개한다.
 ```
 
 ## 8. 엣지케이스(핵심)

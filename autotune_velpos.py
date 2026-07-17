@@ -68,8 +68,9 @@ import os
 import re
 import time
 from dataclasses import dataclass, field, replace as _dc_replace
+from decimal import Decimal, InvalidOperation
 from types import MappingProxyType
-from typing import Callable, Optional, Sequence
+from typing import Callable, Mapping, Optional, Sequence
 
 import numpy as np
 
@@ -515,6 +516,7 @@ class _Ctx:
         self.link = link
         self.params = params
         self.readings: dict = {}
+        self.raw_readings: dict = {}
         self.evidence: dict = {}
         self.warnings: list = []
         self.snapshot: dict = {}
@@ -540,6 +542,8 @@ class _Ctx:
                                         # (fable-critic MEDIUM: the 3-read guard
                                         # costs ~45 ms real - VX alone keeps the
                                         # cut/latch latency inside the band)
+        self.limits_attempt_id = None
+        self.limits_restore_finalized = False
 
 
 def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
@@ -547,7 +551,16 @@ def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
     last = None
     for _ in range(retries + 1):
         try:
-            resp = ctx.link.command(cmd, timeout_ms=1000, allow_motion=allow_motion)
+            kwargs = {
+                "timeout_ms": 1000,
+                "allow_motion": allow_motion,
+            }
+            if ctx.limits_attempt_id is not None:
+                kwargs["_persistence_attempt_id"] = ctx.limits_attempt_id
+            resp = ctx.link.command(cmd, **kwargs)
+            core = "".join(str(cmd).split()).upper().rstrip(";")
+            if "=" not in core:
+                ctx.raw_readings[core] = resp
             val = _to_num(resp)
             if isinstance(val, float) and math.isnan(val):
                 raise AbortError("NaN 응답 (%s) — 즉시 중단" % cmd)
@@ -600,7 +613,7 @@ def _check_cancel_before_mutation(ctx: _Ctx):
     try:
         _check_cancel(ctx)
     except AbortError as exc:
-        if ctx.dirty:
+        if ctx.dirty or ctx.limits_attempt_id is not None:
             raise
         raise PreflightError(str(exc)) from None
 
@@ -844,25 +857,408 @@ def _record_fetch(ctx: _Ctx) -> dict:
 # ======================================================================================
 # abort chains (SPEC §4 — segment-specific, fixed order)
 # ======================================================================================
-def _restore_limits(ctx: _Ctx):
-    restored, failed = [], []
-    for cmd, _v in LIMIT_WRITES:
-        if cmd not in set(ctx.dirty) or cmd not in ctx.snapshot:
-            continue
+def _limit_expected_profile(values) -> dict:
+    expected = {}
+    for name, _temporary in LIMIT_WRITES:
+        value = values.get(name)
+        if isinstance(value, bool) or value is None:
+            raise ValueError("%s is not finite numeric: %r" % (name, value))
+        token = str(value).strip().rstrip(";").strip()
         try:
-            _cmd(ctx, "%s=%s" % (cmd, _fmt(ctx.snapshot[cmd])), retries=1)
-            restored.append(cmd)
-        except Exception as e:
-            failed.append("%s(%s)" % (cmd, e))
-    if failed:
-        ctx.warnings.append("리밋 복원 실패 %s — 전원 재투입 시 스냅숏(%s) 참조"
-                            % (", ".join(failed), ctx.snapshot_path))
-    ctx.evidence["restored_limits"] = restored
+            number = Decimal(token)
+        except (InvalidOperation, ValueError):
+            raise ValueError(
+                "%s is not finite numeric: %r" % (name, value)) from None
+        if not number.is_finite():
+            raise ValueError("%s is not finite numeric: %r" % (name, value))
+        if number != number.to_integral_value():
+            raise ValueError("%s is not an exact integer count: %r" % (
+                name, value))
+        integer = int(number)
+        if integer < -(1 << 31) or integer > (1 << 31) - 1:
+            raise ValueError("%s is outside signed 32-bit range: %r" % (
+                name, value))
+        expected[name] = integer
+    return expected
+
+
+def _p2_limits_journal_api(ctx: _Ctx):
+    """Return the complete durable journal API or the explicit sim bypass."""
+    if (getattr(ctx.link, "p2_limits_durability_mode", None)
+            == "SYNTHETIC_NO_HARDWARE"):
+        return None
+    names = (
+        "prepare_persistence_attempt",
+        "verify_persistence_ram_applied",
+        "begin_persistence_ram_rollback",
+        "resolve_persistence_ram_rollback",
+        "mark_persistence_attempt_unknown",
+    )
+    api = tuple(getattr(ctx.link, name, None) for name in names)
+    if not all(callable(fn) for fn in api):
+        raise PreflightError(
+            "P2_LIMITS durable journal API is incomplete; no limit write is "
+            "authorized")
+    return dict(zip(names, api))
+
+
+def _validate_p2_limits_closeout_readback(value, expected):
+    if not isinstance(value, Mapping) or set(value) != {"forward", "reverse"}:
+        raise ValueError(
+            "P2_LIMITS closeout readback must contain forward and reverse")
+    normalized = {}
+    required = set(expected)
+    for sweep in ("forward", "reverse"):
+        profile = value[sweep]
+        if not isinstance(profile, Mapping) or set(profile) != required:
+            raise ValueError(
+                "P2_LIMITS closeout %s sweep is incomplete" % sweep)
+        normalized[sweep] = {}
+        for register in expected:
+            observed = profile[register]
+            if (isinstance(observed, bool)
+                    or not isinstance(observed, (int, float))
+                    or not math.isfinite(float(observed))
+                    or float(observed) != float(expected[register])):
+                raise ValueError(
+                    "P2_LIMITS closeout %s.%s is not exact original" %
+                    (sweep, register))
+            normalized[sweep][register] = float(observed)
+    return normalized
+
+
+def _read_limit_profile(ctx: _Ctx, expected: dict, *, retries=1):
+    readback, read_errors, mismatches = {}, [], []
+    sweeps = {}
+    matched_by_sweep = {}
+    directions = (
+        ("forward", tuple(name for name, _ in LIMIT_WRITES)),
+        ("reverse", tuple(reversed(
+            tuple(name for name, _ in LIMIT_WRITES)))),
+    )
+    for sweep_name, registers in directions:
+        sweep_values = {}
+        sweep_matched = set()
+        for name in registers:
+            try:
+                observed = _cmd(ctx, name, retries=retries)
+                readback[name] = observed
+                sweep_values[name] = observed
+            except Exception as exc:
+                read_errors.append("%s.%s(%s)" % (
+                    sweep_name, name, exc))
+                continue
+            if (isinstance(observed, bool)
+                    or not isinstance(observed, (int, float))
+                    or not math.isfinite(float(observed))):
+                mismatches.append(
+                    "%s.%s(non-finite/non-numeric=%r)" %
+                    (sweep_name, name, observed))
+            elif float(observed) != float(expected[name]):
+                mismatches.append(
+                    "%s.%s(expected=%.9g observed=%.9g)" %
+                    (sweep_name, name, expected[name], float(observed)))
+            else:
+                sweep_matched.add(name)
+        sweeps[sweep_name] = sweep_values
+        matched_by_sweep[sweep_name] = sweep_matched
+    matched = [
+        name for name, _ in LIMIT_WRITES
+        if all(name in matched_by_sweep[sweep]
+               for sweep in ("forward", "reverse"))]
+    return readback, read_errors, mismatches, matched, sweeps
+
+
+def _apply_limits_verified(ctx: _Ctx):
+    """WAL, apply all four limits, then prove forward+reverse exact sets."""
+    # Preserve the read-only cancellation boundary: a cancel latched during
+    # preflight must not be converted into a partial apply/abort transaction.
+    _check_cancel_before_mutation(ctx)
+    try:
+        original_source = {
+            name: ctx.raw_readings.get(name, ctx.snapshot.get(name))
+            for name, _temporary in LIMIT_WRITES
+        }
+        original = _limit_expected_profile(original_source)
+        requested = _limit_expected_profile(dict(LIMIT_WRITES))
+    except ValueError as exc:
+        raise PreflightError(
+            "critical limit snapshot/request invalid: %s" % exc) from None
+    ctx.snapshot.update(original)
+
+    critical = ctx.evidence.setdefault("critical_limits", {})
+    critical["snapshot"] = dict(original)
+    critical["requested"] = dict(requested)
+    no_change = original == requested
+    api = _p2_limits_journal_api(ctx)
+    if no_change and api is None:
+        readback, read_errors, mismatches, matched, sweeps = \
+            _read_limit_profile(ctx, requested)
+        passed = not read_errors and not mismatches \
+            and len(matched) == len(LIMIT_WRITES)
+        apply = {
+            "write_errors": [], "verify_errors": [],
+            "readback": readback, "sweeps": sweeps,
+            "read_errors": read_errors, "mismatches": mismatches,
+            "matched": matched, "pass": passed,
+            "durability": "SYNTHETIC_NO_HARDWARE_NO_CHANGE_PROVEN",
+        }
+        critical["apply"] = apply
+        critical["state"] = "APPLIED" if passed else "APPLY_FAILED"
+        ctx.evidence["limits"] = dict(readback)
+        if not passed:
+            raise AbortError(
+                "critical limit unchanged-profile two-sweep proof failed "
+                "before MO=1: %s" % "; ".join(
+                    read_errors + mismatches))
+        return readback
+
+    if api is not None:
+        mutation_bounds = {
+            "TC": (-max(abs(float(ctx.cl1)), UM3_DRAG_I_A),
+                   max(abs(float(ctx.cl1)), UM3_DRAG_I_A)),
+            "JV": (-abs(float(ctx.vx_guard_cnt)),
+                   abs(float(ctx.vx_guard_cnt))),
+            "PA": (-(1 << 31), (1 << 31) - 1),
+            "UM": (3, 5),
+        }
+        try:
+            attempt_id = api["prepare_persistence_attempt"](
+                phase="P2_LIMITS",
+                registers=tuple(name for name, _ in LIMIT_WRITES),
+                original=original,
+                applied=requested,
+                initial_state="RAM_APPLYING",
+                mutation_bounds=mutation_bounds,
+            )
+        except Exception as exc:
+            # prepare() may fail after its durable WAL side effect (for
+            # example, while proving that the connection epoch stayed put).
+            # Surface that pre-existing lock to the worker/UI instead of
+            # reporting a plain preflight failure with stale motion controls.
+            try:
+                latched = getattr(
+                    ctx.link, "persistence_unknown_latched", None)
+                if callable(latched) and latched():
+                    critical["state"] = "UNKNOWN"
+                    critical["durability"] = "WAL_PREPARE_OUTCOME_UNKNOWN"
+                    ctx.evidence["configuration_state"] = "UNKNOWN"
+            except Exception:
+                critical["state"] = "UNKNOWN"
+                critical["durability"] = "WAL_STATUS_UNREADABLE"
+                ctx.evidence["configuration_state"] = "UNKNOWN"
+            raise PreflightError(
+                "P2_LIMITS WAL prepare failed before first limit write: %s" %
+                exc) from None
+        if not isinstance(attempt_id, str) or not attempt_id:
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                try:
+                    latch()
+                except Exception:
+                    pass
+            critical["state"] = "UNKNOWN"
+            critical["durability"] = "INVALID_WAL_RECORD_ID"
+            ctx.evidence["configuration_state"] = "UNKNOWN"
+            raise PreflightError(
+                "P2_LIMITS WAL returned no usable record identifier before "
+                "first limit write")
+        ctx.limits_attempt_id = attempt_id
+        critical["record_id"] = str(ctx.limits_attempt_id)
+        critical["durability"] = "WAL_PREPARED"
+        # A cancel after durable prepare is a rollback transaction even when
+        # no assignment has reached the drive yet.
+        _check_cancel_before_mutation(ctx)
+
+    write_errors = []
+    if not no_change:
+        for name, value in LIMIT_WRITES:
+            try:
+                _write(ctx, name, value)
+            except Exception as exc:
+                write_errors.append("%s(%s)" % (name, exc))
+                break
+
+    readback, read_errors, mismatches, matched, sweeps = \
+        _read_limit_profile(ctx, requested)
+    verify_errors = []
+    local_passed = not write_errors and not read_errors and not mismatches \
+        and len(matched) == len(LIMIT_WRITES)
+    if local_passed and api is not None:
+        try:
+            api["verify_persistence_ram_applied"](
+                ctx.limits_attempt_id)
+        except Exception as exc:
+            verify_errors.append(str(exc))
+    passed = not write_errors and not read_errors and not mismatches \
+        and not verify_errors and len(matched) == len(LIMIT_WRITES)
+    apply = {
+        "write_errors": write_errors,
+        "verify_errors": verify_errors,
+        "readback": readback,
+        "sweeps": sweeps,
+        "read_errors": read_errors,
+        "mismatches": mismatches,
+        "matched": matched,
+        "pass": passed,
+        "durability": (
+            "WAL_PREPARED_NO_CHANGE" if no_change and api is not None
+            else "WAL_PREPARED" if api is not None
+            else "SYNTHETIC_NO_HARDWARE"),
+    }
+    critical["apply"] = apply
+    critical["state"] = "APPLIED" if passed else "APPLY_FAILED"
+    ctx.evidence["limits"] = dict(readback)
+    if not passed:
+        detail = write_errors + read_errors + mismatches + verify_errors
+        raise AbortError(
+            "critical limit full-set apply/readback failed before MO=1: %s" %
+            "; ".join(detail))
+    return readback
+
+
+def _restore_limits(ctx: _Ctx):
+    """Restore every touched limit and prove the complete original profile."""
+    if ctx.limits_restore_finalized:
+        return ctx.evidence.get("configuration_state") != "UNKNOWN"
+    dirty = set(ctx.dirty)
+    touched = [name for name, _ in LIMIT_WRITES if name in dirty]
+    active_attempt = ctx.limits_attempt_id
+    critical = ctx.evidence.setdefault("critical_limits", {})
+    if not touched and active_attempt is None:
+        critical["restore"] = {
+            "attempted": [], "write_errors": [], "readback": {},
+            "sweeps": {}, "read_errors": [], "mismatches": [],
+            "matched": [], "closeout_errors": [],
+            "pass": True,
+        }
+        if critical.get("apply", {}).get("pass") is True:
+            critical["state"] = "RESTORED"
+            ctx.evidence["configuration_state"] = "RESTORED"
+        ctx.evidence["restored_limits"] = []
+        return True
+
+    try:
+        original = _limit_expected_profile(ctx.snapshot)
+    except ValueError as exc:
+        restore = {
+            "attempted": [], "write_errors": [], "readback": {},
+            "sweeps": {}, "read_errors": [str(exc)], "mismatches": [],
+            "matched": [], "closeout_errors": [],
+            "pass": False,
+        }
+        critical["restore"] = restore
+        critical["state"] = "UNKNOWN"
+        ctx.evidence["configuration_state"] = "UNKNOWN"
+        ctx.evidence["restored_limits"] = []
+        if active_attempt is not None:
+            try:
+                api = _p2_limits_journal_api(ctx)
+                api["mark_persistence_attempt_unknown"](
+                    active_attempt, "LIMIT_RESTORE_SNAPSHOT_INVALID")
+            except Exception as mark_exc:
+                latch = getattr(ctx.link, "latch_persistence_unknown", None)
+                if callable(latch):
+                    latch()
+                restore["closeout_errors"].append(str(mark_exc))
+            ctx.limits_attempt_id = None
+            ctx.limits_restore_finalized = True
+        return False
+
+    attempted, write_errors = [], []
+    # Once WAL exists, restore the complete bounded profile.  Dirty tracking
+    # is useful evidence but cannot be the recovery authority: a vendor call
+    # can change RAM even when local bookkeeping or its reply is lost.
+    restore_targets = {
+        name for name, _temporary in LIMIT_WRITES
+        if active_attempt is not None or name in dirty
+    }
+    rollback_transition_error = None
+    if active_attempt is not None:
+        try:
+            api = _p2_limits_journal_api(ctx)
+            api["begin_persistence_ram_rollback"](active_attempt)
+        except Exception as exc:
+            rollback_transition_error = str(exc)
+    for name, _temporary in LIMIT_WRITES:
+        if name not in restore_targets:
+            continue
+        if rollback_transition_error is not None:
+            continue
+        attempted.append(name)
+        try:
+            _cmd(ctx, "%s=%s" % (name, _fmt(original[name])), retries=1)
+        except Exception as exc:
+            # Lost assignment replies are adjudicated by the independent full
+            # readback rather than treated as proof that RAM stayed wrong.
+            write_errors.append("%s(%s)" % (name, exc))
+
+    readback, read_errors, mismatches, matched, sweeps = \
+        _read_limit_profile(ctx, original)
+    closeout_errors = []
+    if rollback_transition_error is not None:
+        closeout_errors.append(
+            "rollback transition failed: %s" % rollback_transition_error)
+    local_passed = not read_errors and not mismatches \
+        and rollback_transition_error is None \
+        and len(matched) == len(LIMIT_WRITES)
+    closeout_readback = None
+    if local_passed and active_attempt is not None:
+        try:
+            api = _p2_limits_journal_api(ctx)
+            closeout_readback = api[
+                "resolve_persistence_ram_rollback"](active_attempt)
+            closeout_readback = _validate_p2_limits_closeout_readback(
+                closeout_readback, original)
+        except Exception as exc:
+            closeout_errors.append(str(exc))
+    passed = local_passed and not closeout_errors
+    if not passed and active_attempt is not None:
+        try:
+            api = _p2_limits_journal_api(ctx)
+            api["mark_persistence_attempt_unknown"](
+                active_attempt, "LIMIT_RESTORE_OR_CLOSEOUT_UNVERIFIED")
+        except Exception as exc:
+            closeout_errors.append(
+                "durable UNKNOWN closeout failed: %s" % exc)
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                try:
+                    latch()
+                except Exception as latch_exc:
+                    closeout_errors.append(
+                        "runtime UNKNOWN latch failed: %s" % latch_exc)
+    if active_attempt is not None:
+        ctx.limits_attempt_id = None
+        ctx.limits_restore_finalized = True
+    restore = {
+        "attempted": attempted,
+        "write_errors": write_errors,
+        "readback": readback,
+        "sweeps": sweeps,
+        "read_errors": read_errors,
+        "mismatches": mismatches,
+        "matched": matched,
+        "closeout_readback": closeout_readback,
+        "closeout_errors": closeout_errors,
+        "pass": passed,
+    }
+    critical["restore"] = restore
+    critical["state"] = "RESTORED" if passed else "UNKNOWN"
+    ctx.evidence["configuration_state"] = (
+        "RESTORED" if passed else "UNKNOWN")
+    ctx.evidence["restored_limits"] = matched
+    if not passed:
+        failed = read_errors + mismatches + closeout_errors
+        ctx.warnings.append(
+            "critical limit restore UNKNOWN: %s (snapshot %s)" %
+            (", ".join(failed), ctx.snapshot_path))
+    return passed
 
 
 def _do_abort(ctx: _Ctx, reason: str):
     if ctx.aborted:
-        return
+        return ctx.evidence.get("configuration_state") != "UNKNOWN"
     ctx.aborted = True
     steps = []
 
@@ -874,20 +1270,20 @@ def _do_abort(ctx: _Ctx, reason: str):
             ctx.warnings.append("abort %s 실패: %s" % (label, e))
 
     if ctx.segment == "jv":
-        _try("A1 JV=0", lambda: ctx.link.command("JV=0", timeout_ms=1000,
-                                                 allow_motion=True))
+        _try("A1 JV=0", lambda: _cmd(
+            ctx, "JV=0", allow_motion=True, retries=0))
         # CR p175: JV latches on BG — make the zero command effective (decel)
         # BEFORE ST; ST stays the authoritative stop right after (U-P6)
-        _try("A1a BG", lambda: ctx.link.command("BG", timeout_ms=1000,
-                                                allow_motion=True))
-        _try("A1b ST", lambda: ctx.link.command("ST", timeout_ms=1000,
-                                                allow_motion=True))
+        _try("A1a BG", lambda: _cmd(
+            ctx, "BG", allow_motion=True, retries=0))
+        _try("A1b ST", lambda: _cmd(
+            ctx, "ST", allow_motion=True, retries=0))
         stop_cnt = ctx.ca18 * JV_STOP_RPM / 60.0
 
         def _wait_stop():
             waited = 0.0
             while waited < JV_STOP_TIMEOUT_S:
-                vx = _to_num(ctx.link.command("VX", timeout_ms=1000))
+                vx = _cmd(ctx, "VX", retries=0)
                 if isinstance(vx, (int, float)) and abs(vx) < stop_cnt:
                     return
                 ctx.params.sleep_fn(0.05)
@@ -895,19 +1291,24 @@ def _do_abort(ctx: _Ctx, reason: str):
             raise TimeoutError("JV 정지 대기 실패 — 즉시 MO=0")
         _try("A2 wait |VX|<30rpm", _wait_stop)
     elif ctx.segment == "tc":
-        _try("A1 TC=0", lambda: ctx.link.command("TC=0", timeout_ms=1000,
-                                                 allow_motion=True))
-    _try("A_mo MO=0", lambda: ctx.link.command("MO=0", timeout_ms=1000))
+        _try("A1 TC=0", lambda: _cmd(
+            ctx, "TC=0", allow_motion=True, retries=0))
+    _try("A_mo MO=0", lambda: _cmd(ctx, "MO=0", retries=0))
     ctx.motor_on = False
     if "UM" in set(ctx.dirty) and "UM" in ctx.snapshot:
         # PART B wrote UM=3 for the drag oracle: ALWAYS restore the snapshot
         # mode (double cover with the drag's own finally-restore)
         _try("A_um UM=%s 복원" % ctx.snapshot["UM"],
-             lambda: ctx.link.command("UM=%s" % _fmt(ctx.snapshot["UM"]),
-                                      timeout_ms=1000))
-    _try("A_lim restore", lambda: _restore_limits(ctx))
+             lambda: _cmd(
+                 ctx, "UM=%s" % _fmt(ctx.snapshot["UM"]), retries=0))
+    limits_restored = _restore_limits(ctx)
+    if limits_restored:
+        steps.append("A_lim restore")
+    else:
+        ctx.warnings.append("abort A_lim restore UNKNOWN")
     ctx.evidence["abort"] = {"reason": reason, "segment": ctx.segment,
                              "steps_done": steps}
+    return limits_restored
 
 
 def _capture_signature_final_state(ctx: _Ctx) -> bool:
@@ -1248,14 +1649,13 @@ def _um3_drag(ctx: _Ctx):
     finally:
         _seg(ctx, "idle")
         try:
-            ctx.link.command("TC=0", timeout_ms=1000, allow_motion=True)
+            _cmd(ctx, "TC=0", allow_motion=True, retries=0)
         except Exception:
             pass
         try:
-            ctx.link.command("MO=0", timeout_ms=1000)
+            _cmd(ctx, "MO=0", retries=0)
             ctx.motor_on = False
-            ctx.link.command("UM=%s" % _fmt(ctx.snapshot.get("UM", 5)),
-                             timeout_ms=1000)
+            _cmd(ctx, "UM=%s" % _fmt(ctx.snapshot.get("UM", 5)), retries=0)
         except Exception as e:
             ctx.warnings.append("UM3 드래그 종료 복원 실패(%s) — abort 체인이"
                                 " UM 복원 재시도" % e)
@@ -2089,19 +2489,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     ctx.evidence["snapshot_path"] = ctx.snapshot_path
     _emit(ctx, "SNAPSHOT", "스냅숏 저장: %s" % ctx.snapshot_path)
 
-    # ---- P5 explicit limits (write + readback; refusal -> warnings only, U-P4) --------
-    limit_rb = {}
-    for cmd, val in LIMIT_WRITES:
-        try:
-            _write(ctx, cmd, val)
-            rb = _cmd(ctx, cmd)
-            limit_rb[cmd] = rb
-            if isinstance(rb, (int, float)) and abs(rb - val) > abs(val) * 1e-6 + 1e-9:
-                ctx.warnings.append("리밋 %s 리드백 불일치(%r≠%r) — SW가드로 보완(U-P4)"
-                                    % (cmd, rb, val))
-        except Exception as e:
-            ctx.warnings.append("리밋 %s 쓰기 거부(%s) — SW가드로 보완(U-P4)" % (cmd, e))
-    ctx.evidence["limits"] = limit_rb
+    # ---- P5 critical limits: full-set apply/readback proof before MO=1 ----------------
+    _apply_limits_verified(ctx)
 
     # ---- B0 enable (operator gate is the CALLER's) -------------------------------------
     _check_cancel_before_mutation(ctx)
@@ -2458,7 +2847,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     # ---- E1 de-energize + restore limits ------------------------------------------------
     _cmd(ctx, "MO=0")
     ctx.motor_on = False
-    _restore_limits(ctx)
+    if not _restore_limits(ctx):
+        raise AbortError("E1 critical limit restore UNKNOWN")
 
     # ---- E2 design + gates G1..G4 -------------------------------------------------------
     b_final, i_c_final = b_jv, i_c_jv               # method B = adopted friction
@@ -2599,6 +2989,17 @@ def _fmt_gain(v: float) -> str:
 
 
 VP_GAIN_NAMES = ("KP[2]", "KI[2]", "KP[3]")
+P2_GAIN_TRIAL_SYNTHETIC_MODE = "SYNTHETIC_NO_HARDWARE"
+
+
+def _p2_gain_trial_is_explicit_synthetic(link) -> bool:
+    """Allow RAM-only trials solely for an explicit no-hardware contract."""
+    try:
+        mode = getattr(link, "p2_gain_trial_durability_mode", None)
+    except Exception:
+        return False
+    return (type(mode) is str
+            and mode == P2_GAIN_TRIAL_SYNTHETIC_MODE)
 
 
 @dataclass(frozen=True)
@@ -3025,6 +3426,11 @@ def begin_gain_trial_vp(link, result: AutotuneVPResult):
     if result is None or result.status not in (GREEN, YELLOW):
         return False, "임시 적용 불가: 결과 상태 %s" % (
             result.status if result else None), None
+    if not _p2_gain_trial_is_explicit_synthetic(link):
+        return False, (
+            "P2 RAM gain trial locked: durable pre-assignment trial WAL is "
+            "not available for hardware-capable links; no drive command "
+            "executed"), None
     try:
         requested = {"KP[2]": result.kp_vel, "KI[2]": result.ki_vel_hz,
                      "KP[3]": result.kp_pos}
@@ -3669,16 +4075,8 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
                   ensure_ascii=False, indent=1)
     ctx.evidence["snapshot_path"] = ctx.snapshot_path
     _emit(ctx, "SNAPSHOT", "스냅숏 저장: %s" % ctx.snapshot_path)
-    # ---- explicit limits (same discipline as the main pipeline, U-P4) ------------------
-    limit_rb = {}
-    for cmd, val in LIMIT_WRITES:
-        try:
-            _write(ctx, cmd, val)
-            limit_rb[cmd] = _cmd(ctx, cmd)
-        except Exception as e:
-            ctx.warnings.append("리밋 %s 쓰기 거부(%s) — SW가드로 보완(U-P4)"
-                                % (cmd, e))
-    ctx.evidence["limits"] = limit_rb
+    # ---- critical limits: same fail-closed full-set proof as main P2 -------------------
+    _apply_limits_verified(ctx)
     # ---- enable ------------------------------------------------------------------------
     _check_cancel_before_mutation(ctx)
     _cmd(ctx, "MO=1", allow_motion=True)
@@ -3774,7 +4172,8 @@ def _verify_pipeline(ctx: _Ctx) -> AutotuneVPResult:
     _seg(ctx, "idle")
     _cmd(ctx, "MO=0")
     ctx.motor_on = False
-    _restore_limits(ctx)
+    if not _restore_limits(ctx):
+        raise AbortError("E1 critical limit restore UNKNOWN")
     # ---- verdict + persistence -----------------------------------------------------------
     result_path = os.path.join(
         p.snapshot_dir, "verify_vp_result_%d.json" % int(time.time() * 1000))

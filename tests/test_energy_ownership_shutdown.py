@@ -14,7 +14,7 @@ import time
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
-from PyQt6 import QtGui, QtWidgets
+from PyQt6 import QtCore, QtGui, QtWidgets
 
 import elmo_link
 import main as app_main
@@ -156,7 +156,10 @@ def test_energized_workflow_exception_uses_common_verified_safe_stop(
         monkeypatch.setattr(
             app_main.autotune_velpos, "verify_run_vp",
             explode_after_enable)
-        worker.start_verify_vp({})
+        worker._commutation_signature_green = True
+        worker._commutation_signature_token = "offline-signature"
+        worker.start_verify_vp(
+            {}, signature_token="offline-signature")
 
     monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
     worker.run()
@@ -164,6 +167,347 @@ def test_energized_workflow_exception_uses_common_verified_safe_stop(
     assert algorithm_calls == [workflow]
     _assert_stop_disable_was_verified(link)
     assert link.disconnect_called
+
+
+@pytest.mark.parametrize("workflow", ("autotune", "velpos", "verify"))
+def test_tuning_cancel_during_fresh_telemetry_never_enters_algorithm(
+        monkeypatch, workflow):
+    """Cancellation racing the admission read must remain authoritative."""
+    telemetry_entered = threading.Event()
+    telemetry_release = threading.Event()
+    result_emitted = threading.Event()
+    algorithm_calls: list[str] = []
+    results = []
+
+    class _BlockingFreshTelemetryLink(_SafetyLink):
+        def __init__(self):
+            super().__init__(mo=0)
+            self.telemetry_calls = 0
+
+        def read_telemetry(self):
+            self.telemetry_calls += 1
+            if self.telemetry_calls == 2:
+                telemetry_entered.set()
+                assert telemetry_release.wait(2.0), (
+                    "test did not release the pre-mutation telemetry read")
+            return super().read_telemetry()
+
+    link = _BlockingFreshTelemetryLink()
+    worker = app_main.DriveWorker("COM_FAKE")
+
+    def unexpected_algorithm_entry(_link, _params):
+        algorithm_calls.append(workflow)
+        if workflow == "autotune":
+            return app_main.autotune_current.AutotuneResult(
+                status=app_main.autotune_current.RED,
+                reason="algorithm must not run")
+        return app_main.autotune_velpos.AutotuneVPResult(
+            status=app_main.autotune_velpos.RED,
+            reason="algorithm must not run")
+
+    if workflow == "autotune":
+        monkeypatch.setattr(
+            app_main.autotune_current, "run_current_autotune",
+            unexpected_algorithm_entry)
+        worker.autotune_result.connect(
+            lambda result: (results.append(result), result_emitted.set()),
+            QtCore.Qt.ConnectionType.DirectConnection)
+        worker.start_autotune({})
+        cancel = worker.cancel_autotune
+    elif workflow == "velpos":
+        monkeypatch.setattr(
+            app_main.autotune_velpos, "run_velpos_autotune",
+            unexpected_algorithm_entry)
+        worker.velpos_result.connect(
+            lambda result: (results.append(result), result_emitted.set()),
+            QtCore.Qt.ConnectionType.DirectConnection)
+        worker._commutation_signature_green = True
+        worker.start_velpos_autotune({
+            "r_pp_ohm": 0.139,
+            "l_pp_h": 41.6e-6,
+        })
+        cancel = worker.cancel_velpos
+    else:
+        monkeypatch.setattr(
+            app_main.autotune_velpos, "verify_run_vp",
+            unexpected_algorithm_entry)
+        worker.verify_result.connect(
+            lambda result: (results.append(result), result_emitted.set()),
+            QtCore.Qt.ConnectionType.DirectConnection)
+        worker._commutation_signature_green = True
+        worker._commutation_signature_token = "offline-signature"
+        worker.start_verify_vp(
+            {}, signature_token="offline-signature")
+        cancel = worker.cancel_velpos
+
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    runner = threading.Thread(target=worker.run, name="tune-cancel-barrier")
+    runner.start()
+    try:
+        assert telemetry_entered.wait(2.0), (
+            "worker never entered the pre-mutation telemetry read")
+
+        cancel()
+        telemetry_release.set()
+        assert result_emitted.wait(2.0), (
+            "worker did not publish a typed RED result")
+    finally:
+        telemetry_release.set()
+        worker.stop()
+        runner.join(3.0)
+
+    assert not runner.is_alive()
+    assert algorithm_calls == []
+    assert len(results) == 1
+    assert results[0].status == "RED"
+    assert "superseded" in results[0].reason
+    assert not any(
+        command == "ST" or command == "SV" or "=" in command
+        for command, _mo_before in link.command_log
+    )
+    assert link.disconnect_called
+
+
+@pytest.mark.parametrize("workflow", ("autotune", "velpos", "verify"))
+def test_cancelled_queued_tune_does_not_poison_fresh_generation(
+        monkeypatch, workflow):
+    """Abort covers existing generations, while a later explicit Start is fresh."""
+    link = _SafetyLink(mo=0)
+    worker = app_main.DriveWorker("COM_FAKE")
+    algorithm_calls: list[str] = []
+    results = []
+    two_results = threading.Event()
+
+    def completed(result):
+        results.append(result)
+        if len(results) == 2:
+            two_results.set()
+
+    def fresh_generation_algorithm(_link, _params):
+        algorithm_calls.append(workflow)
+        if workflow == "autotune":
+            return app_main.autotune_current.AutotuneResult(
+                status=app_main.autotune_current.RED,
+                reason="fresh generation ran")
+        return app_main.autotune_velpos.AutotuneVPResult(
+            status=app_main.autotune_velpos.RED,
+            reason="fresh generation ran")
+
+    if workflow == "autotune":
+        monkeypatch.setattr(
+            app_main.autotune_current, "run_current_autotune",
+            fresh_generation_algorithm)
+        worker.autotune_result.connect(
+            completed, QtCore.Qt.ConnectionType.DirectConnection)
+        worker.start_autotune({})
+        worker.cancel_autotune()
+        worker.start_autotune({})
+    elif workflow == "velpos":
+        monkeypatch.setattr(
+            app_main.autotune_velpos, "run_velpos_autotune",
+            fresh_generation_algorithm)
+        worker.velpos_result.connect(
+            completed, QtCore.Qt.ConnectionType.DirectConnection)
+        worker._commutation_signature_green = True
+        params = {"r_pp_ohm": 0.139, "l_pp_h": 41.6e-6}
+        worker.start_velpos_autotune(params)
+        worker.cancel_velpos()
+        worker.start_velpos_autotune(params)
+    else:
+        monkeypatch.setattr(
+            app_main.autotune_velpos, "verify_run_vp",
+            fresh_generation_algorithm)
+        worker.verify_result.connect(
+            completed, QtCore.Qt.ConnectionType.DirectConnection)
+        worker._commutation_signature_green = True
+        worker._commutation_signature_token = "offline-signature"
+        worker.start_verify_vp(
+            {}, signature_token="offline-signature")
+        worker.cancel_velpos()
+        worker.start_verify_vp(
+            {}, signature_token="offline-signature")
+
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    runner = threading.Thread(target=worker.run, name="fresh-tune-generation")
+    runner.start()
+    try:
+        assert two_results.wait(2.0), (
+            "worker did not resolve both the cancelled and fresh generations")
+    finally:
+        worker.stop()
+        runner.join(3.0)
+
+    assert not runner.is_alive()
+    assert len(results) == 2
+    assert "superseded" in results[0].reason
+    assert results[1].reason.startswith("fresh generation ran")
+    assert algorithm_calls == [workflow]
+    assert link.disconnect_called
+
+
+@pytest.mark.parametrize("phase", ("P1", "P2"))
+def test_worker_direct_gain_trial_dispatch_is_production_locked_without_mutation(
+        monkeypatch, phase):
+    """Bypassing the UI cannot bypass the production RAM-trial lock."""
+    link = _SafetyLink(mo=0)
+    worker = app_main.DriveWorker("COM_FAKE")
+    result_emitted = threading.Event()
+    actions = []
+
+    def record_action(action, ok, message, trial):
+        actions.append((action, ok, message, trial))
+        result_emitted.set()
+
+    if phase == "P1":
+        worker.current_gain_action.connect(
+            record_action, QtCore.Qt.ConnectionType.DirectConnection)
+        worker.begin_current_gain_trial(
+            app_main.autotune_current.AutotuneResult(
+                status=app_main.autotune_current.GREEN,
+                kp_v_per_a=0.0712,
+                ki_hz=812.9))
+    else:
+        worker.velpos_gain_action.connect(
+            record_action, QtCore.Qt.ConnectionType.DirectConnection)
+        worker.begin_velpos_gain_trial(
+            app_main.autotune_velpos.AutotuneVPResult(
+                status=app_main.autotune_velpos.GREEN,
+                kp_vel=8.0e-5,
+                ki_vel_hz=10.7,
+                kp_pos=85.2114))
+
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    runner = threading.Thread(target=worker.run, name="gain-trial-lock")
+    runner.start()
+    try:
+        assert result_emitted.wait(2.0), (
+            "worker did not publish the production gain-trial rejection")
+    finally:
+        worker.stop()
+        runner.join(3.0)
+
+    assert not runner.is_alive()
+    assert len(actions) == 1
+    action, ok, message, trial = actions[0]
+    assert action == "begin" and ok is False and trial is None
+    assert "durable" in message.lower() and "locked" in message.lower()
+    assert worker._p1_gain_trial is None
+    assert worker._vp_gain_trial is None
+    assert not any(
+        command == "BG" or command == "SV" or "=" in command
+        for command, _mo_before in link.command_log
+    )
+    assert link.disconnect_called
+
+
+def test_p1_configuration_restore_unknown_latches_worker_mutation_lock(
+        monkeypatch):
+    link = _SafetyLink(mo=0)
+    worker = app_main.DriveWorker("COM_FAKE")
+    worker._connection_identity_verified = True
+    monkeypatch.setattr(
+        app_main.autotune_current, "run_current_autotune",
+        lambda _link, _params: app_main.autotune_current.AutotuneResult(
+            status=app_main.autotune_current.RED,
+            reason="configuration restore UNKNOWN",
+            evidence={"configuration_state": "UNKNOWN"}))
+
+    worker._run_autotune(link, {})
+
+    assert worker._motion_config_unknown
+    allowed, detail = worker._trial_job_guard("autotune", {})
+    assert not allowed
+    assert "UNKNOWN" in detail
+
+
+@pytest.mark.parametrize("workflow", ("velpos", "verify"))
+def test_p2_critical_limit_restore_unknown_latches_worker_mutation_lock(
+        monkeypatch, workflow):
+    link = _SafetyLink(mo=0)
+    worker = app_main.DriveWorker("COM_FAKE")
+    worker._connection_identity_verified = True
+    worker._commutation_signature_green = True
+    result = app_main.autotune_velpos.AutotuneVPResult(
+        status=app_main.autotune_velpos.GREEN,
+        reason="",
+        evidence={"configuration_state": "UNKNOWN"})
+    emitted = []
+
+    if workflow == "velpos":
+        monkeypatch.setattr(
+            app_main.autotune_velpos, "run_velpos_autotune",
+            lambda _link, _params: result)
+        worker.velpos_result.connect(emitted.append)
+        worker._run_velpos_autotune(link, {})
+    else:
+        monkeypatch.setattr(
+            app_main.autotune_velpos, "verify_run_vp",
+            lambda _link, _params: result)
+        worker.verify_result.connect(emitted.append)
+        worker._run_verify_vp(link, {})
+
+    assert worker._motion_config_unknown
+    assert not worker._commutation_signature_green
+    assert emitted and emitted[0].status == app_main.autotune_velpos.RED
+    assert "UNKNOWN" in emitted[0].reason
+    allowed, detail = worker._trial_job_guard("autotune", {})
+    assert not allowed
+    assert "UNKNOWN" in detail
+
+
+def test_p2_configuration_unknown_immediately_publishes_durable_lock_status():
+    link = _SafetyLink(mo=0)
+    link.persistence_status = lambda: {
+        "status": "PERSISTENCE_UNKNOWN",
+        "resolved": False,
+        "detail": "P2_LIMITS restore closeout is unresolved",
+        "lock_active": True,
+        "record_id": "p2-limits-record",
+        "phase": "P2_LIMITS",
+        "other_active_count": 0,
+        "ledger_error": None,
+    }
+    worker = app_main.DriveWorker("COM_FAKE")
+    result = app_main.autotune_velpos.AutotuneVPResult(
+        status=app_main.autotune_velpos.RED,
+        reason="limit restore UNKNOWN",
+        evidence={"configuration_state": "UNKNOWN"})
+    published = []
+    worker.persistence_audit_status.connect(published.append)
+
+    assert worker._latch_configuration_unknown(link, result, "P2") is True
+
+    assert worker._persistence_recovery_unknown is True
+    assert published
+    assert published[-1]["lock_active"] is True
+    assert published[-1]["phase"] == "P2_LIMITS"
+
+
+def test_new_worker_startup_reloads_p2_limits_durable_lock(monkeypatch):
+    link = _SafetyLink(mo=0)
+    link.persistence_status = lambda: {
+        "status": "PERSISTENCE_UNKNOWN",
+        "resolved": False,
+        "detail": "reloaded active P2_LIMITS incident",
+        "lock_active": True,
+        "record_id": "p2-limits-record",
+        "phase": "P2_LIMITS",
+        "other_active_count": 0,
+        "ledger_error": None,
+    }
+    worker = app_main.DriveWorker("COM_FAKE")
+    statuses = []
+    worker.persistence_audit_status.connect(statuses.append)
+    worker.connected.connect(lambda _info: worker.stop())
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+
+    worker.run()
+
+    assert worker._persistence_recovery_unknown is True
+    assert statuses and statuses[0]["phase"] == "P2_LIMITS"
+    allowed, detail = worker._trial_job_guard("velpos", {})
+    assert not allowed
+    assert "UNKNOWN" in detail
 
 
 def test_disconnect_race_does_not_drop_queued_urgent_motion_stop(monkeypatch):

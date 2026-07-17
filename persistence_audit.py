@@ -38,6 +38,13 @@ DEFAULT_RTOL = 1e-3
 PHASE_REGISTERS = MappingProxyType({
     "P1": ("KP[1]", "KI[1]"),
     "P2": ("KP[2]", "KI[2]", "KP[3]"),
+    "P1_CONFIG": (
+        "KP[1]", "KI[1]", "UM", "SC[8]",
+        "CA[42]", "CA[43]", "CA[44]", "CA[70]",
+        "SE[1]", "SE[2]", "SE[3]", "SE[4]",
+        "SE[5]", "SE[6]", "SE[7]",
+    ),
+    "P2_LIMITS": ("SD", "HL[2]", "LL[2]", "ER[2]"),
     "MOTOR": (
         "PL[1]", "CL[1]", "VH[2]", "CA[19]", "CA[28]",
         "CA[18]", "MC", "UM",
@@ -54,6 +61,14 @@ _RESOLUTIONS = frozenset((
 _MOTOR_INTEGER_REGISTERS = frozenset((
     "VH[2]", "CA[19]", "CA[28]", "CA[18]", "UM",
 ))
+_P1_CONFIG_INTEGER_REGISTERS = frozenset((
+    "UM", "SC[8]", "CA[42]", "CA[43]", "CA[44]", "CA[70]",
+    "SE[1]", "SE[4]", "SE[5]", "SE[6]", "SE[7]",
+))
+_P2_LIMITS_INTEGER_REGISTERS = frozenset(PHASE_REGISTERS["P2_LIMITS"])
+_MAX_EXACT_INTEGER = (1 << 53) - 1
+_SIGNED_32_MIN = -(1 << 31)
+_SIGNED_32_MAX = (1 << 31) - 1
 _MOTOR_POSITIVE_REGISTERS = frozenset((
     "PL[1]", "CL[1]", "VH[2]", "CA[19]", "CA[18]", "MC",
 ))
@@ -149,13 +164,36 @@ def _require_profile(
         number = float(value)
         if not math.isfinite(number):
             raise ValueError("%s[%s] must be finite" % (name, register))
+        if (phase in {"MOTOR", "P1_CONFIG", "P2_LIMITS"}
+                and abs(number) > _MAX_EXACT_INTEGER):
+            raise ValueError(
+                "%s[%s] lies outside the exact integer range" %
+                (name, register))
         if phase in {"P1", "P2"} and number <= 0.0:
             raise ValueError("%s[%s] must be finite and positive" %
                              (name, register))
+        if (phase == "P1_CONFIG"
+                and register in _P1_CONFIG_INTEGER_REGISTERS):
+            if not number.is_integer():
+                raise ValueError("%s[%s] must be an integer" %
+                                 (name, register))
+            number = int(number)
+        if (phase == "P2_LIMITS"
+                and register in _P2_LIMITS_INTEGER_REGISTERS):
+            if not number.is_integer():
+                raise ValueError("%s[%s] must be an integer" %
+                                 (name, register))
+            if not _SIGNED_32_MIN <= number <= _SIGNED_32_MAX:
+                raise ValueError(
+                    "%s[%s] must be a signed 32-bit integer" %
+                    (name, register))
+            number = int(number)
         if phase == "MOTOR":
             if register in _MOTOR_INTEGER_REGISTERS and not number.is_integer():
                 raise ValueError("%s[%s] must be an integer" %
                                  (name, register))
+            if register in _MOTOR_INTEGER_REGISTERS:
+                number = int(number)
             if register in _MOTOR_POSITIVE_REGISTERS and number <= 0.0:
                 raise ValueError("%s[%s] must be finite and positive" %
                                  (name, register))
@@ -209,7 +247,7 @@ class PersistenceRecord:
     def __post_init__(self):
         record_id = _require_uuid(self.record_id, "record_id", version=4)
         if self.phase not in PHASE_REGISTERS:
-            raise ValueError("phase must be P1, P2 or MOTOR")
+            raise ValueError("unsupported persistence phase")
         registers = tuple(self.registers)
         if registers != PHASE_REGISTERS[self.phase]:
             raise ValueError("registers do not match phase %s" % self.phase)
@@ -238,6 +276,14 @@ class PersistenceRecord:
         if self.state == "RESOLVED":
             if self.resolution not in _RESOLUTIONS:
                 raise ValueError("resolved record has invalid resolution")
+            if (self.phase in {"P1_CONFIG", "P2_LIMITS"}
+                    and self.resolution not in {
+                        "RAM_ROLLBACK_VERIFIED",
+                        "ORIGINAL_PROFILE_AFTER_RESET",
+                    }):
+                raise ValueError(
+                    "%s can resolve only after verified RAM rollback or the "
+                    "original post-reset profile" % self.phase)
             if self.resolved_utc is None:
                 raise ValueError("resolved record lacks resolved_utc")
             resolved_utc = _require_utc(self.resolved_utc, "resolved_utc")
@@ -794,7 +840,7 @@ class PersistenceLedger:
         explicitly advance to PERSISTING only after complete RAM readback.
         """
         if phase not in PHASE_REGISTERS:
-            raise ValueError("phase must be P1, P2 or MOTOR")
+            raise ValueError("unsupported persistence phase")
         expected_registers = PHASE_REGISTERS[phase]
         if registers is None:
             registers = expected_registers
@@ -806,8 +852,9 @@ class PersistenceLedger:
                 or initial_state not in {"PERSISTING", "RAM_APPLYING"}):
             raise ValueError(
                 "initial_state must be PERSISTING or RAM_APPLYING")
-        if phase == "MOTOR" and initial_state != "RAM_APPLYING":
-            raise ValueError("MOTOR must start in RAM_APPLYING")
+        if phase in {"MOTOR", "P1_CONFIG", "P2_LIMITS"} \
+                and initial_state != "RAM_APPLYING":
+            raise ValueError("RAM configuration phases must start in RAM_APPLYING")
         if phase in {"P1", "P2"} and initial_state != "PERSISTING":
             raise ValueError("P1/P2 must start in PERSISTING")
         now = _utc_now()
@@ -828,9 +875,10 @@ class PersistenceLedger:
             created_utc=now,
             updated_utc=now,
         )
-        if _profile_matches(
-                record.original, record.applied, record.registers,
-                record.rtol, record.phase):
+        profiles_overlap = _profile_matches(
+            record.original, record.applied, record.registers,
+            record.rtol, record.phase)
+        if profiles_overlap and record.phase != "P2_LIMITS":
             raise ValueError(
                 "original and applied profiles are indistinguishable; SV is not authorized")
         with self._mutation_lock() as new_sentinel:
@@ -930,9 +978,10 @@ class PersistenceLedger:
             snapshot = self._load(
                 allow_missing_for_new_sentinel=new_sentinel)
             _identity, record = self._find_active(snapshot, record_id)
-            if record.phase != "MOTOR" or record.state != "RAM_APPLYING":
+            if (record.phase not in {"MOTOR", "P1_CONFIG", "P2_LIMITS"}
+                    or record.state != "RAM_APPLYING"):
                 raise ValueError(
-                    "RAM rollback can resolve only a MOTOR RAM_APPLYING record")
+                    "RAM rollback can resolve only a RAM configuration record")
             return self._resolve_locked(
                 snapshot, record_id, "RAM_ROLLBACK_VERIFIED")
 
@@ -954,6 +1003,11 @@ class PersistenceLedger:
             if (decision.record_id != record.record_id
                     or decision.drive_identity != record.drive_identity):
                 raise ValueError("audit decision is bound to a different record")
+            if (record.phase in {"P1_CONFIG", "P2_LIMITS"}
+                    and decision.resolution != "ORIGINAL_PROFILE_AFTER_RESET"):
+                raise ValueError(
+                    "%s audit can resolve only the original profile" %
+                    record.phase)
             if decision.connect_epoch == record.connect_epoch:
                 raise ValueError("audit decision must use a different connection epoch")
             validated_evidence = _validate_audit_evidence(
@@ -980,9 +1034,8 @@ def _unresolved(status: str, detail: str) -> AuditDecision:
 def _profile_matches(actual: Mapping[str, float], expected: Mapping[str, float],
                      registers: tuple[str, ...], rtol: float,
                      phase: str) -> bool:
-    if phase == "MOTOR":
-        return all(float(actual[name]) == float(expected[name])
-                   for name in registers)
+    if phase in {"MOTOR", "P1_CONFIG", "P2_LIMITS"}:
+        return all(actual[name] == expected[name] for name in registers)
     return all(abs(float(actual[name]) - float(expected[name]))
                <= rtol * abs(float(expected[name]))
                for name in registers)
@@ -1058,10 +1111,26 @@ def adjudicate_read_only(
         actual, record.applied, record.registers, record.rtol, record.phase)
     original_match = _profile_matches(
         actual, record.original, record.registers, record.rtol, record.phase)
-    if targets_overlap or (applied_match and original_match):
+    if (record.phase == "P2_LIMITS" and targets_overlap
+            and original_match):
+        return AuditDecision(
+            status="RESOLVED_ORIGINAL_PROFILE", resolved=True,
+            resolution="ORIGINAL_PROFILE_AFTER_RESET",
+            detail=("the no-change P2 limit proof used the exact original "
+                    "profile; reset and stationary readback are proven"),
+            record_id=record.record_id,
+            drive_identity=record.drive_identity,
+            connect_epoch=context.connect_epoch)
+    if ((targets_overlap and record.phase != "P2_LIMITS")
+            or (applied_match and original_match)):
         return _unresolved(
             "UNRESOLVED_NO_DISTINGUISHING_CHANGE",
             "original and applied profiles are not distinguishable at audit tolerance")
+    if applied_match and record.phase in {"P1_CONFIG", "P2_LIMITS"}:
+        return _unresolved(
+            "TEMPORARY_CONFIGURATION_AFTER_RESET",
+            "temporary RAM configuration remains active; only the original "
+            "profile can clear this incident")
     if applied_match:
         return AuditDecision(
             status="RESOLVED_APPLIED_PROFILE", resolved=True,

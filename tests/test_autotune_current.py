@@ -51,6 +51,9 @@ class SimDrive:
     """Mock ElmoLink: command()-compatible, with the T3 discrete plant inside.
     Time advances ONLY via advance(dt) — inject it as AutotuneParams.sleep_fn."""
 
+    p1_config_durability_mode = "SYNTHETIC_NO_HARDWARE"
+    p1_gain_trial_durability_mode = "SYNTHETIC_NO_HARDWARE"
+
     _MOTION_PREFIXES = ("MO=1", "BG", "JV", "PA", "PR", "PT", "PVT", "TC", "MI")
 
     def __init__(self, kp=KP_ORACLE, ki=812.939, r_pp=R_TERM_PP, l_pp=L_PP_ORACLE,
@@ -326,6 +329,74 @@ class SimDrive:
         if name in self.regs:
             return str(self.regs[name])
         raise IOError("unknown query %r" % name)
+
+
+class ConfigurationJournalSimDrive(SimDrive):
+    """SimDrive with the same private RAM-transaction boundary as ElmoLink."""
+
+    def __init__(self, *args, fail_prepare=False, fail_resolve=False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fail_prepare = bool(fail_prepare)
+        self.fail_resolve = bool(fail_resolve)
+        self.config_attempt_id = "offline-p1-config-attempt"
+        self.config_attempt_active = False
+        self.config_rollback_active = False
+        self.config_unknown = False
+        self.journal_events = []
+        self.capability_rejections = []
+
+    def prepare_persistence_attempt(self, **kwargs):
+        self.journal_events.append(("prepare", dict(kwargs)))
+        if self.fail_prepare:
+            raise IOError("synthetic journal prepare failure")
+        self.config_attempt_active = True
+        self.config_rollback_active = False
+        return self.config_attempt_id
+
+    def begin_persistence_ram_rollback(self, record_id):
+        self.journal_events.append(("begin_rollback", record_id))
+        assert record_id == self.config_attempt_id
+        assert self.config_attempt_active
+        self.config_rollback_active = True
+
+    def resolve_persistence_ram_rollback(self, record_id):
+        self.journal_events.append(("resolve", record_id))
+        assert record_id == self.config_attempt_id
+        assert self.config_rollback_active
+        if self.fail_resolve:
+            raise IOError("synthetic journal closeout failure")
+        self.config_attempt_active = False
+        self.config_rollback_active = False
+        return {name: self.regs[name] for name in at.P1_CONFIG_NAMES}
+
+    def mark_persistence_attempt_unknown(self, record_id, reason):
+        self.journal_events.append(("unknown", record_id, str(reason)))
+        assert record_id == self.config_attempt_id
+        self.config_attempt_active = False
+        self.config_rollback_active = False
+        self.config_unknown = True
+
+    def latch_persistence_unknown(self):
+        self.journal_events.append(("runtime_latch",))
+        self.config_unknown = True
+
+    def persistence_unknown_latched(self):
+        return self.config_unknown
+
+    def command(self, cmd, timeout_ms=1000, allow_motion=False,
+                _persistence_attempt_id=None):
+        core = "".join(str(cmd).split()).upper().rstrip(";")
+        assignment = "=" in core
+        safe = core in {"MO=0", "TC=0"}
+        if (self.config_attempt_active and assignment and not safe
+                and _persistence_attempt_id != self.config_attempt_id):
+            self.capability_rejections.append(core)
+            raise RuntimeError("P1_CONFIG capability missing")
+        self.journal_events.append((
+            "command", core, _persistence_attempt_id,
+            self.config_attempt_active))
+        return super().command(
+            cmd, timeout_ms=timeout_ms, allow_motion=allow_motion)
 
 
 def _params(drive, tmpdir, **kw):
@@ -1371,6 +1442,185 @@ def test_ts100_explicit_over_limit_keeps_strict_red(tmp_path):
     assert all("=" not in c for c, _ in drive.log), "P2 RED must stay read-only"
 
 
+@pytest.mark.parametrize("bootstrap", [False, True])
+def test_no_free_feedback_socket_is_read_only_preflight_red(
+        tmp_path, bootstrap):
+    drive = SimDrive(
+        kp=0.0 if bootstrap else KP_ORACLE,
+        ki=0.0 if bootstrap else KI_ORACLE)
+    drive.regs.update({
+        "CA[45]": 2, "CA[46]": 3, "CA[47]": 4,
+        "SC[8]": 7,
+    })
+    original = dict(drive.regs)
+    kwargs = {}
+    if bootstrap:
+        kwargs.update(
+            nameplate_r_pp=R_PP_ORACLE,
+            nameplate_l_pp_h=L_PP_ORACLE)
+
+    res = run_current_autotune(
+        drive, _params(drive, tmp_path, **kwargs))
+
+    assignments = [command for command, _ in drive.log if "=" in command]
+    assert res.status == RED and "소켓" in res.reason
+    assert assignments == []
+    assert not any(command.replace(" ", "").upper() == "MO=1"
+                   for command, _ in drive.log)
+    assert drive.regs == original
+
+
+def test_dirty_preflight_error_runs_verified_snapshot_restore(
+        tmp_path, monkeypatch):
+    drive = SimDrive()
+    original_um = drive.regs["UM"]
+
+    def dirty_preflight(ctx):
+        ctx.snapshot = {"UM": original_um}
+        at._write(ctx, "UM", 3)
+        raise at.PreflightError("synthetic late admission failure")
+
+    monkeypatch.setattr(at, "_pipeline", dirty_preflight)
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert drive.regs["UM"] == original_um
+    assert res.evidence["configuration_restore"]["pass"] is True
+    assert res.evidence["configuration_state"] == "RESTORED"
+
+
+def test_normal_completion_restore_mismatch_is_red_configuration_unknown(
+        tmp_path):
+    class SilentUMRestoreMismatchDrive(SimDrive):
+        def _write(self, name, value):
+            if (name == "UM" and int(value) == 5
+                    and self.regs.get("UM") == 3):
+                return ""
+            return super()._write(name, value)
+
+    drive = SilentUMRestoreMismatchDrive()
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert res.evidence["configuration_restore"]["pass"] is False
+    assert res.evidence["configuration_state"] == "UNKNOWN"
+    assert "UNKNOWN" in res.reason
+
+
+def test_p1_configuration_journal_precedes_first_write_and_resolves(tmp_path):
+    drive = ConfigurationJournalSimDrive()
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == GREEN, res.reason
+    prepare = next(event for event in drive.journal_events
+                   if event[0] == "prepare")
+    assert prepare[1]["phase"] == "P1_CONFIG"
+    assert tuple(prepare[1]["registers"]) == at.P1_CONFIG_NAMES
+    assert prepare[1]["initial_state"] == "RAM_APPLYING"
+    assert set(prepare[1]["mutation_bounds"]) == {
+        "KP[1]", "KI[1]", "SE[2]", "SE[3]", "TC"}
+    assert prepare[1]["mutation_bounds"]["SE[2]"][0] == 0.0
+    assert prepare[1]["mutation_bounds"]["TC"][1] == pytest.approx(
+        drive.regs["CL[1]"] * 0.5)
+    assert next(i for i, event in enumerate(drive.journal_events)
+                if event[0] == "prepare") < next(
+                    i for i, event in enumerate(drive.journal_events)
+                    if event[0] == "command" and "=" in event[1])
+    assert ("begin_rollback", drive.config_attempt_id) in drive.journal_events
+    assert ("resolve", drive.config_attempt_id) in drive.journal_events
+    assert not any(event[0] == "unknown" for event in drive.journal_events)
+    assert drive.capability_rejections == []
+    assert res.evidence["configuration_restore"]["pass"] is True
+    assert res.evidence["configuration_state"] == "RESTORED"
+    assert set(res.evidence["configuration_restore"]["journal"][
+        "verified_original_readback"]) == set(at.P1_CONFIG_NAMES)
+
+
+def test_p1_configuration_journal_prepare_failure_is_read_only(tmp_path):
+    drive = ConfigurationJournalSimDrive(fail_prepare=True)
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "journal" in res.reason.lower()
+    assert [command for command, _ in drive.log if "=" in command] == []
+    assert not any(command.replace(" ", "").upper() == "MO=1"
+                   for command, _ in drive.log)
+
+
+def test_p1_configuration_sub_ulp_original_is_read_only_red(tmp_path):
+    class FractionalOriginalDrive(ConfigurationJournalSimDrive):
+        def command(self, cmd, timeout_ms=1000, allow_motion=False,
+                    _persistence_attempt_id=None):
+            response = super().command(
+                cmd, timeout_ms=timeout_ms, allow_motion=allow_motion,
+                _persistence_attempt_id=_persistence_attempt_id)
+            core = "".join(str(cmd).split()).upper().rstrip(";")
+            if core == "KI[1]":
+                return "812.9390000000000001"
+            return response
+
+    drive = FractionalOriginalDrive()
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "snapshot is not exact" in res.reason
+    assert not any(event[0] == "prepare" for event in drive.journal_events)
+    assert [command for command, _ in drive.log if "=" in command] == []
+
+
+def test_production_like_link_without_configuration_journal_is_read_only_red(
+        tmp_path):
+    class ProductionLikeNoJournalDrive(SimDrive):
+        p1_config_durability_mode = None
+
+    drive = ProductionLikeNoJournalDrive()
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "journal API is required" in res.reason
+    assert [command for command, _ in drive.log if "=" in command] == []
+    assert not any(command.replace(" ", "").upper() == "MO=1"
+                   for command, _ in drive.log)
+
+
+def test_p1_configuration_journal_closeout_failure_is_unknown(tmp_path):
+    drive = ConfigurationJournalSimDrive(fail_resolve=True)
+
+    res = run_current_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert res.evidence["configuration_state"] == "UNKNOWN"
+    assert res.evidence["configuration_restore"]["pass"] is False
+    assert any(event[0] == "unknown" for event in drive.journal_events)
+    assert drive.config_unknown is True
+
+
+def test_cancel_after_p1_configuration_prepare_closes_verified_original(
+        tmp_path):
+    drive = ConfigurationJournalSimDrive()
+
+    def cancel_after_prepare():
+        return drive.config_attempt_active
+
+    res = run_current_autotune(
+        drive, _params(drive, tmp_path, cancel_fn=cancel_after_prepare))
+
+    assert res.status == RED
+    assert not any(command.replace(" ", "").upper() == "MO=1"
+                   for command, _ in drive.log)
+    assert ("resolve", drive.config_attempt_id) in drive.journal_events
+    assert not any(event[0] == "unknown" for event in drive.journal_events)
+    assert res.evidence["configuration_state"] == "RESTORED"
+    assert set(res.evidence["configuration_restore"]["readback"]) == \
+        set(at.P1_CONFIG_NAMES)
+
+
 # ======================================================================================
 # GUI hooks: progress_fn / cancel_fn (non-invasive contract)
 # ======================================================================================
@@ -1908,32 +2158,36 @@ def test_p1_gain_trial_restore_accepts_exact_full_readback_after_write_timeout()
     assert drive.regs["KI[1]"] == pytest.approx(700.0)
 
 
-def test_p1_gain_trial_commit_requires_full_match_and_single_sv():
+def test_p1_gain_trial_save_is_locked_until_e4_exists():
     drive = SimDrive(kp=0.06, ki=700.0)
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
     ok, msg, trial = at.begin_gain_trial_p1(drive, res)
     assert ok, msg
-    ok, msg = at.commit_gain_trial_p1(drive, trial)
-    assert ok, msg
-    assert sum(1 for c, _ in drive.log if c == "SV") == 1
-    assert getattr(trial, "persistence_state", None) == "PERSISTED"
-
     log_count = len(drive.log)
     ok, msg = at.commit_gain_trial_p1(drive, trial)
-    assert not ok and "PERSISTED" in msg
+    assert not ok and "on-motor" in msg.lower()
+    assert "SV not executed" in msg
     assert len(drive.log) == log_count
-    ok, msg = at.restore_gain_trial_p1(drive, trial)
-    assert not ok and "PERSISTED" in msg
-    assert len(drive.log) == log_count
+    assert getattr(trial, "persistence_state", None) == "RAM_TRIAL"
 
-    drive2 = SimDrive(kp=0.06, ki=700.0)
-    ok, msg, trial2 = at.begin_gain_trial_p1(drive2, res)
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
     assert ok, msg
-    drive2.regs["KI[1]"] = 900.0
-    ok, msg = at.commit_gain_trial_p1(drive2, trial2)
-    assert not ok and "KI[1]" in msg and "SV" in msg
-    assert "SV not executed" in msg and "UNKNOWN" not in msg
-    assert not any(c == "SV" for c, _ in drive2.log)
+    assert getattr(trial, "persistence_state", None) == "RESTORED"
+
+def test_p1_gain_trial_commit_requires_on_motor_verification_before_drive_io():
+    drive = SimDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+    assert ok, msg
+    drive.log.clear()
+
+    ok, msg = at.commit_gain_trial_p1(drive, trial)
+
+    assert not ok
+    assert "on-motor" in msg.lower() and "verification" in msg.lower()
+    assert "SV not executed" in msg
+    assert drive.log == []
+    assert trial.persistence_state == "RAM_TRIAL"
 
 
 def test_p1_gain_trial_commit_rejects_preexisting_latch_without_drive_command():
@@ -1951,7 +2205,7 @@ def test_p1_gain_trial_commit_rejects_preexisting_latch_without_drive_command():
     assert drive.log == []
 
 
-def test_p1_gain_trial_commit_rechecks_latch_after_readback_before_sv():
+def test_p1_gain_trial_verification_gate_precedes_final_readback():
     drive = PersistenceLatchSimDrive(kp=0.06, ki=700.0)
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
     ok, msg, trial = at.begin_gain_trial_p1(drive, res)
@@ -1962,12 +2216,13 @@ def test_p1_gain_trial_commit_rechecks_latch_after_readback_before_sv():
     ok, msg = at.commit_gain_trial_p1(drive, trial)
 
     commit_commands = [c for c, _ in drive.log[log_start:]]
-    assert not ok and "UNKNOWN" in msg and "SV not executed" in msg
+    assert not ok and "on-motor" in msg.lower() and "SV not executed" in msg
     assert trial.persistence_state == "RAM_TRIAL"
-    assert "SV" not in commit_commands
+    assert commit_commands == []
+    assert drive.persistence_unknown_latched() is False
 
 
-def test_p1_gain_trial_sv_timeout_reports_ambiguous_persistence():
+def test_p1_gain_trial_verification_gate_prevents_ambiguous_sv_path():
     drive = SvAppliedThenTimeoutDrive(kp=0.06, ki=700.0)
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.0712, ki_hz=812.9)
     ok, msg, trial = at.begin_gain_trial_p1(drive, res)
@@ -1975,22 +2230,49 @@ def test_p1_gain_trial_sv_timeout_reports_ambiguous_persistence():
 
     ok, msg = at.commit_gain_trial_p1(drive, trial)
 
-    assert not ok and drive.sv_applied
-    assert "UNKNOWN" in msg and "persistence" in msg.lower()
-    assert "after SV" in msg
-    assert "SV not executed" not in msg
-    assert sum(1 for c, _ in drive.log if c == "SV") == 1
-    assert getattr(trial, "persistence_state", None) == "UNKNOWN"
-    assert drive.persistence_unknown_latched() is True
-    assert drive.persistence_latch_calls == 1
+    assert not ok and not drive.sv_applied
+    assert "on-motor" in msg.lower() and "SV not executed" in msg
+    assert not any(c == "SV" for c, _ in drive.log)
+    assert getattr(trial, "persistence_state", None) == "RAM_TRIAL"
+    assert drive.persistence_unknown_latched() is False
+    assert drive.persistence_latch_calls == 0
 
-    log_count = len(drive.log)
-    ok, msg = at.commit_gain_trial_p1(drive, trial)
-    assert not ok and "UNKNOWN" in msg
-    assert len(drive.log) == log_count
     ok, msg = at.restore_gain_trial_p1(drive, trial)
-    assert not ok and "UNKNOWN" in msg
-    assert len(drive.log) == log_count
+    assert ok, msg
+
+
+def test_p1_gain_trial_production_link_is_locked_before_any_drive_io():
+    class ProductionLikeDrive(SimDrive):
+        p1_gain_trial_durability_mode = None
+
+    drive = ProductionLikeDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(
+        status=GREEN, kp_v_per_a=0.071234567, ki_hz=812.939123)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert not ok and trial is None
+    assert "durable" in msg.lower() and "locked" in msg.lower()
+    assert drive.log == []
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_legacy_p1_apply_is_production_locked_before_any_drive_io():
+    class ProductionLikeDrive(SimDrive):
+        p1_gain_trial_durability_mode = None
+
+    drive = ProductionLikeDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(
+        status=GREEN, kp_v_per_a=0.071234567, ki_hz=812.939123)
+
+    ok, msg = at.apply_gains(drive, res, persist=False)
+
+    assert not ok
+    assert "durable" in msg.lower() and "locked" in msg.lower()
+    assert drive.log == []
+    assert drive.regs["KP[1]"] == pytest.approx(0.06)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0)
 
 
 def test_p1_gain_trial_failed_apply_rolls_back_and_suppresses_sv():

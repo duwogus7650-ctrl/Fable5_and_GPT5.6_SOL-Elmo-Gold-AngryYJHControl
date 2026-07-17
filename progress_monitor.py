@@ -21,6 +21,10 @@ REQUIRED_MARKERS = (
 _MARKER_COMMENT = re.compile(
     r"<!--\s*([A-Za-z_][A-Za-z0-9_]*)\s*:\s*([^\r\n]*?)\s*-->"
 )
+_HTML_BREAK = re.compile(
+    r"<br\s*/?>[ \t]*(?:\r?\n)?",
+    re.IGNORECASE,
+)
 
 
 @dataclass(frozen=True)
@@ -76,6 +80,12 @@ def parse_status_markers(text: str) -> ParsedStatus:
     if errors:
         return ParsedStatus(False, None, visible, "; ".join(errors))
     return ParsedStatus(True, values, visible)
+
+
+def normalize_monitor_markdown(markdown: str) -> str:
+    """Replace raw HTML breaks that can swallow later text in Qt Markdown."""
+
+    return _HTML_BREAK.sub("  \n", markdown)
 
 
 def _source_fingerprint(stat_result) -> tuple[int, int, int, int]:
@@ -241,7 +251,8 @@ class ProgressMonitor(QtWidgets.QMainWindow):
             self.field_label.setText(
                 "CURRENT-REVISION FIELD VALIDATION · PROVISIONAL")
             self.field_bar.setFormat("%p% · EVIDENCE TO DATE")
-        self.document.setMarkdown(parsed.visible_markdown)
+        self.document.setMarkdown(
+            normalize_monitor_markdown(parsed.visible_markdown))
         updated = QtCore.QDateTime.fromSecsSinceEpoch(
             source.modified_seconds).toString("yyyy-MM-dd HH:mm:ss")
         self.updated.setText("STATUS SOURCE · tasks/status.md · " + updated)
@@ -274,15 +285,33 @@ def main() -> int:
     window.show()
     if "--smoke" in sys.argv:
         app.processEvents()
+        source = read_status_source(window.status_path)
+        parsed = parse_status_markers(source.text)
+        assert parsed.valid is True
+        assert parsed.values is not None
+        expected_values = tuple(
+            parsed.values[name] for name in REQUIRED_MARKERS)
         assert window.feed_valid is True
         assert window.state.text() == "STATUS FEED ACTIVE"
         assert (window.scope_bar.value(), window.offline_bar.value(),
-                window.field_bar.value()) == (100, 60, 0)
+                window.field_bar.value()) == expected_values
         assert window.scope_bar.format() == "%p% · SCOPE FROZEN"
         assert window.offline_bar.format() == "%p% · PROVISIONAL"
-        assert window.field_bar.format() == "NEED-DATA · LIVE NOT RUN"
-        assert "Quick Tuning" in window.document.toPlainText()
-        print("GREEN · scoped snapshot 100/60/0 · no hardware I/O")
+        if expected_values[2] == 0:
+            assert window.field_bar.format() == "NEED-DATA · LIVE NOT RUN"
+        else:
+            assert window.field_bar.format() == "%p% · EVIDENCE TO DATE"
+        rendered = window.document.toPlainText()
+        source_hangul = re.findall(r"[가-힣]", parsed.visible_markdown)
+        rendered_hangul = re.findall(r"[가-힣]", rendered)
+        assert source_hangul
+        assert len(rendered_hangul) == len(source_hangul)
+        assert "Quick Tuning" in rendered
+        print(
+            "GREEN · scoped snapshot "
+            + "/".join(str(value) for value in expected_values)
+            + " · Korean text preserved · no hardware I/O"
+        )
         window.close()
         return 0
     return app.exec()

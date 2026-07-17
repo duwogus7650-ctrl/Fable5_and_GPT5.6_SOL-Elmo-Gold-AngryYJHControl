@@ -11,7 +11,8 @@
 앱 상단에는 `File / Parameters / Tools / Views / Floating Tools`를 항상 표시한다. 이 메뉴는
 EAS 원본 메뉴 동등성을 주장하지 않으며, `operation_catalog.py`의 공통 위험 분류를 사용해
 페이지 이동과 앱 전용 Recorder JSON처럼 **로컬에서 끝나는 동작만 실행**한다. Quick Tuning은
-식별·설계 안내 화면, Expert Tuning은 RAM trial·Verify·Restore·SV 화면으로 분리한다. 원본 EAS
+식별·설계 안내 화면, Expert Tuning은 후보 검토와 installed-gain Verify를 보여준다. Production
+gain Apply/Save는 durable pre-assignment trial WAL 전까지 모든 mode에서 잠긴다. 원본 EAS
 파일 형식, 다축 모션, unrestricted Terminal, Fault/Status/Log처럼 실행 계약이 아직 없는 항목은
 메뉴에 `NEED-DATA`로 보이되 비활성 상태를 유지한다. Recorder 문맥 리본은 Recorder 페이지에서만
 보이고, 전역 `DRIVE STOP`과 상단 애플리케이션 메뉴는 모든 페이지에 고정 표시한다.

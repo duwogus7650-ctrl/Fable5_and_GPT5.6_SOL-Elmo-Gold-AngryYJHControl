@@ -124,6 +124,32 @@ def test_valid_status_has_exact_values_and_honest_labels(monitor):
     assert str(path.parent) in window.watcher.directories()
 
 
+def test_status_markdown_preserves_korean_after_consecutive_html_breaks(monitor):
+    window, path = monitor
+    path.write_text(
+        """\
+<!-- scope_progress: 100 -->
+<!-- offline_progress: 60 -->
+<!-- field_progress: 0 -->
+
+# Gold Twitter Quick Tuning + 제한형 단일축 모니터
+
+상세 인계: [`handoff.md`](handoff.md)<br>
+상태: **OFFLINE HARDENED CANDIDATE**<br>
+## 현재 기준점
+
+한글 상태 본문이 화면에서 사라지면 안 된다.
+""",
+        encoding="utf-8",
+    )
+
+    window.reload()
+
+    rendered = window.document.toPlainText()
+    assert "현재 기준점" in rendered
+    assert "한글 상태 본문이 화면에서 사라지면 안 된다." in rendered
+
+
 def test_positive_field_evidence_replaces_live_not_run_label(monitor):
     window, path = monitor
     path.write_text(

@@ -75,14 +75,17 @@ FF[1]_advisory = 1/K_a_meas       # 결과표기만, 쓰기금지(기본)
 **PM게이트**: 측정K_a·D로 L_v·L_p 수치평가(Phase1 loop_margins 재사용, H_ci=현 드라이브 KP[1]/KI[1]+R_pp/L_pp) → 속도PM≥50 & GM≥8dB & ω_cv·TS≤0.07 & 위치PM≥70 & ω_ci/ω_cv≥3 & ω_cv/KP[3]≥4. PM<50→ω_cv×0.8 재계산(최대3회, β·δ유지) 실패→RED.
 
 ## §4. 안전 절차·리밋 (기본리밋 신뢰금지)
-- 사전(MO=0): 스냅숏JSON(I1, `.omc/state/autotune_vp_snapshot_<ts>.json`) → VH[2] 3600rpm 유지 → **SD=4e6** → HL[2]=+1.97e6/LL[2]=−1.97e6(±1800rpm, 쓰기+리드백, 거부=warnings만) → ER[2]=3.3e5 → VH[3]/VL[3]=0유지(다회전 필요) → ER[3] 무관.
+- 사전(MO=0): 스냅숏JSON(I1, `.omc/state/autotune_vp_snapshot_<ts>.json`) → VH[2] 3600rpm 유지 → **SD=4e6**, HL[2]=+1.97e6, LL[2]=−1.97e6, ER[2]=3.3e5를 적용한다. 네 assignment 뒤에는 서로 독립된 **full-set exact readback**을 수행하며, 쓰기 거부·timeout·비유한 응답·한 register라도 불일치하면 `MO=1` 전에 RED로 중단한다. VH[3]/VL[3]=0 유지(다회전 필요), ER[3]은 무관하다.
+- `P2_LIMITS` WAL 원본과 되읽기는 원시 응답을 binary float로 바꾸기 전에 finite·integral·signed-32로
+  판정한다. sub-ULP 소수는 정수로 반올림해 승인하지 않으며 WAL/assignment/enable 전에 RED다.
 - **운전자 게이트(필수)**: "축 자유회전·부하분리·예상회전 N rev" 다이얼로그 후 MO=1(allow_motion). SO==1 폴(2s).
 - MO=1 전구간 가드(30ms): MF≠0 ∥ LC==1 ∥ |VX|>1.31e6 ∥ 세그먼트타임박스5s → abort. 전체120s.
 - **Abort 체인**:
-  - TC세그먼트: A1 TC=0 → A2 MO=0(코스트) → A3 리밋복원 → A4 RED. (ST 의존안함 U-P6.)
+  - TC세그먼트: A1 TC=0 → A2 MO=0(코스트) → A3 네 리밋 전체 원본 복원+full-set readback → A4 RED. 복원을 증명하지 못하면 `configuration_state=UNKNOWN`으로 잠근다. (ST 의존안함 U-P6.)
   - JV세그먼트: A1 JV=0;ST → A2 |VX|<cnt(30rpm)폴(2s,실패→즉시MO=0) → A3 MO=0 → A4 복원 → A5 RED.
-  - 게인은 F1전까지 안씀→복원불요. F1은 원게인 스냅숏 후 RAM 임시 적용만 수행하고 SV 금지.
-    F2 비GREEN/Abort는 원게인 전 항목 복원+되읽기. SV는 F2 GREEN 뒤 별도 F3 동의에서만 허용.
+  - 게인은 F1전까지 안씀→복원불요. Production F1/F3는 durable pre-assignment gain-trial WAL이
+    없어 첫 drive I/O 전에 잠긴다. 아래 F1/F2 trial 복원 계약은 exact synthetic 회귀 또는 retained
+    recovery 전용이며, 새 production trial이나 gain `SV` authority를 만들지 않는다.
     통신실패1s×2재시도(I5), NaN즉시abort.
 
 ## §5. GREEN 게이트
@@ -91,8 +94,10 @@ FF[1]_advisory = 1/K_a_meas       # 결과표기만, 쓰기금지(기본)
 - **G2 물리성**: K_a∈[3e5,3e8]·B≥0·I_c≥0·마찰비≤0.5·JV무부하전류≤0.10·CL[1]. RED(부호/범위)/YELLOW(마찰비→I0증액1회).
 - **G3 오라클**: K_a vs5.794e6 ±30%(A1)·KP[2] vs7.896e-5 ±30%·KI[2]=10.70±2%·KP[3]=85.2±2%(뒤둘 구성확인). 실패→YELLOW "FF[1]가정 반증 또는 관성변경".
 - **G4 안정도**: §3 PM게이트 6항. 실패(감축3회)→RED.
-- **G5 검증런(실기 F2)**: 새게인 JV스텝300rpm 오버슛≤15%·±5%정착≤60ms·잔진동없음·idx8추종. 실패→원게인복원+RED.
-GREEN=G0~G4(+F2시 G5). F2 미실시=정직스텁 표기(Phase1 E4 패턴).
+- **G5 installed-gain 검증런(실기 F2a)**: 현재 설치 게인의 JV스텝300rpm 오버슛≤15%·
+  ±5%정착≤60ms·잔진동없음·idx8추종을 판정한다. 실패는 RED verdict이며 gain 변경·복원이나
+  Apply/Save authority를 만들지 않는다. Synthetic/retained trial F2b만 별도 원게인 복원 계약을 가진다.
+GREEN=G0~G4(+F2a/F2b 시 G5). F2 미실시=정직스텁 표기(Phase1 E4 패턴).
 
 ## §6. 의사코드 (P0~F)
 **인프라 선행(fable-driver)**: `elmo_link.record()`를 `record_start(sig,len,tres)`+`record_fetch(timeout)`로 분리(기존 record=래퍼, 기존 테스트 불변). 이유: 기록중 TC/JV/VX 폴 필요(레코더 자율구동).
@@ -103,20 +108,26 @@ P1 read TS,UM,MF,SR,GS[0..2],KP[1..3],KI[1..2],CA[7,17,18,41..44],CL[1],PL[1],MC
 P2 G0 (GS[2]≠0→RED "게인스케줄링 활성")
 P3 snapshot JSON (I1)
 P4 resolve signals: Velocity(^velocity(?!.*command)) · Active Current · Position(^position(?!.*(command|error))) · Velocity Command. 실패→RED+덤프
-P5 리밋: SD=4e6; HL[2]=1.97e6; LL[2]=-1.97e6(쓰기+리드백,거부=warn); ER[2]=3.3e5
+P5 리밋: SD=4e6; HL[2]=1.97e6; LL[2]=-1.97e6; ER[2]=3.3e5를 모두 쓴 뒤 full-set exact readback. 거부/timeout/silent mismatch/cross-register mismatch는 enable 전 RED.
 B0 [운전자게이트] MO=1(allow_motion); poll SO==1(2s)
 B1 프로브: record_start(3sig,dt400µs,0.4s)→TC=+0.25(50ms)→TC=0→fetch → K_a_probe=v̇/Ī(부호게이트); v̇≈0→I×2 1회→RED "정지마찰과대"
 B2 Tp=clip(cnt(800rpm)/(K_a_probe·I0),0.05,0.3); 회전예상표시
 C1 런1: record_start(≥(2Tp+0.4)/400µs)→50ms→TC=+I0(Tp)→TC=−I0(Tp)→TC=0→fetch; VX/MF/LC 30ms가드
 C2 런2(−I0먼저); §2.2 창선정→K_a_diff·회귀(K_a,B,I_c)·위치2차·∫v검증
 D1 JV: JV=+327680→0.8s→record0.5s→Ī_ss; 반복{+983040,−327680,−983040}→JV=0;ST;|VX|<cnt(30)폴 → B·I_c확정+커뮤검증
-E1 MO=0; 리밋복원(SD,HL[2],LL[2],ER[2])
+E1 MO=0; 리밋복원(SD,HL[2],LL[2],ER[2]) 뒤 full-set 원본 readback. 불확실하면 RED+`UNKNOWN`이며 worker가 이후 mutation과 commutation authority를 잠근다.
 E2 §3 설계(KP[2],KI[2],KP[3],FF[1]_adv)+G1~G4→status·evidence 반환
-F1 [RAM 임시 적용] MO==0→원 KP[2]/KI[2]/KP[3] 스냅숏→새 3게인 쓰기+전항목 되읽기;
-   중간 실패=원게인 전항목 복원+되읽기, SV 금지  ※FF[1] 미변경
-F2 [사용자 검증런] B0재통과→JV스텝cnt(300/900rpm)기록→G5;
-   GREEN=RAM 시험값 유지·F3 활성, YELLOW/RED/Abort=원게인 자동복원+되읽기
-F3 [별도 영구저장] MO==0→현재 3게인이 F1 시험값과 전부 일치하는지 되읽기→일치할 때만 SV
+F1 [production RAM 임시 적용 · LOCKED] hardware-capable link는 persistence query·snapshot·assignment
+   전에 typed fail-closed한다. Synthetic-only 회귀 계약은 MO==0→원 KP[2]/KI[2]/KP[3] 스냅숏→
+   새 3게인 쓰기+전항목 되읽기; 중간 실패=원게인 전항목 복원+되읽기, SV 금지. ※FF[1] 미변경
+F2a [production "Verify Installed P2 on Motor"] B0와 current-generation commutation signature를
+   재통과하고 `P2_LIMITS` WAL 아래 JV 스텝 cnt(300/900rpm)를 기록해 G5를 판정한다. 이 GREEN은
+   현재 설치 게인의 verdict일 뿐 F1 trial이나 Apply/Save capability를 만들지 않는다.
+F2b [synthetic/retained trial 검증] GREEN이면 시험값을 process-local로 유지하고,
+   YELLOW/RED/Abort이면 원게인 전항목을 복원·되읽는다. Production Save authority는 없다.
+F3 [production 별도 영구저장 · LOCKED] 새 gain trial을 crash-safe하게 증명할 durable pre-assignment
+   WAL이 없으므로 UI/domain에서 잠긴다. Legacy/offline state-machine 회귀만 현재 3게인과 F1
+   시험값의 일치 및 기존 persistence engine을 검사한다.
 ```
 엣지: 세그먼트간 TC=0 선행후 JV. 기록길이한계→TimeResolution=8 폴백.
 
@@ -126,7 +137,7 @@ F3 [별도 영구저장] MO==0→현재 3게인이 F1 시험값과 전부 일치
 **T4 게이트**: EAS게인+K_a* → PM67.6°±1·GM15dB±0.5·위치PM81.1°±1.
 
 ## §8. 미확정 (실기 후 갱신)
-U-P1 FF[1]=1/K_a(A1, K_a실측±30%로 확증). U-P2 속도PI 영점=2πKI(F2스텝). U-P3 KP[3]단위(F2). U-P4 HL[2]/LL[2]쓰기(리드백,실패해도SW가드). U-P5 record dt(G1d 흡수). U-P6 UM=5 TC모드 ST거동(abort는 ST의존안함). U-P7 Velocity 내부필터(기울기무영향, F2최종판정).
+U-P1 FF[1]=1/K_a(A1, K_a실측±30%로 확증). U-P2 속도PI 영점=2πKI(F2스텝). U-P3 KP[3]단위(F2). U-P4 SD/HL[2]/LL[2]/ER[2] full-set apply/readback과 원본 복원을 fail-closed. U-P5 record dt(G1d 흡수). U-P6 UM=5 TC모드 ST거동(abort는 ST의존안함). U-P7 Velocity 내부필터(기울기무영향, F2최종판정).
 
 ## §9. 개정 (2026-07-13, fable-physics) — B1.5 UNIT-DIAG + 원안복원
 실기 1회차: k_a_probe≈46,000 = EAS암시 5.79e6의 1/125. **감속기(1:30 유성)는 EAS 튜닝 때도 장착 → EAS FF[1]·게인=loaded값 → K_a_true≈5.79e6 확정, 125배=우리 측정오차**(추가관성 아님). 오라클·설계규칙·§2.5 사이징 **원안 복원**(무거운관성 개정 철회).
