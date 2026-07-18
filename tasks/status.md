@@ -5,8 +5,8 @@
 
 # Gold Twitter · Quick + Single Axis + Expert v2 + Filter/Scheduling Evidence
 
-상태: **FILTER/SCHEDULING INSPECTOR OFFLINE VERIFIED · CONTROL APP OPEN · PUBLISH NEXT · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 18:22 KST**
+상태: **FILTER/SCHEDULING INSPECTOR OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 18:25 KST**
 
 ## 현재 기준
 
@@ -16,8 +16,11 @@
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
 - Expert v2 검증·게시 HEAD: `dfda7fef1a63ab05a26691c5b793a6bf62cb3cd2`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- 현재 작업 대상: Expert filter/scheduling 읽기 전용 evidence inspector의
-  private Draft PR 게시
+- Filter/Scheduling evidence inspector 검증·구현 HEAD:
+  `540877ea2b65866bb45aeaad4fc88cd836258e0a`
+  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
+- 현재 작업 대상: EAS 미연결 세부 화면과 operation catalog의
+  구현/잠금 상태 무구동 대조
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
   1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
   Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
@@ -151,7 +154,7 @@
 |---|---:|
 | Expert v2 로컬 구현·전체 회귀·독립 재검토·runtime smoke | **완료** |
 | Expert v2 private Draft PR 게시 | **완료 · `dfda7fe`** |
-| Filter/Scheduling 문서 topology inspector | **구현·집중/전체 회귀·독립 게이트·runtime smoke 완료 · 게시 진행 중** |
+| Filter/Scheduling 문서 topology inspector | **완료 · `540877e` · private Draft PR #2** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1.5–3시간** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
@@ -161,10 +164,9 @@
 
 ## 다음 자동 진행
 
-1. Filter/scheduling inspector 전체 suite·독립 검토·runtime smoke 완료
-2. 최신 제어창/모니터창을 OFFLINE으로 재실행하고 private Draft PR 갱신
-3. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
-4. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
+1. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
+2. 근거가 충분한 다음 LOCAL/READ-ONLY 기능의 최소 범위와 음성 대조를 확정
+3. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
 
 ## 현장 안전 규칙
 
