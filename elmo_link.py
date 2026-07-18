@@ -262,7 +262,7 @@ _NON_MO_MOTION_PREFIXES = tuple(
 _OBSERVE_ONLY_SCALAR_QUERIES = frozenset((
     # Connection identity and the exact telemetry/safety/axis-summary reads
     # used by the observe-only worker.  Unknown two-letter tokens fail closed.
-    "AC", "DC", "FS", "ID", "IQ", "MC", "MF", "MO", "MS", "PE",
+    "AC", "DC", "FS", "ID", "IP", "IQ", "MC", "MF", "MO", "MS", "PE",
     "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TS", "UM", "VB",
     "VP", "VR", "VX",
 ))
@@ -271,7 +271,7 @@ _OBSERVE_ONLY_INDEXED_QUERY_BASES = frozenset((
     # and identity-bound persistence audits.  An assignment still fails the
     # parser before this allowlist is considered.
     "AD", "AG", "AR", "AS", "BP", "CA", "CL", "DV", "ER", "FC",
-    "HL", "KI", "KP", "LL", "OV", "PL", "SC", "SE", "SF", "SN",
+    "HL", "IF", "IL", "KI", "KP", "LL", "OV", "PL", "SC", "SE", "SF", "SN",
     "TW", "VH", "VL", "WS", "XM", "XP",
 ))
 _OBSERVE_ONLY_INDEXED_QUERY = re.compile(r"^([A-Z]{2})\[(\d+)\]$")
@@ -336,6 +336,11 @@ def _is_observe_only_query(core: str) -> bool:
     if core in _OBSERVE_ONLY_SCALAR_QUERIES:
         return True
     match = _OBSERVE_ONLY_INDEXED_QUERY.fullmatch(core)
+    if match and match.group(1) in {"IF", "IL"}:
+        # The Single Axis v0.1 reader intentionally covers the six inputs
+        # shown by the target Gold Twitter activity.  It does not infer the
+        # optional 7..16/extended hardware topology from family-wide docs.
+        return 1 <= int(match.group(2)) <= 6
     return bool(
         match
         and match.group(1) in _OBSERVE_ONLY_INDEXED_QUERY_BASES)

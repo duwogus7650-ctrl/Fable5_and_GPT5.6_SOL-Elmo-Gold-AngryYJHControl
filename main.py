@@ -52,6 +52,7 @@ import expert_user_units
 import single_axis_motion
 import single_axis_status
 import single_axis_authority_evidence
+import single_axis_digital_inputs
 import recorder_control
 import recorder_view
 import operation_catalog
@@ -737,7 +738,8 @@ class DriveWorker(QtCore.QThread):
     SUPERVISED_ACCESS_MODE = SUPERVISED_ACCESS_MODE
     _QUIESCENT_ADMISSION_REGISTERS = ("MO", "SO", "VX", "PS", "MF")
     _OBSERVE_ONLY_JOB_ALLOWLIST = frozenset((
-        "axis_read", "persistence_audit", "motion_stop", "recorder_stop",
+        "axis_read", "axis_digital_inputs_read", "persistence_audit",
+        "motion_stop", "recorder_stop",
     ))
     _READ_ONLY_QUERY_ALLOWLIST = frozenset((
         "VR", "VP", "VB", "SN[4]", "PX", "VX", "PE", "IQ",
@@ -781,6 +783,7 @@ class DriveWorker(QtCore.QThread):
     encoder_maint_result = QtCore.pyqtSignal(bool, str)   # (ok, drive-response text)
     soft_zero_result = QtCore.pyqtSignal(bool, str, object)  # ok, message, telemetry
     axis_summary = QtCore.pyqtSignal(dict)                 # read-only Quick Axis snapshot
+    axis_digital_inputs = QtCore.pyqtSignal(object)        # bounded IP/IL/IF snapshot
     motion_result = QtCore.pyqtSignal(str, object)         # action, MotionResult
     motion_authority = QtCore.pyqtSignal(bool, str)        # session signature authority
     recorder_signals_result = QtCore.pyqtSignal(object, str)  # names, error
@@ -959,6 +962,10 @@ class DriveWorker(QtCore.QThread):
     def refresh_axis_summary(self):
         """Queue a read-only Quick Axis summary."""
         self._jobs.append(("axis_read", None))
+
+    def refresh_axis_digital_inputs(self):
+        """Queue one bounded IP/IL[1..6]/IF[1..6] read-only snapshot."""
+        self._jobs.append(("axis_digital_inputs_read", None))
 
     def run_position_move(self, request):
         """Queue one finite PTP move; the kernel always auto-disables."""
@@ -1596,6 +1603,10 @@ class DriveWorker(QtCore.QThread):
         summary["commutation_signature_green"] = bool(
             self._commutation_signature_green)
         self.axis_summary.emit(summary)
+
+    def _emit_axis_digital_inputs(self, link):
+        snapshot = single_axis_digital_inputs.read_digital_input_snapshot(link)
+        self.axis_digital_inputs.emit(snapshot)
 
     def _run_motion_stop(self, link, action="stop"):
         try:
@@ -2392,6 +2403,8 @@ class DriveWorker(QtCore.QThread):
                         self._publish_persistence_status(link)
                     elif kind == "axis_read":
                         self._emit_axis_summary(link)
+                    elif kind == "axis_digital_inputs_read":
+                        self._emit_axis_digital_inputs(link)
                     elif kind == "motion_stop":
                         self._run_motion_stop(link)
                     elif kind == "motion_move":
@@ -4086,6 +4099,7 @@ class MainWindow(QtWidgets.QMainWindow):
         locked.setProperty("role", "hint"); locked.setWordWrap(True); v.addWidget(locked)
 
         v.addWidget(self._build_single_axis_authority_frame())
+        v.addWidget(self._build_axis_digital_inputs_frame())
 
         self._motion_signature_green = False
         self._motion_signature_token = None
@@ -4270,6 +4284,195 @@ class MainWindow(QtWidgets.QMainWindow):
                 cell.setToolTip(value)
                 self.single_axis_authority_table.setItem(row, column, cell)
         self.single_axis_authority_table.resizeRowsToContents()
+
+    def _build_axis_digital_inputs_frame(self):
+        """Build the explicit, bounded IP/IL/IF read-only input panel."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.axis_digital_inputs_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel(
+            "DIGITAL INPUTS · READ-ONLY SNAPSHOT v0.1")
+        title.setProperty("role", "field")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.lbl_axis_digital_inputs_state = QtWidgets.QLabel("UNKNOWN")
+        self.lbl_axis_digital_inputs_state.setObjectName("pill")
+        self.lbl_axis_digital_inputs_state.setProperty("on", "false")
+        self.lbl_axis_digital_inputs_state.setProperty("status", "neutral")
+        head.addWidget(self.lbl_axis_digital_inputs_state)
+        layout.addLayout(head)
+
+        self.lbl_axis_digital_inputs_contract = QtWidgets.QLabel(
+            single_axis_digital_inputs.EVIDENCE_LABEL
+            + " · EXPLICIT REFRESH ONLY · IP READ ONLY · NO IB STICKY CLEAR · "
+              "NO MAPPING/FILTER CHANGE · NO OUTPUT READ · NO OUTPUT WRITE · "
+              "NO ENABLE/MOTION")
+        self.lbl_axis_digital_inputs_contract.setProperty("role", "hint")
+        self.lbl_axis_digital_inputs_contract.setWordWrap(True)
+        self.lbl_axis_digital_inputs_contract.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_digital_inputs_contract)
+
+        self.axis_digital_inputs_table = QtWidgets.QTableWidget(6, 5)
+        self.axis_digital_inputs_table.setObjectName("expertEvidenceTable")
+        self.axis_digital_inputs_table.setStyleSheet(
+            "QTableWidget { font-family: 'Segoe UI'; font-size: 11px; }")
+        self.axis_digital_inputs_table.setHorizontalHeaderLabels((
+            "INPUT",
+            "DRIVE LOGICAL STATE",
+            "IL FUNCTION",
+            "POLARITY / STICKY",
+            "IF FILTER",
+        ))
+        self.axis_digital_inputs_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.axis_digital_inputs_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.axis_digital_inputs_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.axis_digital_inputs_table.setAlternatingRowColors(True)
+        self.axis_digital_inputs_table.verticalHeader().setVisible(False)
+        header = self.axis_digital_inputs_table.horizontalHeader()
+        header.setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            4, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        self.axis_digital_inputs_table.setMinimumWidth(0)
+        self.axis_digital_inputs_table.setMinimumHeight(245)
+        for row in range(6):
+            input_cell = QtWidgets.QTableWidgetItem("Input %d" % (row + 1))
+            self.axis_digital_inputs_table.setItem(row, 0, input_cell)
+            for column in range(1, 5):
+                self.axis_digital_inputs_table.setItem(
+                    row, column, QtWidgets.QTableWidgetItem("—"))
+        layout.addWidget(self.axis_digital_inputs_table)
+
+        action = QtWidgets.QHBoxLayout()
+        self.btn_axis_digital_inputs_refresh = QtWidgets.QPushButton(
+            "Refresh Digital Inputs · READ ONLY")
+        self.btn_axis_digital_inputs_refresh.setEnabled(False)
+        self.btn_axis_digital_inputs_refresh.clicked.connect(
+            self._refresh_axis_digital_inputs_clicked)
+        self._decorate_operation_control(
+            self.btn_axis_digital_inputs_refresh,
+            "axis.digital_inputs.refresh")
+        action.addWidget(self.btn_axis_digital_inputs_refresh)
+        action.addStretch(1)
+        layout.addLayout(action)
+
+        self.lbl_axis_digital_inputs_detail = QtWidgets.QLabel(
+            "OFFLINE · no current identity-bound input snapshot")
+        self.lbl_axis_digital_inputs_detail.setProperty("role", "hint")
+        self.lbl_axis_digital_inputs_detail.setWordWrap(True)
+        self.lbl_axis_digital_inputs_detail.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_digital_inputs_detail)
+        self._reset_axis_digital_inputs(
+            "OFFLINE · no current identity-bound input snapshot")
+        return frame
+
+    def _reset_axis_digital_inputs(self, reason):
+        """Blank all input values without changing any drive authority."""
+        self._axis_digital_inputs_snapshot = None
+        if not hasattr(self, "lbl_axis_digital_inputs_state"):
+            return
+        self.lbl_axis_digital_inputs_state.setText("UNKNOWN")
+        self.lbl_axis_digital_inputs_state.setProperty("on", "false")
+        self.lbl_axis_digital_inputs_state.setProperty("status", "neutral")
+        self._restyle(self.lbl_axis_digital_inputs_state)
+        for row in range(6):
+            for column in range(1, 5):
+                self.axis_digital_inputs_table.item(row, column).setText("—")
+        self.lbl_axis_digital_inputs_detail.setText(
+            str(reason or "Digital-input snapshot unavailable"))
+
+    def _refresh_axis_digital_inputs_clicked(self):
+        """Request the bounded reader; never synthesize or retain old values."""
+        current = bool(
+            self.worker
+            and self.worker.isRunning()
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and not getattr(self, "_connection_shutdown_pending", False))
+        if not current:
+            self._reset_axis_digital_inputs(
+                "Current identity/telemetry authority is unavailable")
+            return
+        self._reset_axis_digital_inputs(
+            "Reading IP + IL[1..6] + IF[1..6] in the worker")
+        self.lbl_axis_digital_inputs_state.setText("READING")
+        self.worker.refresh_axis_digital_inputs()
+
+    def _on_axis_digital_inputs(self, snapshot):
+        """Render only a current-worker, identity-bound read-only snapshot."""
+        source = self.sender()
+        if source is not None and source is not self.worker:
+            return
+        canonical = None
+        if isinstance(
+                snapshot,
+                single_axis_digital_inputs.DigitalInputSnapshot):
+            canonical = single_axis_digital_inputs.decode_digital_input_snapshot(
+                snapshot.raw,
+                sample_duration_s=snapshot.sample_duration_s,
+            )
+        current_source = bool(
+            not getattr(self, "_connection_shutdown_pending", False)
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and self.worker
+            and self.worker.isRunning())
+        if (not current_source
+                or not isinstance(
+                    snapshot,
+                    single_axis_digital_inputs.DigitalInputSnapshot)
+                or snapshot.state != single_axis_digital_inputs.CURRENT
+                or canonical is None
+                or canonical.state != single_axis_digital_inputs.CURRENT
+                or snapshot != canonical):
+            reason = (
+                getattr(snapshot, "reason", "")
+                or "Noncanonical or non-current digital-input snapshot")
+            self._reset_axis_digital_inputs(reason)
+            return
+
+        snapshot = canonical
+        self._axis_digital_inputs_snapshot = snapshot
+        for row, input_state in enumerate(snapshot.inputs):
+            values = (
+                input_state.state_label,
+                input_state.function_label,
+                "%s · %s" % (
+                    input_state.polarity,
+                    "sticky" if input_state.sticky else "non-sticky"),
+                "%.3f ms" % input_state.filter_ms,
+            )
+            for column, value in enumerate(values, start=1):
+                cell = self.axis_digital_inputs_table.item(row, column)
+                cell.setText(value)
+                cell.setToolTip(value)
+        self.lbl_axis_digital_inputs_state.setText(
+            "CURRENT · DRIVE READ ONLY")
+        self.lbl_axis_digital_inputs_state.setProperty("on", "false")
+        self.lbl_axis_digital_inputs_state.setProperty("status", "neutral")
+        self._restyle(self.lbl_axis_digital_inputs_state)
+        self.lbl_axis_digital_inputs_detail.setText(
+            "Identity-bound explicit snapshot · acquisition %.1f ms · "
+            "IP read last · logical state only · no output/write/motion" %
+            (1000.0 * snapshot.sample_duration_s))
 
     def _motion_stop_clicked(self):
         """Always-available software STOP/disable escape path.
@@ -10599,6 +10802,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.encoder_maint_result.connect(self._on_encoder_maint_result)
         self.worker.soft_zero_result.connect(self._on_soft_zero_result)
         self.worker.axis_summary.connect(self._on_axis_summary)
+        self.worker.axis_digital_inputs.connect(self._on_axis_digital_inputs)
         self.worker.motion_result.connect(self._on_motion_result)
         self.worker.motion_authority.connect(self._on_motion_authority)
         self.worker.recorder_signals_result.connect(self._on_recorder_signals_result)
@@ -10871,6 +11075,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self, "_reset_axis_safety_snapshot", None)
         if callable(reset_snapshot):
             reset_snapshot(
+                str(detail or "Telemetry authority unavailable"))
+        reset_inputs = getattr(
+            self, "_reset_axis_digital_inputs", None)
+        if callable(reset_inputs):
+            reset_inputs(
                 str(detail or "Telemetry authority unavailable"))
         if hasattr(self, "status_monitor_model"):
             self._status_monitor_revoke(
@@ -11432,6 +11641,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._motion_session_zero_confirmed = False
             self._reset_axis_safety_snapshot(
                 "No current admitted connection snapshot")
+            self._reset_axis_digital_inputs(
+                "No current admitted connection snapshot")
             for name in (
                     "chk_motion_operator", "chk_motion_estop",
                     "chk_motion_limits"):
@@ -11502,6 +11713,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 mutation_trusted and not trial_active and not persistence_locked)
         if hasattr(self, "btn_axis_refresh"):
             self.btn_axis_refresh.setEnabled(on)
+        if hasattr(self, "btn_axis_digital_inputs_refresh"):
+            self.btn_axis_digital_inputs_refresh.setEnabled(
+                telemetry_trusted)
         if hasattr(self, "btn_motion_stop"):
             self.btn_motion_stop.setEnabled(on)
         if hasattr(self, "btn_global_stop"):

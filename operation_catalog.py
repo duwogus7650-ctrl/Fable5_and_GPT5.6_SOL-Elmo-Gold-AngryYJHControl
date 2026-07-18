@@ -252,6 +252,20 @@ _SPECS = (
           OperationRisk.LOCAL_UI,
           "Decode an existing MO/SO/MF/PS/SR/MS snapshot locally with no new "
           "drive query; this is not STO test evidence."),
+    _spec("axis.digital_inputs.refresh",
+          "Single Axis Digital Inputs · READ ONLY v0.1",
+          OperationRisk.DRIVE_READ,
+          "Explicitly read only IP, IL[1..6], and IF[1..6] for the current "
+          "identity-bound session; inputs 1..6 only, IP is read only, no IB "
+          "sticky clear, "
+          "no mapping/filter change, no output read or write, no enable, and "
+          "no motion.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "bounded_read_allowlist",
+              "explicit_refresh",
+              "inputs_1_to_6_only",
+          )),
+          status=OperationStatus.PARTIAL),
     _spec("eas.single_axis.authority.evidence.inspect",
           "Single Axis Controls - Documented Authority Map",
           OperationRisk.LOCAL_UI,

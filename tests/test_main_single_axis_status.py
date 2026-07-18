@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
 import os
 from types import SimpleNamespace
 
@@ -11,6 +12,7 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 import main as app_main
+import single_axis_digital_inputs
 import theme as amber_theme
 import theme_angrybirds
 import theme_qdd
@@ -18,6 +20,7 @@ import theme_qdd
 
 class _AxisWorker(QtCore.QObject):
     axis_summary = QtCore.pyqtSignal(dict)
+    axis_digital_inputs = QtCore.pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
@@ -26,6 +29,9 @@ class _AxisWorker(QtCore.QObject):
 
     def isRunning(self):
         return self.running
+
+    def refresh_axis_digital_inputs(self):
+        self.calls.append(("refresh_axis_digital_inputs", (), {}))
 
     def __getattr__(self, name):
         def forbidden(*args, **kwargs):
@@ -72,6 +78,7 @@ def ui(qapp, monkeypatch):
     win._telemetry_authoritative = True
     win._connection_shutdown_pending = False
     worker.axis_summary.connect(win._on_axis_summary)
+    worker.axis_digital_inputs.connect(win._on_axis_digital_inputs)
     yield SimpleNamespace(win=win, worker=worker)
     win.worker = None
     win.close()
@@ -87,6 +94,165 @@ def test_snapshot_card_starts_unknown_and_names_its_evidence_boundary(ui):
     assert all(
         widget.text() == "—"
         for widget in ui.win.axis_safety_fields.values())
+
+
+def _digital_input_snapshot(**updates):
+    raw = {"IP": (1 << 16) | (1 << 20)}
+    raw.update({"IL[%d]" % index: 7 for index in range(1, 7)})
+    raw.update({"IF[%d]" % index: 0.25 * index for index in range(1, 7)})
+    raw.update(updates)
+    return single_axis_digital_inputs.decode_digital_input_snapshot(
+        raw, sample_duration_s=0.125)
+
+
+def test_digital_input_panel_starts_unknown_and_exposes_no_write_surface(ui):
+    assert ui.win.lbl_axis_digital_inputs_state.text() == "UNKNOWN"
+    assert ui.win.axis_digital_inputs_table.rowCount() == 6
+    assert all(
+        ui.win.axis_digital_inputs_table.item(row, column).text() == "—"
+        for row in range(6)
+        for column in range(1, 5))
+    contract = ui.win.lbl_axis_digital_inputs_contract.text().upper()
+    for phrase in (
+            "IP + IL[1..6] + IF[1..6]",
+            "INPUTS 1..6 ONLY",
+            "NOT PHYSICAL PIN VOLTAGE",
+            "NOT STO/E-STOP EVIDENCE",
+            "NO OUTPUT WRITE"):
+        assert phrase in contract
+    assert ui.win.axis_digital_inputs_frame.findChildren(
+        QtWidgets.QCheckBox) == []
+    assert ui.win.axis_digital_inputs_frame.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert tuple(
+        button.text()
+        for button in ui.win.axis_digital_inputs_frame.findChildren(
+            QtWidgets.QPushButton)
+    ) == ("Refresh Digital Inputs · READ ONLY",)
+    assert ui.win.btn_axis_digital_inputs_refresh.property(
+        "operationId") == "axis.digital_inputs.refresh"
+
+
+def test_current_digital_input_snapshot_renders_without_changing_authority(
+        ui, qapp):
+    before = (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    )
+
+    ui.worker.axis_digital_inputs.emit(_digital_input_snapshot())
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_digital_inputs_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+    assert ui.win.axis_digital_inputs_table.item(0, 0).text() == "Input 1"
+    assert ui.win.axis_digital_inputs_table.item(0, 1).text() == (
+        "ACTIVE · DRIVE LOGICAL")
+    assert ui.win.axis_digital_inputs_table.item(1, 1).text() == (
+        "INACTIVE · DRIVE LOGICAL")
+    assert ui.win.axis_digital_inputs_table.item(4, 1).text() == (
+        "ACTIVE · DRIVE LOGICAL")
+    assert ui.win.axis_digital_inputs_table.item(0, 2).text() == (
+        "General purpose")
+    assert ui.win.axis_digital_inputs_table.item(0, 3).text() == (
+        "ACTIVE_HIGH · non-sticky")
+    assert ui.win.axis_digital_inputs_table.item(0, 4).text() == "0.250 ms"
+    assert "125.0 ms" in ui.win.lbl_axis_digital_inputs_detail.text()
+    assert (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    ) == before
+
+
+def test_digital_input_refresh_queues_one_typed_read_job(ui, qapp):
+    ui.win.btn_axis_digital_inputs_refresh.setEnabled(True)
+    ui.win.btn_axis_digital_inputs_refresh.click()
+    qapp.processEvents()
+
+    assert ui.worker.calls == [
+        ("refresh_axis_digital_inputs", (), {}),
+    ]
+    assert ui.win.lbl_axis_digital_inputs_state.text() == "READING"
+    assert all(
+        ui.win.axis_digital_inputs_table.item(row, column).text() == "—"
+        for row in range(6)
+        for column in range(1, 5))
+
+
+def test_invalid_late_or_disconnected_digital_input_snapshot_stays_unknown(
+        ui, qapp):
+    ui.worker.axis_digital_inputs.emit(_digital_input_snapshot())
+    qapp.processEvents()
+    assert ui.win.lbl_axis_digital_inputs_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+
+    ui.win._telemetry_authoritative = False
+    ui.worker.axis_digital_inputs.emit(_digital_input_snapshot())
+    qapp.processEvents()
+    assert ui.win.lbl_axis_digital_inputs_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = True
+    ui.worker.axis_digital_inputs.emit(_digital_input_snapshot())
+    qapp.processEvents()
+    ui.win._set_connected_ui(False)
+    assert ui.win.lbl_axis_digital_inputs_state.text() == "UNKNOWN"
+    assert all(
+        ui.win.axis_digital_inputs_table.item(row, column).text() == "—"
+        for row in range(6)
+        for column in range(1, 5))
+
+
+def test_structurally_forged_current_digital_input_snapshot_fails_closed(
+        ui, qapp):
+    valid = _digital_input_snapshot()
+    forged = replace(valid, inputs=valid.inputs[:-1])
+
+    ui.worker.axis_digital_inputs.emit(forged)
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_digital_inputs_state.text() == "UNKNOWN"
+    assert all(
+        ui.win.axis_digital_inputs_table.item(row, column).text() == "—"
+        for row in range(6)
+        for column in range(1, 5))
+
+
+def test_worker_queues_exact_digital_input_read_job():
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+
+    worker.refresh_axis_digital_inputs()
+
+    assert worker._jobs == app_main.collections.deque((
+        ("axis_digital_inputs_read", None),
+    ))
+
+
+def test_worker_emits_only_the_typed_digital_input_snapshot(monkeypatch):
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+    expected = _digital_input_snapshot()
+    calls = []
+    observed = []
+    monkeypatch.setattr(
+        app_main.single_axis_digital_inputs,
+        "read_digital_input_snapshot",
+        lambda link: calls.append(link) or expected)
+    worker.axis_digital_inputs.connect(observed.append)
+    link = object()
+
+    worker._emit_axis_digital_inputs(link)
+
+    assert calls == [link]
+    assert observed == [expected]
 
 
 def test_single_axis_authority_map_is_static_zero_io_and_isolated(
@@ -255,6 +421,15 @@ def test_single_axis_authority_map_fits_1366x820_in_all_skins(ui, qapp):
                 table_palette.color(QtGui.QPalette.ColorRole.Text),
                 table_palette.color(QtGui.QPalette.ColorRole.Base),
             ) >= 4.5
+            inputs_palette = (
+                ui.win.axis_digital_inputs_table.viewport().palette())
+            assert contrast_ratio(
+                inputs_palette.color(QtGui.QPalette.ColorRole.Text),
+                inputs_palette.color(QtGui.QPalette.ColorRole.Base),
+            ) >= 4.5
+            assert (
+                ui.win.axis_digital_inputs_table.horizontalScrollBar().maximum()
+                == 0)
     finally:
         qapp.setPalette(previous_palette)
         qapp.setStyleSheet(previous_style_sheet)

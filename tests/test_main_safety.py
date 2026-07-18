@@ -290,7 +290,8 @@ def test_query_only_worker_job_guard_rejects_every_non_observer_job(kind):
 
 
 @pytest.mark.parametrize("kind", [
-    "axis_read", "persistence_audit", "motion_stop", "recorder_stop",
+    "axis_read", "axis_digital_inputs_read", "persistence_audit",
+    "motion_stop", "recorder_stop",
 ])
 def test_query_only_worker_job_guard_keeps_observer_and_shutdown_jobs(kind):
     worker = DriveWorker("COM_TEST", query_only=True)

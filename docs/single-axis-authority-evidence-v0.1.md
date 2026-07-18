@@ -134,8 +134,10 @@ Homing/Stepper, Terminal command, Recorder config/acquisition, Apply/SV는
 
 ## 후속 구현 순서
 
-1. identity-bound live status와 per-field freshness/validity
-2. device별 Digital I/O count/function/polarity/filter와 output safe-state
+1. `PARTIAL IMPLEMENTED`: identity-bound Digital Input 1–6 explicit snapshot
+   (`IL[1..6]`, `IF[1..6]`, final `IP`)과 fail-closed freshness/validity
+2. current target/EAS에서 Input readback을 검증한 뒤 device별 I/O count를
+   재발견하고, Digital Output은 별도 safe-state/부하/rollback 계약으로 유지
 3. UM별 exact command/unit mapping과 disabled-before-change transaction
 4. site motion envelope, limit input, stop distance와 independent STO/E-stop
 5. bounded Current/Sine/Homing/Stepper watchdog·abort·rollback

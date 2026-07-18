@@ -6,6 +6,7 @@ import time
 
 from elmo_link import ElmoLink, TelemetrySnapshotError
 import persistence_audit
+import single_axis_digital_inputs
 import single_axis_motion
 
 
@@ -133,12 +134,43 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
     link.read_tuning_gains()
     link.read_platform_clock()
     summary = single_axis_motion.read_axis_summary(link)
+    inputs = single_axis_digital_inputs.read_digital_input_snapshot(link)
     for registers in persistence_audit.PHASE_REGISTERS.values():
         for register in registers:
             link.command(register)
 
     assert summary["errors"] == {}
+    assert inputs.state == single_axis_digital_inputs.CURRENT
     assert spy.commands
+
+
+def test_observe_only_transport_admits_only_bounded_digital_input_queries(
+        monkeypatch):
+    link = ElmoLink("COM_TEST")
+    spy = _CommandSpy({
+        "IP": 0,
+        **{"IL[%d]" % index: 7 for index in range(1, 7)},
+        **{"IF[%d]" % index: 0 for index in range(1, 7)},
+    })
+    link._comm = spy
+    link.enter_observe_only_session()
+
+    assert link.command("IP") == "0"
+    for index in range(1, 7):
+        assert link.command("IL[%d]" % index) == "7"
+        assert link.command("IF[%d]" % index) == "0"
+
+    for command in (
+            "IP=1", "IL[1]=7", "IF[1]=0", "IB[17]=1",
+            "IL[0]", "IL[17]", "IF[0]", "IF[17]"):
+        with pytest.raises(PermissionError, match="observe-only"):
+            link.command(command)
+
+    assert spy.commands == [
+        "IP",
+        *(item for index in range(1, 7)
+          for item in ("IL[%d]" % index, "IF[%d]" % index)),
+    ]
 
 
 @pytest.mark.parametrize("action", [

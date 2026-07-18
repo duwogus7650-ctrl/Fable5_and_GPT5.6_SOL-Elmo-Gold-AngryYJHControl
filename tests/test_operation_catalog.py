@@ -427,6 +427,25 @@ def test_every_mutating_operation_declares_fail_closed_gates():
             assert "durable_authority" in spec.gates, spec.operation_id
 
 
+def test_single_axis_digital_input_refresh_is_bounded_read_only():
+    spec = catalog.operation_spec("axis.digital_inputs.refresh")
+
+    assert spec.risk is catalog.OperationRisk.DRIVE_READ
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.menu_enabled is False
+    assert spec.gates == frozenset((
+        "verified_identity",
+        "fresh_telemetry",
+        "bounded_read_allowlist",
+        "explicit_refresh",
+        "inputs_1_to_6_only",
+    ))
+    assert "IP" in spec.summary
+    assert "IL[1..6]" in spec.summary
+    assert "IF[1..6]" in spec.summary
+    assert "no output" in spec.summary.lower()
+
+
 def test_top_menu_can_only_execute_local_actions_or_show_disabled_need_data():
     for operation_ids in catalog.TOP_MENU_OPERATIONS.values():
         for operation_id in operation_ids:
