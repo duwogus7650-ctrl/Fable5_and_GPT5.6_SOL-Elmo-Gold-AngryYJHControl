@@ -89,6 +89,177 @@ def test_snapshot_card_starts_unknown_and_names_its_evidence_boundary(ui):
         for widget in ui.win.axis_safety_fields.values())
 
 
+def test_single_axis_authority_map_is_static_zero_io_and_isolated(
+        ui, qapp, monkeypatch):
+    calls_before = tuple(ui.worker.calls)
+    authority_before = (
+        ui.win.worker,
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        ui.win.btn_motion_stop.isEnabled(),
+    )
+
+    expected_labels = {
+        "status_and_io": (
+            "Motion Status",
+            "Digital Inputs",
+            "Digital Outputs",
+            "Safety / STO Status",
+        ),
+        "mode_and_reference": (
+            "Drive Mode (UM)",
+            "Position / Velocity",
+            "Current Reference",
+            "Sine / Homing / Stepper",
+        ),
+        "activation_and_tools": (
+            "Enable / Disable",
+            "Stop Controls",
+            "Terminal / Command Reference",
+            "Recorder",
+        ),
+    }
+    assert tuple(
+        ui.win.single_axis_authority_section.itemData(index)
+        for index in range(ui.win.single_axis_authority_section.count())
+    ) == tuple(expected_labels)
+    for index, section_key in enumerate(expected_labels):
+        ui.win.single_axis_authority_section.setCurrentIndex(index)
+        qapp.processEvents()
+        assert ui.win.single_axis_authority_table.rowCount() == 4
+        assert tuple(
+            ui.win.single_axis_authority_table.item(row, 0).text()
+            for row in range(4)
+        ) == expected_labels[section_key]
+
+    assert ui.win.single_axis_authority_section.isEditable() is False
+    assert ui.win.single_axis_authority_frame.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert ui.win.single_axis_authority_frame.findChildren(
+        QtWidgets.QPushButton) == []
+    assert ui.win.single_axis_authority_frame.findChildren(
+        QtWidgets.QCheckBox) == []
+    assert ui.win.single_axis_authority_frame.findChildren(
+        QtWidgets.QSlider) == []
+    assert tuple(
+        ui.win.single_axis_authority_table.horizontalHeaderItem(column).text()
+        for column in range(4)
+    ) == (
+        "EAS AREA / CONTROL",
+        "DOCUMENTED ROLE",
+        "RISK / ACCESS",
+        "STATUS / BOUNDARY",
+    )
+    assert all(
+        "app: inspect-only" in
+        ui.win.single_axis_authority_table.item(row, 2).text()
+        for row in range(ui.win.single_axis_authority_table.rowCount()))
+    rendered = " ".join((
+        ui.win.single_axis_authority_banner.text(),
+        ui.win.single_axis_authority_status.text(),
+        ui.win.single_axis_authority_warnings.text(),
+        ui.win.single_axis_authority_missing.text(),
+        *(
+            ui.win.single_axis_authority_table.item(row, column).text()
+            for row in range(ui.win.single_axis_authority_table.rowCount())
+            for column in range(
+                ui.win.single_axis_authority_table.columnCount())
+        ),
+    )).upper()
+    for phrase in (
+            "DOCUMENTED SINGLE AXIS AUTHORITY MAP",
+            "NOT CURRENT EAS SINGLE AXIS STATE",
+            "NOT CURRENT DRIVE STATE",
+            "NOT STO TEST EVIDENCE",
+            "NO DRIVE READ",
+            "NO DIGITAL OUTPUT WRITE",
+            "NO MODE CHANGE",
+            "NO ENABLE/DISABLE",
+            "NO PTP/JOG/CURRENT/SINE/HOMING/STEPPER",
+            "NO TERMINAL/COMMAND SEND",
+            "NO RECORDER CONFIG/ACQUISITION",
+            "NO ENERGIZATION/MOTION",
+            "NO DRIVE I/O"):
+        assert phrase in rendered
+    for forbidden in (
+            "CURRENT DRIVE SAFE",
+            "CURRENT STO TEST PASSED",
+            "READY TO ENABLE",
+            "READY TO MOVE",
+            "EAS PARITY COMPLETE",
+            "APP: R/W"):
+        assert forbidden not in rendered
+
+    assert tuple(ui.worker.calls) == calls_before
+    assert (
+        ui.win.worker,
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        ui.win.btn_motion_stop.isEnabled(),
+    ) == authority_before
+
+
+def test_single_axis_authority_map_fits_1366x820_in_all_skins(ui, qapp):
+    def contrast_ratio(first, second):
+        def relative_luminance(color):
+            channels = []
+            for value in (color.redF(), color.greenF(), color.blueF()):
+                channels.append(
+                    value / 12.92
+                    if value <= 0.04045
+                    else ((value + 0.055) / 1.055) ** 2.4)
+            return (
+                0.2126 * channels[0]
+                + 0.7152 * channels[1]
+                + 0.0722 * channels[2]
+            )
+
+        high, low = sorted((
+            relative_luminance(first),
+            relative_luminance(second),
+        ), reverse=True)
+        return (high + 0.05) / (low + 0.05)
+
+    previous_style_sheet = qapp.styleSheet()
+    previous_palette = QtGui.QPalette(qapp.palette())
+    ui.win.resize(1366, 820)
+    ui.win.show()
+    ui.win._nav_to(0)
+    try:
+        for themed in (theme_qdd, amber_theme, theme_angrybirds):
+            qapp.setStyleSheet(themed.STYLE)
+            ui.win.resize(1366, 820)
+            for _ in range(3):
+                qapp.processEvents()
+
+            assert ui.win.minimumSizeHint().width() <= 1366
+            assert ui.win.workspace_scroll.horizontalScrollBar().maximum() == 0
+            assert ui.win.single_axis_authority_banner.height() >= (
+                ui.win.single_axis_authority_banner.sizeHint().height())
+            assert ui.win.single_axis_authority_status.height() >= (
+                ui.win.single_axis_authority_status.sizeHint().height())
+            assert ui.win.single_axis_authority_table.columnWidth(0) >= 190
+            assert ui.win.single_axis_authority_table.columnWidth(1) >= 300
+            assert ui.win.single_axis_authority_table.columnWidth(2) >= 220
+            table_palette = (
+                ui.win.single_axis_authority_table.viewport().palette())
+            assert contrast_ratio(
+                table_palette.color(QtGui.QPalette.ColorRole.Text),
+                table_palette.color(QtGui.QPalette.ColorRole.Base),
+            ) >= 4.5
+    finally:
+        qapp.setPalette(previous_palette)
+        qapp.setStyleSheet(previous_style_sheet)
+
+
 def test_axis_summary_scroll_uses_theme_background_instead_of_platform_white(
         ui):
     expected = QtGui.QColor(app_main.theme.CARD)

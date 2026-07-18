@@ -343,6 +343,34 @@ def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     assert "not STO test evidence" in spec.summary
 
 
+def test_single_axis_authority_map_is_local_partial_and_zero_io():
+    spec = catalog.operation_spec(
+        "eas.single_axis.authority.evidence.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "document",
+            "no drive read",
+            "no digital output write",
+            "no mode change",
+            "no enable",
+            "no ptp",
+            "jog",
+            "current",
+            "sine",
+            "homing",
+            "stepper",
+            "no terminal",
+            "no recorder",
+            "no energization",
+            "no motion"):
+        assert phrase in summary
+
+
 def test_unmapped_single_axis_eas_controls_remain_separate_need_data_gaps():
     for operation_id in (
             "eas.single_axis.digital_io",

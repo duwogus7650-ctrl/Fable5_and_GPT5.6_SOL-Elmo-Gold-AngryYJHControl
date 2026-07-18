@@ -252,6 +252,15 @@ _SPECS = (
           OperationRisk.LOCAL_UI,
           "Decode an existing MO/SO/MF/PS/SR/MS snapshot locally with no new "
           "drive query; this is not STO test evidence."),
+    _spec("eas.single_axis.authority.evidence.inspect",
+          "Single Axis Controls - Documented Authority Map",
+          OperationRisk.LOCAL_UI,
+          "Inspect an immutable Single Axis document map locally with no "
+          "drive read, no digital output write, no mode change, no enable, "
+          "no PTP or jog, no current/sine/homing/stepper command, no terminal "
+          "command send, no recorder configuration/acquisition, no "
+          "energization, and no motion.",
+          status=OperationStatus.PARTIAL),
     _spec("nav.recorder", "Recorder", OperationRisk.LOCAL_UI,
           "Open Recorder configuration and View Design.", menu_enabled=True),
     _spec("nav.session_log", "Status / Session Log · HOST OBSERVED v0.1",

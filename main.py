@@ -51,6 +51,7 @@ import expert_page_status
 import expert_user_units
 import single_axis_motion
 import single_axis_status
+import single_axis_authority_evidence
 import recorder_control
 import recorder_view
 import operation_catalog
@@ -4084,6 +4085,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "These need drive-level limit/watchdog and field evidence; software STOP is not STO.")
         locked.setProperty("role", "hint"); locked.setWordWrap(True); v.addWidget(locked)
 
+        v.addWidget(self._build_single_axis_authority_frame())
+
         self._motion_signature_green = False
         self._motion_signature_token = None
         self._motion_signature_generation = None
@@ -4094,6 +4097,179 @@ class MainWindow(QtWidgets.QMainWindow):
         self._axis_summary_data = {}
         v.addStretch(1)
         return f
+
+    def _build_single_axis_authority_frame(self):
+        """Build a local-only map of documented EAS Single Axis controls."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.single_axis_authority_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        self._single_axis_authority = (
+            single_axis_authority_evidence.build_evidence_snapshot())
+        title = QtWidgets.QLabel(
+            "SINGLE AXIS CONTROLS - DOCUMENTED AUTHORITY MAP")
+        title.setProperty("role", "field")
+        layout.addWidget(title)
+
+        self.single_axis_authority_banner = QtWidgets.QLabel(
+            self._single_axis_authority.boundary)
+        self.single_axis_authority_banner.setProperty("role", "hint")
+        self.single_axis_authority_banner.setWordWrap(True)
+        self.single_axis_authority_banner.setMinimumWidth(0)
+        self.single_axis_authority_banner.setMinimumHeight(82)
+        self.single_axis_authority_banner.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        layout.addWidget(self.single_axis_authority_banner)
+        self.single_axis_authority_status = QtWidgets.QLabel()
+        self.single_axis_authority_status.setProperty("role", "field")
+        self.single_axis_authority_status.setWordWrap(True)
+        self.single_axis_authority_status.setMinimumWidth(0)
+        self.single_axis_authority_status.setMinimumHeight(100)
+        self.single_axis_authority_status.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        layout.addWidget(self.single_axis_authority_status)
+
+        selector_layout = QtWidgets.QHBoxLayout()
+        selector_label = QtWidgets.QLabel("Documented Single Axis section")
+        selector_label.setProperty("role", "field")
+        self.single_axis_authority_section = QtWidgets.QComboBox()
+        self.single_axis_authority_section.setEditable(False)
+        self.single_axis_authority_section.setSizeAdjustPolicy(
+            QtWidgets.QComboBox.SizeAdjustPolicy
+            .AdjustToMinimumContentsLengthWithIcon)
+        self.single_axis_authority_section.setMinimumContentsLength(20)
+        self.single_axis_authority_section.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Fixed)
+        for section in self._single_axis_authority.sections:
+            self.single_axis_authority_section.addItem(
+                "%s - %s" % (section.label, section.reference),
+                section.key)
+        selector_layout.addWidget(selector_label)
+        selector_layout.addWidget(self.single_axis_authority_section, 1)
+        layout.addLayout(selector_layout)
+
+        self.single_axis_authority_table = QtWidgets.QTableWidget(0, 4)
+        self.single_axis_authority_table.setObjectName(
+            "expertEvidenceTable")
+        self.single_axis_authority_table.setStyleSheet(
+            "QTableWidget#expertEvidenceTable { font-size: 12px; } "
+            "QTableWidget#expertEvidenceTable QHeaderView::section "
+            "{ font-size: 12px; }")
+        self.single_axis_authority_table.setHorizontalHeaderLabels((
+            "EAS AREA / CONTROL",
+            "DOCUMENTED ROLE",
+            "RISK / ACCESS",
+            "STATUS / BOUNDARY",
+        ))
+        for column, tooltip in enumerate((
+                "Documented EAS area/control; not an executable control.",
+                "Installed-manual role only; not current state or a result.",
+                "Physical/software risk plus inspect-only application access.",
+                "Evidence status plus missing execution preconditions.",
+        )):
+            self.single_axis_authority_table.horizontalHeaderItem(
+                column).setToolTip(tooltip)
+        self.single_axis_authority_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.single_axis_authority_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.single_axis_authority_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.single_axis_authority_table.setWordWrap(True)
+        self.single_axis_authority_table.setAlternatingRowColors(True)
+        self.single_axis_authority_table.setMinimumWidth(0)
+        self.single_axis_authority_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.single_axis_authority_table.verticalHeader().setVisible(False)
+        header = self.single_axis_authority_table.horizontalHeader()
+        for column in (0, 1, 2):
+            header.setSectionResizeMode(
+                column, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        header.setSectionResizeMode(
+            3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.single_axis_authority_table.setColumnWidth(0, 190)
+        self.single_axis_authority_table.setColumnWidth(1, 300)
+        self.single_axis_authority_table.setColumnWidth(2, 220)
+        self.single_axis_authority_table.setMinimumHeight(230)
+        layout.addWidget(self.single_axis_authority_table, 1)
+
+        self.single_axis_authority_warnings = QtWidgets.QLabel(
+            "PERSISTENT WARNINGS - " + " | ".join(
+                self._single_axis_authority.persistent_warnings))
+        self.single_axis_authority_missing = QtWidgets.QLabel(
+            "MISSING EVIDENCE / NEED-DATA - " + " | ".join(
+                self._single_axis_authority.missing_evidence))
+        for detail in (
+                self.single_axis_authority_warnings,
+                self.single_axis_authority_missing):
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            layout.addWidget(detail)
+
+        sources = {
+            source.key: source.sha256
+            for source in self._single_axis_authority.sources
+        }
+        self.single_axis_authority_sources = QtWidgets.QLabel(
+            "SOURCES - %d frozen identities\n"
+            "EAS Drive Setup SHA-256 %s\n"
+            "Single Axis overview SHA-256 %s\n"
+            "Single Axis areas SHA-256 %s" % (
+                len(sources),
+                sources["drive_setup_html"],
+                sources["single_axis_overview_image"],
+                sources["single_axis_areas_image"]))
+        self.single_axis_authority_sources.setProperty("role", "hint")
+        self.single_axis_authority_sources.setWordWrap(True)
+        self.single_axis_authority_sources.setMinimumWidth(0)
+        self.single_axis_authority_sources.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        layout.addWidget(self.single_axis_authority_sources)
+
+        self.single_axis_authority_section.currentIndexChanged.connect(
+            self._refresh_single_axis_authority_panel)
+        self._refresh_single_axis_authority_panel()
+        return frame
+
+    def _refresh_single_axis_authority_panel(self, *_args):
+        """Render one immutable Single Axis documentation section."""
+        if not hasattr(self, "_single_axis_authority"):
+            return
+        section = single_axis_authority_evidence.section_evidence(
+            self.single_axis_authority_section.currentData())
+        self.single_axis_authority_status.setText(
+            "AUTHORITY %s - EVIDENCE STATUS %s - %s - "
+            "%d documented groups - NOT CURRENT / NOT EXECUTED - "
+            "controls unavailable / not executable" % (
+                self._single_axis_authority.authority,
+                self._single_axis_authority.model_status,
+                section.reference,
+                len(section.items)))
+        self.single_axis_authority_table.setRowCount(len(section.items))
+        for row, item in enumerate(section.items):
+            values = (
+                item.label,
+                "%s - %s" % (item.control, item.documented_effect),
+                "%s - %s" % (item.risk_class, item.access),
+                "%s - %s" % (item.evidence_status, item.condition),
+            )
+            for column, value in enumerate(values):
+                cell = QtWidgets.QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.single_axis_authority_table.setItem(row, column, cell)
+        self.single_axis_authority_table.resizeRowsToContents()
 
     def _motion_stop_clicked(self):
         """Always-available software STOP/disable escape path.
