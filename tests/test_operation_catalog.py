@@ -68,6 +68,22 @@ def test_expert_page_status_inspection_is_local_partial_and_not_eas_apply():
     assert "not installed" in spec.summary.lower()
 
 
+def test_expert_user_units_documented_formula_preview_is_local_partial():
+    spec = catalog.operation_spec("tuning.expert.user_units.preview")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    assert "documented formula" in summary
+    assert "documented grouping mismatch" in summary
+    assert "purpose need-data" in summary
+    assert "not current drive config" in summary
+    assert "no drive" in summary
+    assert "no fc/of write" in summary
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 

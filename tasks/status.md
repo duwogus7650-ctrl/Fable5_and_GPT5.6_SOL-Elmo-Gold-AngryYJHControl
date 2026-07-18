@@ -1,12 +1,12 @@
-<!-- scope_progress: 92 -->
-<!-- offline_progress: 88 -->
+<!-- scope_progress: 93 -->
+<!-- offline_progress: 90 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units
 
-상태: **PAGE STATUS INSPECTOR OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 19:02 KST**
+상태: **USER UNITS DOCUMENTED PREVIEW OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 20:06 KST**
 
 ## 현재 기준
 
@@ -22,8 +22,10 @@
 - Expert Local Page Status / Errors v0.1 검증·구현 HEAD:
   `a20e19a0d28bc66b91572ad93d4cd2da4f032672`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- 현재 작업 대상: EAS 미연결 세부 화면과 operation catalog의
-  구현/잠금 상태 무구동 대조
+- Expert User Units · Documented Formula Preview v0.1:
+  **working tree 검증 완료 · private 게시 전**
+- 현재 작업 대상: 검증된 User Units 변경을 private Draft PR #2에 게시한 뒤
+  다음 EAS 미연결 LOCAL/READ-ONLY 세부 화면의 최소 계약 확정
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
   1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
   Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
@@ -32,6 +34,11 @@
   Evidence `DOCUMENTED PARTIAL · 5 unresolved document conflicts`를 관찰.
   `NOT EAS ENTER/APPLY STATE · NOT INSTALLED · NO DRIVE I/O`와
   Apply/Save `LOCKED`가 동시에 유지됨
+- User Units runtime smoke: 다섯 번째 `USER UNITS` 단계에서 blank 수동 입력,
+  `DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA`, `NO FC/OF WRITE · NO DRIVE I/O`를
+  관찰. NetHelp 예제는 정확히 `1/100 = 0.01 µm/count`, `100 count = 1 µm`였고,
+  `FC[7]` 편집 뒤 `STALE · previous documented preview retained as historical only`로
+  강등되는 것을 확인한 뒤 기준값으로 복원·재계산
 - Expert runtime smoke: P1은 `fc=430.129 Hz · PM=55.69 deg`, P2는
   `K_a=5.794e6 cnt/s²/A_peak · B=1e-7 A_peak/(cnt/s)`에서
   `MODEL GATE PASS · D=0.5794 1/s · bandwidth=457.500 rad/s`.
@@ -46,9 +53,15 @@
 ## 검증 상태
 
 - `OBSERVED` 최신 전체 오프라인 suite:
-  **1448 passed, 0 failed in 277.69s**
-- `OBSERVED` Expert P1/P2·filter/scheduling evidence·Page Status·UI·catalog 집중 회귀:
-  **112 passed, 0 failed in 74.68s**
+  **1498 passed, 0 failed in 275.50s**
+- `OBSERVED` Expert P1/P2·filter/scheduling evidence·Page Status·User Units·UI·catalog
+  집중 회귀: **162 passed, 0 failed in 59.11s**
+- `OBSERVED` User Units 모델·UI·catalog·authority 집중 회귀:
+  **51 passed, 0 failed in 10.09s**
+- `OBSERVED` User Units 독립 검토 3회 결과:
+  로컬 `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` 범위에서
+  **잔여 HIGH/MEDIUM/LOW 없음**. 현재 drive config, EAS 수치 parity,
+  operational suitability와 field safety는 계속 `NO-GO / NEED-DATA`
 - `OBSERVED` Page Status 순수 projection 직접 회귀: **10 passed**
 - `OBSERVED` 독립 리뷰에서 P2 stale가 변조 candidate를 가리는 경로,
   forged evidence가 `DOCUMENTED PARTIAL`로 보이는 경로, P2 MISSING 직접 대조 누락,
@@ -157,14 +170,25 @@
   - `LOCAL STATUS ONLY · NOT EAS ENTER/APPLY STATE · NOT INSTALLED ·
     NO CALCULATION · NO WRITE · NO DRIVE I/O`
   - EAS icon/Enter/Apply/Revert/last-page/Summary recommendation은 `NEED-DATA`
+- **Expert User Units · Documented Formula Preview v0.1**
+  - Expert 다섯 번째 단계에서 명시적 `FC[1], FC[2], FC[5], FC[6], FC[7], FC[8]`
+    정수 입력만 받아 NetHelp 위치 식을 exact `Fraction`으로 계산
+  - MAN-G-CR의 두 `2^63` product guard는 문서 그대로 별도 적용하고,
+    식과 guard의 index 묶음 차이는 `DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA`
+    로 항상 표시
+  - blank/no-auto-fill, current/stale/invalid historical retention과
+    `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` authority를 고정
+  - `NOT CURRENT DRIVE CONFIG · NO FC/OF WRITE · NO APPLY/SV · NO DRIVE I/O`
+  - Motion/Recorder/Status 단위 전파, drive readback, EAS parity와 안전 적합성은 비범위
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
   - 현재 worker의 `stopped` 뒤에만 `OFFLINE`과 연결 선택기 복구
 - **EAS 미연결 UI inventory**
   - Quick 6단계 명칭/순서가 현재 guided flow와 일치
-  - Expert의 User Units·limits/protection·I/O·settling·scheduling·time verification,
-    EAS page icon/Enter/Apply와 Summary recommendation은 잔여
+  - Expert User Units는 documented 위치 식 preview만 부분 구현
+  - limits/protection·I/O·settling·time verification, User Units의 drive readback/write와
+    EAS page icon/Enter/Apply·Summary recommendation은 잔여
   - Single Axis의 STO drive-reported snapshot은 부분 구현
   - Digital I/O·mode별 수동 구동·Terminal·docked Recorder parity는 잔여 `NEED-DATA`
 - **Elmo 자료 인벤토리**
@@ -180,18 +204,21 @@
 | Expert v2 private Draft PR 게시 | **완료 · `dfda7fe`** |
 | Filter/Scheduling 문서 topology inspector | **완료 · `540877e` · private Draft PR #2** |
 | Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
-| EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1.5–3시간** |
+| Expert User Units · Documented Formula Preview v0.1 | **검증 완료 · private 게시 전** |
+| EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1–2.5시간** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-문서 topology inspector 게시 뒤 확정된 무구동 잔여는 EAS 세부 화면 비교
-**1.5–3시간**이다. Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
+User Units 게시 뒤 남은 무구동 매핑·비교는 **1–2.5시간**이다.
+이는 근거가 있는 LOCAL/READ-ONLY 계약을 고르는 시간이며 모든 EAS 페이지 구현 ETA가 아니다.
+Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
 
-1. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
-2. 근거가 충분한 다음 LOCAL/READ-ONLY 기능의 최소 범위와 음성 대조를 확정
-3. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
+1. User Units 변경을 사용자 파일 제외 상태로 private origin/Draft PR #2에 게시
+2. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
+3. 근거가 충분한 다음 LOCAL/READ-ONLY 기능의 최소 범위와 음성 대조를 확정
+4. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
 
 ## 현장 안전 규칙
 

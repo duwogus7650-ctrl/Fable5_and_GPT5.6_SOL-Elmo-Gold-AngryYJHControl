@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units 작업 인계서
 
-상태: **PAGE STATUS INSPECTOR OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-18 19:02 KST**<br>
+상태: **USER UNITS DOCUMENTED PREVIEW OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-18 20:06 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -17,6 +17,8 @@
   `540877ea2b65866bb45aeaad4fc88cd836258e0a`
 - Expert Local Page Status / Errors v0.1 검증·구현 HEAD:
   `a20e19a0d28bc66b91572ad93d4cd2da4f032672`
+- Expert User Units · Documented Formula Preview v0.1:
+  **working tree 검증 완료 · private 게시 전**
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -44,6 +46,12 @@
   P1 `MISSING`, P2 `BLOCKED`, Evidence `DOCUMENTED PARTIAL · 5 unresolved
   document conflicts`를 관찰했다. `NOT EAS ENTER/APPLY STATE · NOT INSTALLED ·
   NO DRIVE I/O`와 Apply/Save `LOCKED`가 동시에 유지됐다.
+- User Units preview를 포함한 최신 source를 다시 실행해 다섯 번째
+  `USER UNITS` 단계의 blank 수동 입력, documented formula와 별도 literal guards,
+  `DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA`를 관찰했다. NetHelp 예제는
+  exact `1/100 = 0.01 µm/count`, sample `100 count = 1 µm`였고, `FC[7]` 편집 뒤
+  이전 결과가 historical only인 `STALE`로 강등됐다. 기준값 복원·재계산 뒤
+  `DOCUMENTED LOCAL PREVIEW`로 돌아왔다.
 - 이 admission에서는 motor enable, commutation, tuning, PTP 또는 setting write를
   실행했다는 증거가 없으며, 그런 동작을 검증한 것으로 간주하지 않는다.
 - progress monitor는 `tasks/status.md`를 읽어 갱신 중이다.
@@ -132,6 +140,22 @@
 - EAS idle/changed/warning/error icon parity, Enter/Apply/Revert, saved-last-page,
   Summary recommendation과 installed-drive 판정은 구현하지 않음
 - 상세 계약: [`expert-page-status-v0.1.md`](expert-page-status-v0.1.md)
+
+### 2.6 Expert User Units · Documented Formula Preview v0.1
+
+- 다섯 번째 Expert 단계에서 explicit manual
+  `FC[1], FC[2], FC[5], FC[6], FC[7], FC[8]`만 입력
+- NetHelp 위치 식
+  `(FC[2]×FC[6]×FC[7])/(FC[1]×FC[5]×FC[8])`을 exact `Fraction`으로 계산
+- MAN-G-CR의 `FC[1]×FC[6]×FC[8] < 2^63`,
+  `FC[2]×FC[5]×FC[7] < 2^63` 제한은 식의 분자·분모로 재명명하지 않고 별도 적용
+- 두 문서 grouping의 목적은 `NEED-DATA`; mismatch를 숨기거나 임의 정규화하지 않음
+- authority는 `DOCUMENTED_FORMULA_PREVIEW`, 판정은 `PARTIAL / SCREENING`
+- blank/no-auto-fill, stale/invalid historical retention, strict integer/range와
+  drive/worker/file/process/network I/O 차단을 검증
+- current drive FC readback, FC/OF write, Apply/Revert/SV, Motion/Recorder/Status 단위
+  전파, EAS parity와 operational suitability는 구현하지 않음
+- 상세 계약: [`expert-user-units-v0.1.md`](expert-user-units-v0.1.md)
 
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
@@ -238,8 +262,11 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1448 passed, 0 failed in 277.69s** | Expert v2, filter/scheduling evidence와 Page Status inspector를 포함한 최신 working tree의 Python/mock/offscreen 경로 |
-| Expert P1/P2·Evidence·Page Status·UI·catalog 집중 회귀 | **112 passed, 0 failed in 74.68s** | immutable local models/evidence, exact binding/coherence, strict inputs, 문서 충돌 5건, zero-I/O·authority isolation, hidden-page dirty refresh, 세 스킨 1366×820 |
+| 전체 repository suite | **1498 passed, 0 failed in 275.50s** | Expert v2, filter/scheduling evidence, Page Status와 User Units preview를 포함한 최신 working tree의 Python/mock/offscreen 경로 |
+| Expert P1/P2·Evidence·Page Status·User Units·UI·catalog 집중 회귀 | **162 passed, 0 failed in 59.11s** | immutable local models/evidence, exact binding/coherence, strict inputs, 문서 충돌·grouping mismatch, zero-I/O·authority isolation, hidden-page dirty refresh, 세 스킨 1366×820 |
+| User Units 모델·UI·catalog 집중 회귀 | **51 passed, 0 failed in 10.09s** | exact fraction/reciprocal/sample, strict FC/guard boundaries, blank/no-auto-fill, stale/invalid recovery, worker/link/dispatch/file/process/network poison |
+| User Units 독립 검토 | **잔여 HIGH/MEDIUM/LOW 없음** | `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` 로컬 범위만 GO; drive config/EAS parity/operational suitability/field safety는 NO-GO·NEED-DATA |
+| User Units 최신 runtime smoke | **1/100 = 0.01 µm/count · 100 count = 1 µm · edit→STALE→restore PASS** | Python 3.14, 1366×820, OFFLINE/READ ONLY; explicit manual input, grouping mismatch, NO FC/OF WRITE/NO DRIVE I/O와 Apply/Save LOCKED 확인 |
 | Page Status pure projection | **10 passed** | missing/blocked/current/stale/invalid, forged evidence, mutated P2, I/O poison |
 | Page Status 독립 리뷰 | RED 5건 수정 뒤 **잔여 HIGH/MEDIUM/LOW 없음** | coherence-before-stale, canonical evidence, P2 MISSING, hidden-page one-shot refresh |
 | Page Status 최신 runtime smoke | **P1 MISSING · P2 BLOCKED · Evidence DOCUMENTED PARTIAL** | Python 3.14, 1366×820, OFFLINE/READ ONLY; LOCAL STATUS ONLY, NOT EAS ENTER/APPLY, NOT INSTALLED, Apply/Save LOCKED |

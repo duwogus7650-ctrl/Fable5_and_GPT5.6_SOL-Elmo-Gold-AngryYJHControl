@@ -105,7 +105,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-036 | Expert Axis Configurations | [ ] | [x] G8 §8.2.3 | [x] RAM/SV | [~] read model | [~] | [ ] | [ ] | [~] | |
 | A-037 | Expert Motor Settings 전체 | [ ] | [x] G8 §8.2.4.1 | [x] RAM/SV | [x] 제한 profile | [~] | [ ] | [x] | [x] | |
 | A-038 | Expert Feedback Settings/Advanced 전체 | [~] 영상 | [x] G8 §8.2.4.2~3 | [x] RAM/SV | [x] preview | [~] EnDat | [ ] | [ ] | [x] | |
-| A-039 | Drive/Display User Units | [ ] | [x] G8 §8.2.5 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
+| A-039 | Drive/Display User Units | [~] Display page | [x] G8 §8.2.5 | [x] LOCAL/RAM/SV | [~] DS-402 position formula only | [ ] | [ ] | [ ] | [x] | `PARTIAL/SCREENING`; explicit FC1/2/5/6/7/8, grouping mismatch purpose NEED-DATA; no read/write/Apply/SV/unit propagation |
 | A-040 | Current Limits | [ ] | [x] G8 §8.2.6.1 | [x] RAM/SV | [~] motor profile 일부 | [~] | [ ] | [~] | [~] | |
 | A-041 | Motion Limits and Modulo | [ ] | [x] G8 §8.2.6.2 | [x] RAM/SV | [~] PTP envelope model | [ ] | [ ] | [ ] | [~] | |
 | A-042 | Protections | [ ] | [x] G8 §8.2.6.3 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |

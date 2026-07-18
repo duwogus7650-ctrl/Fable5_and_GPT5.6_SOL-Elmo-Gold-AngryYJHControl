@@ -43,6 +43,7 @@ import autotune_velpos
 import expert_tuning_offline
 import expert_filter_scheduling_evidence
 import expert_page_status
+import expert_user_units
 import single_axis_motion
 import single_axis_status
 import recorder_control
@@ -7145,25 +7146,30 @@ class MainWindow(QtWidgets.QMainWindow):
         self._expert_model_note = self.expert_lab_note.text()
         lab_layout.addWidget(self.expert_lab_note)
 
-        expert_step_row = QtWidgets.QHBoxLayout()
-        expert_step_row.setSpacing(8)
+        expert_step_grid = QtWidgets.QGridLayout()
+        expert_step_grid.setHorizontalSpacing(8)
+        expert_step_grid.setVerticalSpacing(6)
         self.btn_expert_step_current = QtWidgets.QPushButton(
-            "1 · CURRENT P1 MODEL")
+            "1 · CURRENT P1")
         self.btn_expert_step_vp = QtWidgets.QPushButton(
-            "2 · VELOCITY / POSITION P2 MODEL")
+            "2 · VEL / POS P2")
         self.btn_expert_step_evidence = QtWidgets.QPushButton(
-            "3 · FILTER / SCHED EVIDENCE")
+            "3 · FILTER / SCHED")
         self.btn_expert_step_status = QtWidgets.QPushButton(
             "4 · STATUS / ERRORS")
+        self.btn_expert_step_user_units = QtWidgets.QPushButton(
+            "5 · USER UNITS")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
         self.btn_expert_step_evidence.setCheckable(True)
         self.btn_expert_step_status.setCheckable(True)
+        self.btn_expert_step_user_units.setCheckable(True)
         for button in (
                 self.btn_expert_step_current,
                 self.btn_expert_step_vp,
                 self.btn_expert_step_evidence,
-                self.btn_expert_step_status):
+                self.btn_expert_step_status,
+                self.btn_expert_step_user_units):
             button.setMinimumWidth(0)
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Ignored,
@@ -7174,6 +7180,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_step_group.addButton(self.btn_expert_step_vp)
         self.expert_lab_step_group.addButton(self.btn_expert_step_evidence)
         self.expert_lab_step_group.addButton(self.btn_expert_step_status)
+        self.expert_lab_step_group.addButton(
+            self.btn_expert_step_user_units)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
@@ -7182,11 +7190,21 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self._set_expert_lab_step("evidence"))
         self.btn_expert_step_status.clicked.connect(
             lambda: self._set_expert_lab_step("status"))
-        expert_step_row.addWidget(self.btn_expert_step_current)
-        expert_step_row.addWidget(self.btn_expert_step_vp)
-        expert_step_row.addWidget(self.btn_expert_step_evidence)
-        expert_step_row.addWidget(self.btn_expert_step_status)
-        lab_layout.addLayout(expert_step_row)
+        self.btn_expert_step_user_units.clicked.connect(
+            lambda: self._set_expert_lab_step("user_units"))
+        expert_step_grid.addWidget(
+            self.btn_expert_step_current, 0, 0, 1, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_vp, 0, 2, 1, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_evidence, 0, 4, 1, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_status, 1, 0, 1, 3)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_user_units, 1, 3, 1, 3)
+        for column in range(6):
+            expert_step_grid.setColumnStretch(column, 1)
+        lab_layout.addLayout(expert_step_grid)
 
         self.expert_lab_stack = QtWidgets.QStackedWidget()
         self.expert_lab_stack.setMinimumWidth(0)
@@ -7455,6 +7473,123 @@ class MainWindow(QtWidgets.QMainWindow):
         page_status_layout.addStretch(1)
         self.expert_lab_stack.addWidget(self.expert_page_status_page)
 
+        self.expert_user_units_page = QtWidgets.QWidget()
+        user_units_layout = QtWidgets.QVBoxLayout(
+            self.expert_user_units_page)
+        user_units_layout.setContentsMargins(0, 0, 0, 0)
+        user_units_layout.setSpacing(7)
+        self.expert_user_units_banner = QtWidgets.QLabel(
+            expert_user_units.BOUNDARY)
+        self.expert_user_units_banner.setProperty("role", "hint")
+        self.expert_user_units_banner.setWordWrap(True)
+        user_units_layout.addWidget(self.expert_user_units_banner)
+        self.expert_user_units_grouping_notice = QtWidgets.QLabel(
+            "DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA · "
+            "NetHelp formula and MAN-G-CR limit guards are shown separately; "
+            "neither is silently rewritten.")
+        self.expert_user_units_grouping_notice.setProperty("role", "hint")
+        self.expert_user_units_grouping_notice.setWordWrap(True)
+        user_units_layout.addWidget(
+            self.expert_user_units_grouping_notice)
+        self.expert_user_units_formula = QtWidgets.QLabel(
+            "NetHelp position formula · user unit/count = "
+            "(FC[2] × FC[6] × FC[7]) / "
+            "(FC[1] × FC[5] × FC[8])")
+        self.expert_user_units_formula.setProperty("role", "field")
+        self.expert_user_units_formula.setWordWrap(True)
+        user_units_layout.addWidget(self.expert_user_units_formula)
+
+        user_units_form = QtWidgets.QGridLayout()
+        user_units_form.setHorizontalSpacing(10)
+        user_units_form.setVerticalSpacing(6)
+        self.expert_user_units_fc_fields = {}
+        fc_rows = (
+            ("fc1", "FC[1] · encoder counts"),
+            ("fc2", "FC[2] · motor-shaft revs"),
+            ("fc5", "FC[5] · motor-shaft revs"),
+            ("fc6", "FC[6] · driving-shaft revs"),
+            ("fc7", "FC[7] · feed [user units]"),
+            ("fc8", "FC[8] · driving-shaft revs"),
+        )
+        for index, (key, label) in enumerate(fc_rows):
+            row = index // 2
+            column = (index % 2) * 2
+            name = QtWidgets.QLabel(label)
+            name.setProperty("role", "field")
+            field = QtWidgets.QLineEdit()
+            field.setPlaceholderText("explicit integer · 1..2³¹−1")
+            user_units_form.addWidget(name, row, column)
+            user_units_form.addWidget(field, row, column + 1)
+            self.expert_user_units_fc_fields[key] = field
+        unit_label_name = QtWidgets.QLabel("Unit label · display only")
+        unit_label_name.setProperty("role", "field")
+        self.expert_user_units_unit_label = QtWidgets.QLineEdit()
+        self.expert_user_units_unit_label.setPlaceholderText(
+            "optional · e.g. µm")
+        sample_name = QtWidgets.QLabel("Sample encoder counts")
+        sample_name.setProperty("role", "field")
+        self.expert_user_units_sample_counts = QtWidgets.QLineEdit()
+        self.expert_user_units_sample_counts.setPlaceholderText(
+            "optional signed integer")
+        user_units_form.addWidget(unit_label_name, 3, 0)
+        user_units_form.addWidget(
+            self.expert_user_units_unit_label, 3, 1)
+        user_units_form.addWidget(sample_name, 3, 2)
+        user_units_form.addWidget(
+            self.expert_user_units_sample_counts, 3, 3)
+        self.btn_expert_user_units_preview = QtWidgets.QPushButton(
+            "Preview Documented Position Formula · LOCAL ONLY")
+        self.btn_expert_user_units_preview.clicked.connect(
+            self._calculate_expert_user_units_preview)
+        self._decorate_operation_control(
+            self.btn_expert_user_units_preview,
+            "tuning.expert.user_units.preview")
+        user_units_form.addWidget(
+            self.btn_expert_user_units_preview, 4, 0, 1, 4)
+        user_units_form.setColumnStretch(1, 1)
+        user_units_form.setColumnStretch(3, 1)
+        user_units_layout.addLayout(user_units_form)
+
+        self.expert_user_units_status = QtWidgets.QLabel(
+            "PARTIAL / SCREENING · waiting for explicit manual inputs · "
+            "DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA")
+        self.expert_user_units_status.setProperty("role", "hint")
+        self.expert_user_units_status.setWordWrap(True)
+        user_units_layout.addWidget(self.expert_user_units_status)
+        user_units_results = QtWidgets.QGridLayout()
+        user_units_results.setHorizontalSpacing(10)
+        user_units_results.setVerticalSpacing(6)
+        self.expert_user_units_result_fields = {}
+        for row, (key, label) in enumerate((
+                ("units_per_count", "Position user units / encoder count"),
+                ("counts_per_unit", "Encoder counts / position user unit"),
+                ("sample_units", "Optional sample conversion"))):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("role", "field")
+            value = QtWidgets.QLineEdit("—")
+            value.setReadOnly(True)
+            user_units_results.addWidget(name, row, 0)
+            user_units_results.addWidget(value, row, 1)
+            self.expert_user_units_result_fields[key] = value
+        user_units_results.setColumnStretch(1, 1)
+        user_units_layout.addLayout(user_units_results)
+        self.expert_user_units_limits = QtWidgets.QLabel(
+            "MAN-G-CR literal guards · FC[1]×FC[6]×FC[8] < 2⁶³ · "
+            "FC[2]×FC[5]×FC[7] < 2⁶³ · these are not relabeled as the "
+            "NetHelp formula numerator/denominator.")
+        self.expert_user_units_limits.setProperty("role", "hint")
+        self.expert_user_units_limits.setWordWrap(True)
+        user_units_layout.addWidget(self.expert_user_units_limits)
+        self.expert_user_units_source = QtWidgets.QLabel(
+            "SOURCES · NetHelp HTML SHA-256 %s · formula image SHA-256 %s · "
+            "MAN-G-CR SHA-256 %s" % tuple(
+                source.sha256 for source in expert_user_units.SOURCES))
+        self.expert_user_units_source.setProperty("role", "hint")
+        self.expert_user_units_source.setWordWrap(True)
+        user_units_layout.addWidget(self.expert_user_units_source)
+        user_units_layout.addStretch(1)
+        self.expert_lab_stack.addWidget(self.expert_user_units_page)
+
         self.expert_filter_type.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_filter_location.currentIndexChanged.connect(
@@ -7475,6 +7610,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._expert_vp_error = None
         self._expert_page_status_snapshot = None
         self._expert_page_status_dirty = True
+        self._expert_user_units_preview = None
+        self._expert_user_units_inputs_stale = True
+        self._expert_user_units_error = None
         for field in (
                 self.expert_lab_r_ohm,
                 self.expert_lab_l_uh,
@@ -7486,6 +7624,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._mark_expert_current_input_stale)
         for field in (self.expert_vp_ka, self.expert_vp_b_visc):
             field.textEdited.connect(self._mark_expert_vp_input_stale)
+        for field in tuple(self.expert_user_units_fc_fields.values()) + (
+                self.expert_user_units_unit_label,
+                self.expert_user_units_sample_counts):
+            field.textEdited.connect(
+                self._mark_expert_user_units_input_stale)
         self._refresh_expert_page_status()
         self._set_expert_lab_step("current")
 
@@ -7671,7 +7814,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_expert_lab_step(self, step):
         """Select one zero-I/O Expert model page without changing authority."""
-        if step not in ("current", "vp", "evidence", "status"):
+        if step not in (
+                "current", "vp", "evidence", "status", "user_units"):
             raise ValueError("unknown Expert Lab step %r" % step)
         if step == "evidence":
             self.expert_lab_title.setText(
@@ -7689,6 +7833,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 "Classifies existing in-memory P1/P2/evidence state only: "
                 "no calculation, installed-drive claim, EAS Enter/Apply "
                 "state, worker, command, file, or drive I/O.")
+        elif step == "user_units":
+            self.expert_lab_title.setText(
+                "EXPERT USER UNITS v0.1 · DOCUMENTED FORMULA · "
+                "PARTIAL / SCREENING · NO DRIVE I/O")
+            self.expert_lab_note.setText(
+                "Uses explicit manual FC inputs only. The NetHelp formula "
+                "and MAN-G-CR literal guards are displayed separately "
+                "because their index groupings differ and the purpose "
+                "remains NEED-DATA. No current-drive readback, automatic "
+                "fill, FC/OF command, Apply, SV, or unit propagation.")
         else:
             self.expert_lab_title.setText(self._expert_model_title)
             self.expert_lab_note.setText(self._expert_model_note)
@@ -7698,8 +7852,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_step_vp.setChecked(vp)
         self.btn_expert_step_evidence.setChecked(step == "evidence")
         self.btn_expert_step_status.setChecked(step == "status")
+        self.btn_expert_step_user_units.setChecked(step == "user_units")
         self.expert_lab_stack.setCurrentIndex(
-            {"current": 0, "vp": 1, "evidence": 2, "status": 3}[step])
+            {
+                "current": 0,
+                "vp": 1,
+                "evidence": 2,
+                "status": 3,
+                "user_units": 4,
+            }[step])
         if step == "status":
             self._refresh_expert_page_status()
 
@@ -7824,6 +7985,108 @@ class MainWindow(QtWidgets.QMainWindow):
                     page.state.replace("_", " "),
                     page.detail,
                 ))
+
+    @staticmethod
+    def _format_expert_user_units_fraction(value):
+        if value.denominator == 1:
+            return str(value.numerator)
+        return "%d / %d" % (value.numerator, value.denominator)
+
+    def _calculate_expert_user_units_preview(self):
+        """Evaluate one documented formula without reading or writing a drive."""
+        def parse_integer(field, label, *, optional=False):
+            text = field.text().strip()
+            if not text:
+                if optional:
+                    return None
+                raise ValueError("%s is required" % label)
+            if re.fullmatch(r"[+-]?\d+", text) is None:
+                raise ValueError("%s must be an explicit integer" % label)
+            return int(text, 10)
+
+        try:
+            preview = expert_user_units.build_position_scale_preview(
+                fc1=parse_integer(
+                    self.expert_user_units_fc_fields["fc1"], "FC[1]"),
+                fc2=parse_integer(
+                    self.expert_user_units_fc_fields["fc2"], "FC[2]"),
+                fc5=parse_integer(
+                    self.expert_user_units_fc_fields["fc5"], "FC[5]"),
+                fc6=parse_integer(
+                    self.expert_user_units_fc_fields["fc6"], "FC[6]"),
+                fc7=parse_integer(
+                    self.expert_user_units_fc_fields["fc7"], "FC[7]"),
+                fc8=parse_integer(
+                    self.expert_user_units_fc_fields["fc8"], "FC[8]"),
+                unit_label=self.expert_user_units_unit_label.text(),
+                sample_counts=parse_integer(
+                    self.expert_user_units_sample_counts,
+                    "sample counts",
+                    optional=True),
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            self._expert_user_units_inputs_stale = True
+            self._expert_user_units_error = str(exc)
+            retained = (
+                " · previous preview retained as historical only"
+                if self._expert_user_units_preview is not None
+                else " · no preview created")
+            self.expert_user_units_status.setText(
+                "INVALID · %s%s · PARTIAL / SCREENING · "
+                "NOT CURRENT DRIVE CONFIG" % (exc, retained))
+            return
+
+        exact_units_per_count = (
+            self._format_expert_user_units_fraction(
+                preview.units_per_count))
+        exact_counts_per_unit = (
+            self._format_expert_user_units_fraction(
+                preview.counts_per_unit))
+        self.expert_user_units_result_fields[
+            "units_per_count"].setText(
+                "%s = %s %s/count" % (
+                    exact_units_per_count,
+                    preview.units_per_count_decimal,
+                    preview.unit_label))
+        self.expert_user_units_result_fields[
+            "counts_per_unit"].setText(
+                "%s = %s count/%s" % (
+                    exact_counts_per_unit,
+                    preview.counts_per_unit_decimal,
+                    preview.unit_label))
+        if preview.sample_units is None:
+            sample_text = "— · sample counts not supplied"
+        else:
+            sample_text = "%d count = %s = %s %s" % (
+                preview.sample_counts,
+                self._format_expert_user_units_fraction(
+                    preview.sample_units),
+                preview.sample_units_decimal,
+                preview.unit_label)
+        self.expert_user_units_result_fields["sample_units"].setText(
+            sample_text)
+        self._expert_user_units_preview = preview
+        self._expert_user_units_inputs_stale = False
+        self._expert_user_units_error = None
+        self.expert_user_units_status.setText(
+            "DOCUMENTED LOCAL PREVIEW · PARTIAL / SCREENING · "
+            "DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA · "
+            "NOT CURRENT DRIVE CONFIG · NO FC/OF WRITE · NO DRIVE I/O")
+
+    def _mark_expert_user_units_input_stale(self, *_args):
+        """Retain historical output while revoking current-input coherence."""
+        self._expert_user_units_inputs_stale = True
+        self._expert_user_units_error = None
+        if self._expert_user_units_preview is None:
+            self.expert_user_units_status.setText(
+                "PARTIAL / SCREENING · waiting for complete explicit manual "
+                "inputs · DOCUMENTED GROUPING MISMATCH · "
+                "PURPOSE NEED-DATA")
+            return
+        self.expert_user_units_status.setText(
+            "STALE · explicit manual inputs changed · previous documented "
+            "preview retained as historical only · PARTIAL / SCREENING · "
+            "NOT CURRENT DRIVE CONFIG")
 
     def _mark_expert_current_input_stale(self, *_args):
         """Prevent a prior P1 PASS from appearing bound to edited inputs."""

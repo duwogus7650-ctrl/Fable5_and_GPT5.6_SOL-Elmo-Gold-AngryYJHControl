@@ -116,6 +116,16 @@ _SPECS = (
           "Project existing local P1/P2/evidence state with no drive I/O; "
           "this is not EAS Enter/Apply state and not installed-drive evidence.",
           status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.user_units.preview",
+          "Expert User Units · Documented Formula Preview",
+          OperationRisk.LOCAL_UI,
+          "Evaluate the documented formula for DS-402 position scaling from "
+          "explicit "
+          "manual FC inputs with no drive I/O and no FC/OF write. The "
+          "documented grouping mismatch between the NetHelp formula and "
+          "MAN-G-CR limits remains visible with its purpose NEED-DATA; this "
+          "is not current drive config.",
+          status=OperationStatus.PARTIAL),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,
