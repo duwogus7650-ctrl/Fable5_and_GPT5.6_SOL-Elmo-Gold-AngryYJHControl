@@ -1557,6 +1557,206 @@ def test_expert_application_settings_never_absorbs_late_axis_summary(
         assert str(actual_value) not in rendered
 
 
+def test_expert_bode_verification_page_is_static_zero_io_and_authority_isolated(
+        window, qapp, monkeypatch):
+    _fill_expert_user_units_golden(window)
+    window.btn_expert_user_units_preview.click()
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError(
+            "Bode verification evidence inspector entered I/O/dispatch")
+
+    class PoisonWorker:
+        def __getattr__(self, name):
+            def forbidden_worker_call(*args, **kwargs):
+                calls.append((name, args, kwargs))
+                raise AssertionError(
+                    "Bode verification evidence touched worker.%s" % name)
+
+            return forbidden_worker_call
+
+    poison_worker = PoisonWorker()
+    window.worker = poison_worker
+    before = _limits_authority_snapshot(window)
+    status_before = tuple(
+        window.expert_page_status_rows[key].text()
+        for key in ("current", "vp", "evidence"))
+    dirty_before = window._expert_page_status_dirty
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden)
+    monkeypatch.setattr(window, "_claim_tune_dispatch", forbidden)
+
+    window._set_expert_lab_step("bode_verification")
+    expected_controls = {
+        "tuner_settings": (
+            "Velocity Slope Time",
+            "Minimum Amplitude Reduction Factor",
+            "Min Frequency Resolution",
+            "Min Quality Factor Threshold",
+            "Auto Save Experiment Recordings",
+            "View Verification – Bode Pages",
+            "Initial Chart Limits",
+            "Reset to Factory Defaults",
+        ),
+        "current_bode": (
+            "A / B / C Phases",
+            "Current Level",
+            "Fixed / Automatic by Frequency",
+            "Experiment Frequencies",
+            "Current Offset",
+            "Show Design",
+            "Unbalanced / Vertical Axis",
+            "Verify",
+        ),
+        "velocity_position_bode": (
+            "Loop Mode",
+            "Velocity Amplitude",
+            "Fixed / Automatic by Frequency",
+            "Current Limit",
+            "Experiment Frequencies",
+            "Velocity Offset",
+            "Show Design",
+            "Verify",
+        ),
+    }
+    assert tuple(
+        window.expert_bode_verification_section.itemData(index)
+        for index in range(window.expert_bode_verification_section.count())
+    ) == tuple(expected_controls)
+    for index, section_key in enumerate(expected_controls):
+        window.expert_bode_verification_section.setCurrentIndex(index)
+        qapp.processEvents()
+        assert window.expert_bode_verification_table.rowCount() == 8
+        assert tuple(
+            window.expert_bode_verification_table.item(row, 0).text()
+            for row in range(8)
+        ) == expected_controls[section_key]
+
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_bode_verification_page)
+    assert window.btn_expert_step_bode_verification.text() == (
+        "8 · BODE DOC MAP")
+    assert "EVIDENCE STATUS" in (
+        window.expert_bode_verification_status.text())
+    assert "MODEL STATUS" not in (
+        window.expert_bode_verification_status.text())
+    assert window.worker is poison_worker
+    assert calls == []
+    assert _limits_authority_snapshot(window) == before
+    assert tuple(
+        window.expert_page_status_rows[key].text()
+        for key in ("current", "vp", "evidence")) == status_before
+    assert window._expert_page_status_dirty == dirty_before
+    assert window.expert_bode_verification_section.isEditable() is False
+    assert window.expert_bode_verification_page.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert window.expert_bode_verification_page.findChildren(
+        QtWidgets.QPushButton) == []
+    assert window.expert_bode_verification_page.findChildren(
+        QtWidgets.QCheckBox) == []
+    assert window.expert_bode_verification_page.findChildren(
+        QtWidgets.QSlider) == []
+    assert not window.expert_bode_verification_page.isAncestorOf(
+        window.expert_bode_widget)
+    assert tuple(
+        window.expert_bode_verification_table
+        .horizontalHeaderItem(column).text()
+        for column in range(4)
+    ) == (
+        "CONTROL",
+        "ROLE / REF",
+        "UNIT / ACCESS",
+        "STATUS / NOTE",
+    )
+    assert all(
+        "app: inspect-only" in
+        window.expert_bode_verification_table.item(row, 2).text()
+        for row in range(window.expert_bode_verification_table.rowCount()))
+    rendered = " ".join((
+        window.expert_lab_title.text(),
+        window.expert_lab_note.text(),
+        window.expert_bode_verification_banner.text(),
+        window.expert_bode_verification_status.text(),
+        window.expert_bode_verification_conflicts.text(),
+        window.expert_bode_verification_warnings.text(),
+        window.expert_bode_verification_missing.text(),
+        *(
+            window.expert_bode_verification_table.item(row, column).text()
+            for row in range(
+                window.expert_bode_verification_table.rowCount())
+            for column in range(
+                window.expert_bode_verification_table.columnCount())
+        ),
+    )).upper()
+    for phrase in (
+            "DOCUMENTED BODE VERIFICATION MAP",
+            "NOT EAS VERIFICATION RESULT",
+            "NOT CURRENT DRIVE STATE",
+            "NOT EAS SETTING STATE",
+            "NOT MODEL/MEASUREMENT PARITY",
+            "NO DRIVE READ",
+            "NO ACQUISITION",
+            "NO EVALUATION",
+            "NO VERIFY",
+            "NO EAS SETTINGS CHANGE",
+            "NO COMMAND/WRITE/APPLY/REVERT/SV",
+            "NO RECORDING",
+            "NO ENERGIZATION/MOTION",
+            "NO DRIVE I/O"):
+        assert phrase in rendered
+    for forbidden in (
+            "VERIFICATION PASSED",
+            "VALIDATED SAFE",
+            "CURRENT VALUE IS",
+            "CURRENT DRIVE IS",
+            "INSTALLED RESULT",
+            "RECOMMENDED VALUE",
+            "APP: R/W"):
+        assert forbidden not in rendered
+
+
+def test_expert_bode_verification_never_absorbs_axis_or_model_state(
+        window, qapp):
+    window._set_expert_lab_step("bode_verification")
+    before = tuple(
+        window.expert_bode_verification_table.item(row, column).text()
+        for row in range(window.expert_bode_verification_table.rowCount())
+        for column in range(
+            window.expert_bode_verification_table.columnCount())
+    )
+    sentinels = {
+        "PX": 918273645,
+        "VX": 827364591,
+        "IQ": 736459182,
+        "PL[1]": 6.54321987,
+        "CL[1]": 5.43219876,
+    }
+    window._on_axis_summary({
+        "scope": "LAST OBSERVED",
+        "mode": "UM=5",
+        "raw": sentinels,
+    })
+    window._expert_plant = object()
+    window._expert_candidate = object()
+    window._expert_response = object()
+    qapp.processEvents()
+
+    after = tuple(
+        window.expert_bode_verification_table.item(row, column).text()
+        for row in range(window.expert_bode_verification_table.rowCount())
+        for column in range(
+            window.expert_bode_verification_table.columnCount())
+    )
+    assert after == before
+    rendered = " ".join(after)
+    for value in sentinels.values():
+        assert str(value) not in rendered
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
     def contrast_ratio(first, second):
@@ -1589,7 +1789,8 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
             qapp.setStyleSheet(themed.STYLE)
             for step in (
                     "current", "vp", "evidence", "status", "user_units",
-                    "limits_protections", "application_settings"):
+                    "limits_protections", "application_settings",
+                    "bode_verification"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):
@@ -1632,6 +1833,28 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         assert required <= (
                             window.expert_application_table
                             .columnWidth(column))
+                if step == "bode_verification":
+                    table_palette = (
+                        window.expert_bode_verification_table
+                        .viewport().palette())
+                    assert contrast_ratio(
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Text),
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Base),
+                    ) >= 4.5
+                    for column in range(
+                            window.expert_bode_verification_table
+                            .columnCount()):
+                        header_text = (
+                            window.expert_bode_verification_table
+                            .horizontalHeaderItem(column).text())
+                        required = (
+                            window.expert_bode_verification_table
+                            .fontMetrics().horizontalAdvance(header_text) + 20)
+                        assert required <= (
+                            window.expert_bode_verification_table
+                            .columnWidth(column))
                 buttons = (
                         window.btn_expert_step_current,
                         window.btn_expert_step_vp,
@@ -1639,7 +1862,8 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         window.btn_expert_step_status,
                         window.btn_expert_step_user_units,
                         window.btn_expert_step_limits,
-                        window.btn_expert_step_application)
+                        window.btn_expert_step_application,
+                        window.btn_expert_step_bode_verification)
                 for button in buttons:
                     assert button.isVisible()
                     required = (

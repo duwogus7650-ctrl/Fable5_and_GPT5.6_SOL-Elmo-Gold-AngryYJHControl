@@ -6,7 +6,7 @@
 
 기준 설치본: EAS III 3.0.0.26<br>
 계획: docs/eas-full-parity-plan.md<br>
-갱신일: 2026-07-18 KST
+갱신일: 2026-07-19 KST
 
 ## 사용법
 
@@ -20,7 +20,7 @@
 - 위험 분류의 canonical 집합은 `LOCAL / READ / DRIVE_STATE / RAM / ENERGY / MOTION / SV /
   RESET-FLASH / SAFETY_STOP / NEED-DATA`다. `SAFETY_STOP`은 일반 위험 승격 순서 밖의 cleanup 경로다.
 - Offline check는 기존 row-specific test evidence를 표시한다. 최신 전체 suite summary는
-  2026-07-18에 1529 passed in 476.14s, 직접 종료코드 0이었지만,
+  2026-07-19에 1547 passed in 503.66s, 직접 종료코드 0이었지만,
   그 결과를 모든 행의 Offline test 완료로 확장하지 않는다.
 - 승인 Mutation 열은 매번 fresh approval이 필요하므로 과거 승인 이력을 재사용하지 않는다. 예외적으로
   SAFETY_STOP과 disconnect cleanup은 fresh approval이나 fresh telemetry를 기다리지 않고 비차단 attempt해야 한다.
@@ -68,7 +68,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | ID | EAS 기능 | EAS 관찰 | 공개 근거 | 위험 분류 | Offline test | Read-only live | 승인 Mutation | Rollback | Docs | 메모 |
 |---|---|---:|---|---|---:|---:|---:|---:|---:|---|
 | A-001 | Main window, Workspace Tree, Navigation, File/Core/Context ribbons | [x] 상단 일부 | [x] G3/RIB | [x] LOCAL | [x] | — | — | — | [~] | 현재 앱은 EAS-style 메뉴와 8 fixed pages; session-only Tool Organizer, Status / Log와 System Inspector 포함 |
-| A-002 | EAS Settings: General/Logger/Workspace/Drive/Tuner/Recorder | [ ] | [x] G13/RIB | [x] LOCAL→DRIVE_STATE | [ ] | [ ] | [ ] | [ ] | [ ] | 설정별 위험 재분류 필요 |
+| A-002 | EAS Settings: General/Logger/Workspace/Drive/Tuner/Recorder | [ ] | [x] G13/RIB | [x] LOCAL→DRIVE_STATE | [~] Tuner Verification static map | [ ] | [ ] | [ ] | [~] | Verification의 8개 setting row만 문서 map; current value·visibility·min/max/default·설정 변경/reset은 `NEED-DATA` |
 | A-003 | Tool Organizer v0.1과 tool visibility | [ ] | [x] G13 §13.3/RIB | [x] LOCAL | [x] 8-page model/UI | — | — | [x] local UI rollback | [x] | [~] session-only show/hide/reorder/reset; modeless; safety shell·active workflow lock; no persistence/native EAS config/drive I/O; full native persistence·capability 조건 NEED-DATA |
 | A-004 | Gold hardware recognition과 COM target discovery | [~] | [x] Introduction/G3 | [x] READ | [x] | [x] | — | — | [x] | Inspector v0.1은 admission된 단일 Direct USB target만 host projection; 별도 discovery/read 없음 |
 | A-005 | Connect/disconnect/reconnect lifecycle | [~] | [x] G3/RIB | [x] DRIVE_STATE | [x] | [x] | [ ] | [x] | [~] | vendor disconnect 오류 집계 구현; disconnect cleanup은 fresh approval 비대상 |
@@ -115,7 +115,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-046 | Current Identification | [ ] | [x] G8 §8.2.8.1 | [x] ENERGY | [x] | [~] | [ ] | [x] closeout | [x] | |
 | A-047 | Current Design | [ ] | [x] G8 §8.2.8.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
 | A-048 | Current Verification - Time | [ ] | [x] G8 §8.2.8.3 | [x] ENERGY | [~] | [~] | [ ] | [~] | [~] | EAS exact waveform gate 미확정 |
-| A-049 | Current Verification - Bode | [ ] | [x] G8 §8.2.8.4 | [x] ENERGY | [~] | [ ] | [ ] | [~] | [~] | |
+| A-049 | Current Verification - Bode | [ ] | [x] G8 §8.2.8.4 | [x] ENERGY | [~] static map | [ ] | [ ] | [ ] | [x] | 8-row immutable documentation map only; `%PL/%CL`, Offset unit, screenshot-only axis option, point-label conflicts 보존. Actual Verify/acquisition/evaluation/current injection은 `NEED-DATA/NO-GO` |
 | A-050 | Analog Sensor Calibration | [ ] | [x] G8 §8.2.9 | [x] ENERGY/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-051 | Analog Sensor Calibration Advanced | [ ] | [x] G8 §8.2.9.1 | [x] ENERGY/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-052 | Sensorless tuning/verification | [ ] | [x] G8 §8.2.10 | [x] ENERGY/MOTION/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
@@ -130,7 +130,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-061 | Velocity/Position Design | [ ] | [x] G8 §8.2.13.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
 | A-062 | Velocity/Position Scheduling | [ ] | [x] G8 §8.2.13.3 | [x] RAM | [~] | [ ] | [ ] | [~] | [~] | |
 | A-063 | Velocity/Position Verification - Time | [ ] | [x] G8 §8.2.13.4 | [x] MOTION | [~] | [~] | [ ] | [~] | [~] | |
-| A-064 | Velocity/Position Verification - Bode | [ ] | [x] G8 §8.2.13.5 | [x] MOTION | [~] | [ ] | [ ] | [~] | [~] | |
+| A-064 | Velocity/Position Verification - Bode | [ ] | [x] G8 §8.2.13.5 | [x] MOTION | [~] static map | [ ] | [ ] | [ ] | [x] | 8-row immutable documentation map only; loop/amplitude/current/frequency/offset/overlay/Verify 의미 표시. Actual closed-loop acquisition·motion·acceptance는 `NEED-DATA/NO-GO` |
 | A-065 | Error Mapping Settings | [ ] | [x] G8 §8.3.1 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-066 | Error Mapping Experiment | [ ] | [x] G8 §8.3.2 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-067 | Error Mapping Verification | [ ] | [x] G8 §8.3.3 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |

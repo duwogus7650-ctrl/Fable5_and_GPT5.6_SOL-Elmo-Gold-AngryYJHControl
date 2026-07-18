@@ -151,6 +151,22 @@ _SPECS = (
           "order, readback, rollback, Revert, SV, and output actuation remain "
           "unimplemented and NEED-DATA.",
           status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.bode_verification.evidence.inspect",
+          "Expert Hidden Bode Verification · Documented Map",
+          OperationRisk.LOCAL_UI,
+          "Inspect an immutable document map of the hidden EAS Current and "
+          "Velocity/Position Bode pages plus Tuner Verification settings. "
+          "It performs no drive read, no acquisition, no evaluation, no "
+          "Verify, no EAS settings change, no energization, and no motion.",
+          status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.bode_verification.execute",
+          "Expert Bode Verification Execution · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "Current verification energizes and Velocity/Position verification "
+          "can move the motor. Safe amplitude, frequency and current bounds, "
+          "sampling provenance, abort and closeout behavior, and quantitative "
+          "acceptance criteria remain unimplemented and NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,

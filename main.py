@@ -44,6 +44,7 @@ import expert_tuning_offline
 import expert_filter_scheduling_evidence
 import expert_limits_protections_evidence
 import expert_application_settings_evidence
+import expert_bode_verification_evidence
 import expert_page_status
 import expert_user_units
 import single_axis_motion
@@ -7165,6 +7166,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "6 · LIMITS / PROTECT")
         self.btn_expert_step_application = QtWidgets.QPushButton(
             "7 · APP SETTINGS")
+        self.btn_expert_step_bode_verification = QtWidgets.QPushButton(
+            "8 · BODE DOC MAP")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
         self.btn_expert_step_evidence.setCheckable(True)
@@ -7172,6 +7175,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_step_user_units.setCheckable(True)
         self.btn_expert_step_limits.setCheckable(True)
         self.btn_expert_step_application.setCheckable(True)
+        self.btn_expert_step_bode_verification.setCheckable(True)
         for button in (
                 self.btn_expert_step_current,
                 self.btn_expert_step_vp,
@@ -7179,7 +7183,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.btn_expert_step_status,
                 self.btn_expert_step_user_units,
                 self.btn_expert_step_limits,
-                self.btn_expert_step_application):
+                self.btn_expert_step_application,
+                self.btn_expert_step_bode_verification):
             button.setMinimumWidth(0)
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Ignored,
@@ -7195,6 +7200,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_step_group.addButton(self.btn_expert_step_limits)
         self.expert_lab_step_group.addButton(
             self.btn_expert_step_application)
+        self.expert_lab_step_group.addButton(
+            self.btn_expert_step_bode_verification)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
@@ -7209,6 +7216,8 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self._set_expert_lab_step("limits_protections"))
         self.btn_expert_step_application.clicked.connect(
             lambda: self._set_expert_lab_step("application_settings"))
+        self.btn_expert_step_bode_verification.clicked.connect(
+            lambda: self._set_expert_lab_step("bode_verification"))
         expert_step_grid.addWidget(
             self.btn_expert_step_current, 0, 0, 1, 2)
         expert_step_grid.addWidget(
@@ -7222,7 +7231,9 @@ class MainWindow(QtWidgets.QMainWindow):
         expert_step_grid.addWidget(
             self.btn_expert_step_limits, 1, 4, 1, 2)
         expert_step_grid.addWidget(
-            self.btn_expert_step_application, 2, 2, 1, 2)
+            self.btn_expert_step_application, 2, 1, 1, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_bode_verification, 2, 3, 1, 2)
         for column in range(6):
             expert_step_grid.setColumnStretch(column, 1)
         lab_layout.addLayout(expert_step_grid)
@@ -7813,6 +7824,115 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_stack.addWidget(
             self.expert_application_settings_page)
 
+        self.expert_bode_verification_page = QtWidgets.QWidget()
+        bode_verification_layout = QtWidgets.QVBoxLayout(
+            self.expert_bode_verification_page)
+        bode_verification_layout.setContentsMargins(0, 0, 0, 0)
+        bode_verification_layout.setSpacing(7)
+        self._expert_bode_verification = (
+            expert_bode_verification_evidence.build_evidence_snapshot())
+        self.expert_bode_verification_banner = QtWidgets.QLabel(
+            self._expert_bode_verification.boundary)
+        self.expert_bode_verification_banner.setProperty("role", "hint")
+        self.expert_bode_verification_banner.setWordWrap(True)
+        bode_verification_layout.addWidget(
+            self.expert_bode_verification_banner)
+        self.expert_bode_verification_status = QtWidgets.QLabel()
+        self.expert_bode_verification_status.setProperty("role", "field")
+        self.expert_bode_verification_status.setWordWrap(True)
+        bode_verification_layout.addWidget(
+            self.expert_bode_verification_status)
+
+        bode_verification_selector_layout = QtWidgets.QHBoxLayout()
+        bode_verification_selector_label = QtWidgets.QLabel(
+            "Documented EAS verification section")
+        bode_verification_selector_label.setProperty("role", "field")
+        self.expert_bode_verification_section = QtWidgets.QComboBox()
+        self.expert_bode_verification_section.setEditable(False)
+        for section in self._expert_bode_verification.sections:
+            self.expert_bode_verification_section.addItem(
+                "%s · %s" % (section.label, section.reference),
+                section.key)
+        bode_verification_selector_layout.addWidget(
+            bode_verification_selector_label)
+        bode_verification_selector_layout.addWidget(
+            self.expert_bode_verification_section, 1)
+        bode_verification_layout.addLayout(
+            bode_verification_selector_layout)
+
+        self.expert_bode_verification_table = QtWidgets.QTableWidget(0, 4)
+        self.expert_bode_verification_table.setObjectName(
+            "expertEvidenceTable")
+        self.expert_bode_verification_table.setHorizontalHeaderLabels((
+            "CONTROL",
+            "ROLE / REF",
+            "UNIT / ACCESS",
+            "STATUS / NOTE",
+        ))
+        for column, tooltip in enumerate((
+                "Documented EAS control name; not an executable control.",
+                "Documented role and reference only; not a result.",
+                "Documented unit/access; app remains inspect-only.",
+                "Evidence status plus conflict, risk, or missing scope.",
+        )):
+            self.expert_bode_verification_table.horizontalHeaderItem(
+                column).setToolTip(tooltip)
+        self.expert_bode_verification_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.expert_bode_verification_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.expert_bode_verification_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.expert_bode_verification_table.setWordWrap(True)
+        self.expert_bode_verification_table.setAlternatingRowColors(True)
+        self.expert_bode_verification_table.setMinimumWidth(0)
+        self.expert_bode_verification_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.expert_bode_verification_table.verticalHeader().setVisible(False)
+        bode_verification_header = (
+            self.expert_bode_verification_table.horizontalHeader())
+        for column in range(4):
+            bode_verification_header.setSectionResizeMode(
+                column,
+                QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.expert_bode_verification_table.setMinimumHeight(250)
+        bode_verification_layout.addWidget(
+            self.expert_bode_verification_table, 1)
+
+        self.expert_bode_verification_conflicts = QtWidgets.QLabel(
+            "DOCUMENT CONFLICTS · " + " | ".join(
+                self._expert_bode_verification.document_conflicts))
+        self.expert_bode_verification_warnings = QtWidgets.QLabel(
+            "PERSISTENT WARNINGS · " + " | ".join(
+                self._expert_bode_verification.persistent_warnings))
+        self.expert_bode_verification_missing = QtWidgets.QLabel(
+            "MISSING EVIDENCE / NEED-DATA · " + " | ".join(
+                self._expert_bode_verification.missing_evidence))
+        for detail in (
+                self.expert_bode_verification_conflicts,
+                self.expert_bode_verification_warnings,
+                self.expert_bode_verification_missing):
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            bode_verification_layout.addWidget(detail)
+        self.expert_bode_verification_sources = QtWidgets.QLabel(
+            "SOURCES · %d frozen identities · EAS Drive Setup SHA-256 %s · "
+            "EAS Tuner Settings SHA-256 %s" % (
+                len(self._expert_bode_verification.sources),
+                self._expert_bode_verification.sources[0].sha256,
+                self._expert_bode_verification.sources[-2].sha256))
+        self.expert_bode_verification_sources.setProperty("role", "hint")
+        self.expert_bode_verification_sources.setWordWrap(True)
+        bode_verification_layout.addWidget(
+            self.expert_bode_verification_sources)
+        self.expert_lab_stack.addWidget(
+            self.expert_bode_verification_page)
+
         self.expert_filter_type.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_filter_location.currentIndexChanged.connect(
@@ -7823,9 +7943,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_expert_limits_protections_panel)
         self.expert_application_section.currentIndexChanged.connect(
             self._refresh_expert_application_settings_panel)
+        self.expert_bode_verification_section.currentIndexChanged.connect(
+            self._refresh_expert_bode_verification_panel)
         self._refresh_expert_evidence_panel()
         self._refresh_expert_limits_protections_panel()
         self._refresh_expert_application_settings_panel()
+        self._refresh_expert_bode_verification_panel()
         lab_layout.addWidget(self.expert_lab_stack)
         expert_layout.addWidget(self.expert_lab_frame)
         self._expert_plant = None
@@ -8017,6 +8140,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._decorate_operation_control(
             self.expert_application_section,
             "tuning.expert.application_settings.evidence.inspect")
+        self._decorate_operation_control(
+            self.expert_bode_verification_section,
+            "tuning.expert.bode_verification.evidence.inspect")
         self._set_tuning_mode("quick")
         return f
 
@@ -8051,7 +8177,8 @@ class MainWindow(QtWidgets.QMainWindow):
         """Select one zero-I/O Expert model page without changing authority."""
         if step not in (
                 "current", "vp", "evidence", "status", "user_units",
-                "limits_protections", "application_settings"):
+                "limits_protections", "application_settings",
+                "bode_verification"):
             raise ValueError("unknown Expert Lab step %r" % step)
         if step == "evidence":
             self.expert_lab_title.setText(
@@ -8099,6 +8226,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 "evidence. No drive read, validation/evaluation, command, "
                 "write, Apply/Revert/SV, output actuation, motion, or drive "
                 "I/O.")
+        elif step == "bode_verification":
+            self.expert_lab_title.setText(
+                "EXPERT HIDDEN BODE VERIFICATION v0.1 · "
+                "DOCUMENTED BODE VERIFICATION MAP · PARTIAL / NEED-DATA")
+            self.expert_lab_note.setText(
+                "Immutable static documentation map only. It is not an EAS "
+                "verification result, current drive or EAS setting state, "
+                "and not parity with the offline Bode MODEL. No drive read, "
+                "acquisition, evaluation, Verify, EAS setting change, "
+                "recording, command/write/Apply/Revert/SV, energization, "
+                "motion, or drive I/O.")
         else:
             self.expert_lab_title.setText(self._expert_model_title)
             self.expert_lab_note.setText(self._expert_model_note)
@@ -8113,6 +8251,8 @@ class MainWindow(QtWidgets.QMainWindow):
             step == "limits_protections")
         self.btn_expert_step_application.setChecked(
             step == "application_settings")
+        self.btn_expert_step_bode_verification.setChecked(
+            step == "bode_verification")
         self.expert_lab_stack.setCurrentIndex(
             {
                 "current": 0,
@@ -8122,6 +8262,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "user_units": 4,
                 "limits_protections": 5,
                 "application_settings": 6,
+                "bode_verification": 7,
             }[step])
         if step == "status":
             self._refresh_expert_page_status()
@@ -8181,6 +8322,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 cell.setToolTip(value)
                 self.expert_application_table.setItem(row, column, cell)
         self.expert_application_table.resizeRowsToContents()
+
+    def _refresh_expert_bode_verification_panel(self, *_args):
+        """Render one immutable hidden-Bode documentation section."""
+        if not hasattr(self, "_expert_bode_verification"):
+            return
+        section = expert_bode_verification_evidence.section_evidence(
+            self.expert_bode_verification_section.currentData())
+        self.expert_bode_verification_status.setText(
+            "AUTHORITY %s · EVIDENCE STATUS %s · %s · %d documented rows · "
+            "NOT CURRENT / NOT SAMPLED · controls unavailable / not "
+            "executable" % (
+                self._expert_bode_verification.authority,
+                self._expert_bode_verification.model_status,
+                section.reference,
+                len(section.parameters)))
+        self.expert_bode_verification_table.setRowCount(
+            len(section.parameters))
+        for row, item in enumerate(section.parameters):
+            values = (
+                item.control,
+                "%s · %s" % (item.label, item.documented_effect),
+                "%s · %s" % (item.documented_unit, item.access),
+                "%s · %s" % (item.evidence_status, item.condition),
+            )
+            for column, value in enumerate(values):
+                cell = QtWidgets.QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.expert_bode_verification_table.setItem(
+                    row, column, cell)
+        self.expert_bode_verification_table.resizeRowsToContents()
 
     def _refresh_expert_evidence_panel(self, *_args):
         """Render only immutable public-document topology and blockers."""

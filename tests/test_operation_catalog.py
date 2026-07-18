@@ -152,6 +152,51 @@ def test_expert_application_settings_transaction_remains_need_data():
         assert phrase in summary
 
 
+def test_expert_bode_verification_evidence_is_local_partial_zero_io():
+    spec = catalog.operation_spec(
+        "tuning.expert.bode_verification.evidence.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "immutable",
+            "hidden",
+            "document",
+            "no drive read",
+            "no acquisition",
+            "no evaluation",
+            "no verify",
+            "no eas settings change",
+            "no energization",
+            "no motion"):
+        assert phrase in summary
+
+
+def test_expert_bode_verification_execute_remains_need_data():
+    spec = catalog.operation_spec(
+        "tuning.expert.bode_verification.execute")
+
+    assert spec.risk is catalog.OperationRisk.NEED_DATA
+    assert spec.status is catalog.OperationStatus.NEED_DATA
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "current verification energizes",
+            "velocity/position verification can move",
+            "amplitude",
+            "frequency",
+            "current bounds",
+            "sampling",
+            "abort",
+            "closeout",
+            "acceptance"):
+        assert phrase in summary
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 
