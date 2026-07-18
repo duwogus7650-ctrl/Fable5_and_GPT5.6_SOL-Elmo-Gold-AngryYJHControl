@@ -1195,8 +1195,251 @@ def test_expert_user_units_recovers_from_invalid_with_new_coherent_preview(
     assert "INVALID" not in window.expert_user_units_status.text()
 
 
+def _limits_authority_snapshot(window):
+    tuning_buttons = (
+        window.btn_tune,
+        window.btn_tune_signature,
+        window.btn_tune_vp,
+        window.btn_tune_abort,
+        window.btn_tune_verify,
+        window.btn_tune_apply,
+        window.btn_tune_p1_restore,
+        window.btn_tune_p1_save,
+        window.btn_tune_vp_apply,
+        window.btn_tune_vp_restore,
+        window.btn_tune_vp_save,
+    )
+    return {
+        "p1_plant": window._expert_plant,
+        "p1_candidate": window._expert_candidate,
+        "p1_response": window._expert_response,
+        "p2_plant": window._expert_vp_plant,
+        "p2_candidate": window._expert_vp_candidate,
+        "p1_inputs_stale": window._expert_current_inputs_stale,
+        "p2_inputs_stale": window._expert_vp_inputs_stale,
+        "p1_error": window._expert_current_error,
+        "p2_error": window._expert_vp_error,
+        "evidence": window._expert_evidence,
+        "page_status": window._expert_page_status_snapshot,
+        "page_status_dirty": window._expert_page_status_dirty,
+        "user_units_preview": window._expert_user_units_preview,
+        "user_units_stale": window._expert_user_units_inputs_stale,
+        "user_units_error": window._expert_user_units_error,
+        "at_result": window._at_result,
+        "at_generation": window._at_result_generation,
+        "vp_result": window._vp_result,
+        "vp_generation": window._vp_result_generation,
+        "p1_trial": window._p1_gain_trial,
+        "p1_trial_generation": window._p1_trial_generation,
+        "vp_trial": window._vp_gain_trial,
+        "vp_trial_generation": window._vp_trial_generation,
+        "vp_signature_run": window._vp_signature_run,
+        "vp_trial_verified_green": window._vp_trial_verified_green,
+        "vp_verified_trial": window._vp_verified_trial,
+        "vp_verified_generation": window._vp_verified_generation,
+        "verify_inflight": window._verify_trial_inflight,
+        "authority_generation": window._tuning_authority_generation,
+        "dispatch": window._tune_dispatch_inflight,
+        "dispatch_generation": window._tune_dispatch_generation,
+        "axis_summary": dict(window._axis_summary_data),
+        "axis_safety_snapshot": window._axis_safety_snapshot,
+        "connection": (
+            window._ui_connected,
+            window._connection_admitted,
+            window._connection_access_mode,
+            window._requested_connection_access_mode,
+            window._connection_shutdown_pending,
+            window._telemetry_authoritative,
+            window._telemetry_authority_loss_latched,
+            window._energizing_state,
+            window._last_mo,
+            window._motor_write_inflight,
+        ),
+        "connection_controls": (
+            window.cmb_access_mode.currentData(),
+            window.cmb_access_mode.isEnabled(),
+            window.btn_conn.isEnabled(),
+            window.btn_global_stop.isEnabled(),
+            window.btn_motion_stop.isEnabled(),
+            window.btn_zero.isEnabled(),
+        ),
+        "safety_render": (
+            window.lbl_axis_safety_state.text(),
+            window.lbl_axis_safety_detail.text(),
+            tuple(
+                (key, field.text())
+                for key, field in window.axis_safety_fields.items()),
+        ),
+        "installed": tuple(
+            (key, field.text())
+            for key, field in window.tune_installed_gain_fields.items()),
+        "button_enabled": tuple(
+            button.isEnabled() for button in tuning_buttons),
+        "user_units_inputs": tuple(
+            (key, field.text())
+            for key, field in window.expert_user_units_fc_fields.items()),
+        "user_units_results": tuple(
+            (key, field.text())
+            for key, field in window.expert_user_units_result_fields.items()),
+        "user_units_label": window.expert_user_units_unit_label.text(),
+        "user_units_sample": window.expert_user_units_sample_counts.text(),
+    }
+
+
+def test_expert_limits_protections_page_is_static_zero_io_and_authority_isolated(
+        window, qapp, monkeypatch):
+    _fill_expert_user_units_golden(window)
+    window.btn_expert_user_units_preview.click()
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError(
+            "Limits / Protections inspector entered an I/O/dispatch path")
+
+    class PoisonWorker:
+        def __getattr__(self, name):
+            def forbidden_worker_call(*args, **kwargs):
+                calls.append((name, args, kwargs))
+                raise AssertionError(
+                    "Limits / Protections inspector touched worker.%s" % name)
+
+            return forbidden_worker_call
+
+    poison_worker = PoisonWorker()
+    window.worker = poison_worker
+    before = _limits_authority_snapshot(window)
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden)
+    monkeypatch.setattr(window, "_claim_tune_dispatch", forbidden)
+
+    window._set_expert_lab_step("limits_protections")
+    for index in range(window.expert_limits_section.count()):
+        window.expert_limits_section.setCurrentIndex(index)
+        qapp.processEvents()
+
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_limits_protections_page)
+    assert window.worker is poison_worker
+    assert calls == []
+    assert _limits_authority_snapshot(window) == before
+    assert window.expert_limits_section.isEditable() is False
+    assert window.expert_limits_protections_page.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert window.expert_limits_protections_page.findChildren(
+        QtWidgets.QPushButton) == []
+    assert tuple(
+        window.expert_limits_table.item(row, 0).text()
+        for row in range(window.expert_limits_table.rowCount())
+    ) == (
+        "ER[3]", "ER[2]", "ER[5]", "CL[2]", "CL[3]", "CL[4]",
+        "XP[1]", "XP[13]", "LL[3]", "HL[3]", "HL[2]",
+    )
+    assert window.expert_limits_table.horizontalHeaderItem(2).text() == (
+        "UNIT / DOCUMENTED REF ACCESS")
+    assert all(
+        "app: inspect-only" in
+        window.expert_limits_table.item(row, 2).text()
+        for row in range(window.expert_limits_table.rowCount()))
+    rendered = " ".join((
+        window.expert_lab_title.text(),
+        window.expert_lab_note.text(),
+        window.expert_limits_banner.text(),
+        window.expert_limits_status.text(),
+        window.expert_limits_conflicts.text(),
+        window.expert_limits_warnings.text(),
+        window.expert_limits_missing.text(),
+        *(
+            window.expert_limits_table.item(row, column).text()
+            for row in range(window.expert_limits_table.rowCount())
+            for column in range(window.expert_limits_table.columnCount())
+        ),
+    )).upper()
+    for phrase in (
+            "DOCUMENTED PARAMETER MAP",
+            "NOT CURRENT DRIVE CONFIG",
+            "NOT ACTIVE PROTECTION",
+            "NOT A SAFETY ASSESSMENT",
+            "NO DRIVE READ",
+            "NO VALIDATION",
+            "NO WRITE",
+            "NO APPLY/SV"):
+        assert phrase in rendered
+    for forbidden in (
+            "IS SAFE",
+            "VALIDATED SAFE",
+            "PROTECTIONS ARE VALID",
+            "CURRENT DRIVE IS",
+            "CURRENT DRIVE CONFIG IS",
+            "INSTALLED VALUE",
+            "EAS EQUIVALENT",
+            "RECOMMENDED VALUE",
+            "APP: R/W"):
+        assert forbidden not in rendered
+
+
+def test_expert_limits_protections_never_absorbs_late_axis_summary(
+        window, qapp):
+    window._set_expert_lab_step("limits_protections")
+    before = tuple(
+        window.expert_limits_table.item(row, column).text()
+        for row in range(window.expert_limits_table.rowCount())
+        for column in range(window.expert_limits_table.columnCount())
+    )
+
+    window._on_axis_summary({
+        "scope": "LAST OBSERVED",
+        "mode": "UM=5",
+        "raw": {
+            "PL[1]": 12.3456789,
+            "CL[1]": 9.87654321,
+            "VH[2]": 123456789,
+            "ER[3]": 777777777,
+            "CL[2]": 88.888888,
+            "XP[1]": 55.555555,
+            "LL[3]": -444444444,
+            "HL[3]": 333333333,
+        },
+    })
+    qapp.processEvents()
+
+    after = tuple(
+        window.expert_limits_table.item(row, column).text()
+        for row in range(window.expert_limits_table.rowCount())
+        for column in range(window.expert_limits_table.columnCount())
+    )
+    assert after == before
+    rendered = " ".join(after)
+    for actual_value in (
+            "12.3456789", "9.87654321", "123456789", "777777777",
+            "88.888888", "55.555555", "-444444444", "333333333"):
+        assert actual_value not in rendered
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
+    def contrast_ratio(first, second):
+        def relative_luminance(color):
+            channels = []
+            for value in (color.redF(), color.greenF(), color.blueF()):
+                channels.append(
+                    value / 12.92
+                    if value <= 0.04045
+                    else ((value + 0.055) / 1.055) ** 2.4)
+            return (
+                0.2126 * channels[0]
+                + 0.7152 * channels[1]
+                + 0.0722 * channels[2]
+            )
+
+        high, low = sorted((
+            relative_luminance(first),
+            relative_luminance(second),
+        ), reverse=True)
+        return (high + 0.05) / (low + 0.05)
+
     previous_style_sheet = qapp.styleSheet()
     previous_palette = QtGui.QPalette(qapp.palette())
     window.resize(1366, 820)
@@ -1206,7 +1449,8 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
         for themed in (theme_qdd, amber_theme, theme_angrybirds):
             qapp.setStyleSheet(themed.STYLE)
             for step in (
-                    "current", "vp", "evidence", "status", "user_units"):
+                    "current", "vp", "evidence", "status", "user_units",
+                    "limits_protections"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):
@@ -1220,12 +1464,22 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                 if step == "vp":
                     assert window.expert_vp_basis.height() >= (
                         window.expert_vp_basis.sizeHint().height())
+                if step == "limits_protections":
+                    table_palette = (
+                        window.expert_limits_table.viewport().palette())
+                    assert contrast_ratio(
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Text),
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Base),
+                    ) >= 4.5
                 buttons = (
                         window.btn_expert_step_current,
                         window.btn_expert_step_vp,
                         window.btn_expert_step_evidence,
                         window.btn_expert_step_status,
-                        window.btn_expert_step_user_units)
+                        window.btn_expert_step_user_units,
+                        window.btn_expert_step_limits)
                 for button in buttons:
                     assert button.isVisible()
                     required = (

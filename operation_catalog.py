@@ -126,6 +126,15 @@ _SPECS = (
           "MAN-G-CR limits remains visible with its purpose NEED-DATA; this "
           "is not current drive config.",
           status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.limits_protections.evidence.inspect",
+          "Expert Limits / Protections · Documented Parameter Map",
+          OperationRisk.LOCAL_UI,
+          "Inspect an immutable documented parameter map locally. It is not "
+          "current drive config, not active protection state, and not safety "
+          "evidence. It performs no drive read, no validation/evaluation, "
+          "no command generation, no write, no Apply/SV, and no unit "
+          "propagation.",
+          status=OperationStatus.PARTIAL),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,

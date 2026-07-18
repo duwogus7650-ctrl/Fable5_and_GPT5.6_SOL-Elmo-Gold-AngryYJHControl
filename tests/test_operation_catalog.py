@@ -84,6 +84,29 @@ def test_expert_user_units_documented_formula_preview_is_local_partial():
     assert "no fc/of write" in summary
 
 
+def test_expert_limits_protections_inspector_is_local_partial_and_fail_closed():
+    spec = catalog.operation_spec(
+        "tuning.expert.limits_protections.evidence.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    assert spec.risk not in catalog.DRIVE_MUTATING_RISKS
+    summary = spec.summary.lower()
+    for phrase in (
+            "documented parameter map",
+            "not current drive config",
+            "not active protection",
+            "no drive read",
+            "no validation",
+            "no command",
+            "no write",
+            "no apply/sv",
+            "no unit propagation"):
+        assert phrase in summary
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 

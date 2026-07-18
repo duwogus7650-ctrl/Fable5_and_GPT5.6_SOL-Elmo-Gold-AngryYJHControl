@@ -110,6 +110,23 @@ QLabel#pill[status="error"] { background: #ffe0d8; color: #a01916; border-color:
 QLabel#pill[status="neutral"] { background: #fff3d8; color: #8a6e4d; border-color: #d6b36c; }
 QToolTip { background: #fffdf6; color: #2b211a; border: 2px solid #e52521; padding: 5px 9px; border-radius: 8px; }
 
+QTableWidget#expertEvidenceTable {
+    background: #fffaf0; alternate-background-color: #fff3d8;
+    color: #2b211a; gridline-color: #e6b23c;
+    border: 2px solid #e6b23c; border-radius: 8px;
+    selection-background-color: #fff3d8; selection-color: #2b211a;
+    outline: none; font-family: "JetBrains Mono","Consolas",monospace;
+}
+QTableWidget#expertEvidenceTable::item { padding: 6px; }
+QTableWidget#expertEvidenceTable QHeaderView::section {
+    background: #ffe9b8; color: #b81f1c; border: none;
+    border-right: 1px solid #e6b23c; border-bottom: 1px solid #e6b23c;
+    padding: 7px 5px; font-weight: 900;
+}
+QTableWidget#expertEvidenceTable QTableCornerButton::section {
+    background: #ffe9b8; border: 1px solid #e6b23c;
+}
+
 QTabWidget::pane { border: none; }
 QTabBar::tab {
     background: #fff3d8; color: #8a7a63; font-weight: 900; font-size: 13px;

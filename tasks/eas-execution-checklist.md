@@ -6,7 +6,7 @@
 
 기준 설치본: EAS III 3.0.0.26<br>
 계획: docs/eas-full-parity-plan.md<br>
-갱신일: 2026-07-16 KST
+갱신일: 2026-07-18 KST
 
 ## 사용법
 
@@ -19,8 +19,8 @@
   연결되지 않았으면 현재 상태로 재사용하지 않고 `STALE/UNVERIFIED`로 취급한다.
 - 위험 분류의 canonical 집합은 `LOCAL / READ / DRIVE_STATE / RAM / ENERGY / MOTION / SV /
   RESET-FLASH / SAFETY_STOP / NEED-DATA`다. `SAFETY_STOP`은 일반 위험 승격 순서 밖의 cleanup 경로다.
-- Offline check는 기존 row-specific test evidence를 표시한다. 최신 전체 suite는 2026-07-16에
-  898 passed in 237.51s였지만,
+- Offline check는 기존 row-specific test evidence를 표시한다. 최신 전체 suite summary는
+  2026-07-18에 1513 passed in 698.16s였지만,
   그 결과를 모든 행의 Offline test 완료로 확장하지 않는다.
 - 승인 Mutation 열은 매번 fresh approval이 필요하므로 과거 승인 이력을 재사용하지 않는다. 예외적으로
   SAFETY_STOP과 disconnect cleanup은 fresh approval이나 fresh telemetry를 기다리지 않고 비차단 attempt해야 한다.
@@ -106,9 +106,9 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-037 | Expert Motor Settings 전체 | [ ] | [x] G8 §8.2.4.1 | [x] RAM/SV | [x] 제한 profile | [~] | [ ] | [x] | [x] | |
 | A-038 | Expert Feedback Settings/Advanced 전체 | [~] 영상 | [x] G8 §8.2.4.2~3 | [x] RAM/SV | [x] preview | [~] EnDat | [ ] | [ ] | [x] | |
 | A-039 | Drive/Display User Units | [~] Display page | [x] G8 §8.2.5 | [x] LOCAL/RAM/SV | [~] DS-402 position formula only | [ ] | [ ] | [ ] | [x] | `PARTIAL/SCREENING`; explicit FC1/2/5/6/7/8, grouping mismatch purpose NEED-DATA; no read/write/Apply/SV/unit propagation |
-| A-040 | Current Limits | [ ] | [x] G8 §8.2.6.1 | [x] RAM/SV | [~] motor profile 일부 | [~] | [ ] | [~] | [~] | |
-| A-041 | Motion Limits and Modulo | [ ] | [x] G8 §8.2.6.2 | [x] RAM/SV | [~] PTP envelope model | [ ] | [ ] | [ ] | [~] | |
-| A-042 | Protections | [ ] | [x] G8 §8.2.6.3 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
+| A-040 | Current Limits | [ ] | [x] G8 §8.2.6.1 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `MC/BV/PL1/CL1/PL2/US1/US2` immutable documentation rows only; local catalog GREEN, current values·validity·EAS parity·write `NEED-DATA/NO-GO` |
+| A-041 | Motion Limits and Modulo | [ ] | [x] G8 §8.2.6.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `SD/VH2/VL3/VH3/XM1/XM2/modulo/XA4:1/:2` documentation rows; XA bypass는 danger display only, no toggle/value; no current config/read/write/safety claim |
+| A-042 | Protections | [ ] | [x] G8 §8.2.6.3 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `ER/CL/XP/LL/HL` documentation rows와 disable warning/conflict만; focused 69 + 전체 1513 passed와 runtime은 immutable local inspector 범위, active protection·efficacy·field safety는 `NEED-DATA/NO-GO` |
 | A-043 | Brake | [ ] | [x] G8 §8.2.7.1 | [x] DRIVE_STATE/RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-044 | Settling Window | [ ] | [x] G8 §8.2.7.2 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-045 | Inputs and Outputs settings | [ ] | [x] G8 §8.2.7.3 | [x] DRIVE_STATE/RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |

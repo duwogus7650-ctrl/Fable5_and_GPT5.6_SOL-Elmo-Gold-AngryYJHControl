@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections 작업 인계서
 
-상태: **USER UNITS DOCUMENTED PREVIEW OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-18 20:10 KST**<br>
+상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-18 20:58 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -19,20 +19,26 @@
   `a20e19a0d28bc66b91572ad93d4cd2da4f032672`
 - Expert User Units · Documented Formula Preview v0.1 검증·구현 HEAD:
   `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
+- Expert Limits / Protections · Documented Parameter Map v0.1:
+  working tree 구현·focused **69 passed**, 전체 **1513 passed**, runtime smoke와
+  독립 closeout 완료. commit/private publish 전이므로 구현 HEAD는 아직 없음
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
   `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
 - Quick/Single Axis/Expert·Filter/Scheduling evidence·Page Status·User Units·안전 경계
-  변경은 새 비공개 `origin`의 기존 Draft PR #2에 위 구현 HEAD까지 게시했다.
+  변경은 새 비공개 `origin`의 기존 Draft PR #2에 위 게시 HEAD까지 반영했다.
+  Limits/Protections working tree 변경은 아직 게시하지 않았다.
   공개 원본 `source`에는 push하지 않았다.
 - 기존 사용자 `media/smoke_main.png` 변경은 working tree에 보존하고 게시에서 제외했다.
-- 최신 working tree의 앱으로 Read Only field admission을 수행했고,
+- Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
-- 후속 source 변경 뒤 Python 3.14로 다시 실행해 1366×820 OFFLINE/READ ONLY,
-  page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
-  Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 재확인했다.
-- 같은 최신 실행창에서 P1 `fc=430.129 Hz · PM=55.69 deg`와
+- Limits/Protections 최신 source를 Python 3.14로 다시 실행해
+  1366×820 `OFFLINE · READ ONLY`에서 여섯 번째 page, 세 section의 7/9/11 row,
+  20 frozen identities, `document: R/W · app: inspect-only`, dark high-contrast table,
+  action control 없음과 Apply/Save `LOCKED`를 재확인했다. 연결·읽기·쓰기·구동은
+  실행하지 않았다.
+- 같은 이전 실행창에서 P1 `fc=430.129 Hz · PM=55.69 deg`와
   P2 `K_a=5.794e6 cnt/s²/A_peak · B=1e-7 A_peak/(cnt/s)`의
   `MODEL GATE PASS · D=0.5794 1/s · bandwidth=457.500 rad/s`를 관찰했다.
   K_a 편집 뒤 `STALE` 전환과 기준값 복원·재계산 PASS도 관찰했다.
@@ -157,6 +163,31 @@
   전파, EAS parity와 operational suitability는 구현하지 않음
 - 상세 계약: [`expert-user-units-v0.1.md`](expert-user-units-v0.1.md)
 
+### 2.7 Expert Limits / Protections · Documented Parameter Map v0.1
+
+- 여섯 번째 Expert 단계에서 `Current Limits`, `Motion Limits and Modulo`,
+  `Protections`의 문서상 명령·단위·access·조건을 frozen catalog로 표시
+- command row는 각각 7개(`MC/BV/PL/CL/US`), 9개(`SD/VH/VL/XM/modulo/XA`),
+  11개(`ER/CL/XP/LL/HL`)이며 현재 값 입력·readback field가 아님
+- authority는 `DOCUMENTED_PARAMETER_MAP_ONLY`, model status는
+  `PARTIAL_NEED_DATA`; 로컬 immutable catalog의 inspect 동작만 GREEN
+- `US[2]` Reserved 충돌, `ER[5]` access, `CL[2..4]` index/time semantics,
+  `XA[4]` Reserved/bypass, `CL[1]/PL[1]`, `LL[3]/HL[3]`,
+  `XM[1]/XM[2]` access, `XA[4]` default와 FC-based unit 충돌을 보존
+- `CL[2] < 2`, `XA[4]` bypass, all-zero no-limit mode,
+  `LL[3]=HL[3]=0`과 `HL[2]=0` disable semantics를 고정 경고로 표시
+- 모델과 UI는 drive/worker/link/job/query/write를 만들지 않고 P1/P2/Evidence/
+  Page Status/User Units/installed/dispatch/connection/safety/Apply/Save 권한을 바꾸지 않음
+- focused 회귀 **69 passed**, 전체 repository suite **1513 passed**,
+  최신 runtime smoke와 독립 closeout을 완료했다. private publish만 대기
+- 최초 runtime의 흰 표/밝은 글자 결함은 `expertEvidenceTable` 전용 세 테마
+  스타일과 text/base contrast `>=4.5` 회귀로 수정
+- current drive config와 active protection state, firmware/EAS parity,
+  값 유효성·추천, protection efficacy, read/write/Apply/Revert/SV/unit propagation과
+  field safety는 모두 `NEED-DATA / NO-GO`
+- 상세 계약:
+  [`expert-limits-protections-evidence-v0.1.md`](expert-limits-protections-evidence-v0.1.md)
+
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
 
@@ -262,8 +293,13 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1498 passed, 0 failed in 275.50s** | Expert v2, filter/scheduling evidence, Page Status와 User Units preview를 포함한 최신 working tree의 Python/mock/offscreen 경로 |
-| Expert P1/P2·Evidence·Page Status·User Units·UI·catalog 집중 회귀 | **162 passed, 0 failed in 59.11s** | immutable local models/evidence, exact binding/coherence, strict inputs, 문서 충돌·grouping mismatch, zero-I/O·authority isolation, hidden-page dirty refresh, 세 스킨 1366×820 |
+| Limits/Protections 모델·UI·catalog·authority focused 회귀 | **69 passed** | immutable 27-row documented map, 9개 conflict, danger warning, strict lookup/20개 source hash, poison file/process/network/worker/link/job/query/write, 기존 모든 Expert/installed/dispatch/connection/safety authority 불변과 세 스킨 1366×820. **로컬 catalog만 GREEN** |
+| 최신 전체 repository suite | **1513 passed in 698.16s** | 100% passed summary, stderr empty, capture verifier exit 0. Background launcher가 원 pytest process 숫자 exit code를 보존하지 않은 한계 명시 |
+| Limits/Protections 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음 · 독립 69 passed** | SimplIQ source, stable mutation digest, document/app access, fresh-import poison, connection/safety snapshot, 세 테마 contrast 재확인 |
+| Limits/Protections 최신 runtime smoke | **7 / 9 / 11 rows · 20 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, dark high-contrast table, app inspect-only, action 없음, Apply/Save LOCKED, drive/worker/command I/O와 motor action 없음 |
+| Limits table palette 실패→수정 | **white/bright unreadable RED → 세 테마 contrast `>=4.5` GREEN** | `expertEvidenceTable` 전용 QSS와 실제 QDD runtime 재확인 |
+| 직전 게시 기준 전체 repository suite | **1498 passed, 0 failed in 275.50s** | Limits/Protections 추가 전 Python/mock/offscreen 기준선 |
+| 직전 게시 기준 Expert P1/P2·Evidence·Page Status·User Units·UI·catalog 집중 회귀 | **162 passed, 0 failed in 59.11s** | immutable local models/evidence, exact binding/coherence, strict inputs, 문서 충돌·grouping mismatch, zero-I/O·authority isolation, hidden-page dirty refresh, 세 스킨 1366×820. 새 Limits/Protections working tree는 포함하지 않음 |
 | User Units 모델·UI·catalog 집중 회귀 | **51 passed, 0 failed in 10.09s** | exact fraction/reciprocal/sample, strict FC/guard boundaries, blank/no-auto-fill, stale/invalid recovery, worker/link/dispatch/file/process/network poison |
 | User Units 독립 검토 | **잔여 HIGH/MEDIUM/LOW 없음** | `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` 로컬 범위만 GO; drive config/EAS parity/operational suitability/field safety는 NO-GO·NEED-DATA |
 | User Units 최신 runtime smoke | **1/100 = 0.01 µm/count · 100 count = 1 µm · edit→STALE→restore PASS** | Python 3.14, 1366×820, OFFLINE/READ ONLY; explicit manual input, grouping mismatch, NO FC/OF WRITE/NO DRIVE I/O와 Apply/Save LOCKED 확인 |
@@ -390,14 +426,19 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 
 ## 9. 안전한 재개 순서
 
-1. 최신 source로 제어창을 OFFLINE 재시작해 page-scroll과 shutdown UI를 smoke
-2. EAS를 **미연결 상태**에서 캡처하고 Quick/Single/Expert 화면·상태부터 매핑
-3. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
-4. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
+1. Limits/Protections 변경을 commit하고 private Draft PR #2를 갱신하되 사용자
+   `media/smoke_main.png` 변경은 제외한다.
+2. Expert Application Settings의 Brake/Settling/I/O 문서 근거를 대조해
+   다음 LOCAL/no-I/O inspector 최소 범위를 확정한다.
+3. exact transaction·firmware parity·output electrical capability 근거 전에는
+   live read/write/evaluator/recommendation/Apply/SV/actuation으로 승격하지 않는다.
+4. EAS를 추가 관찰해야 한다면 **미연결 상태**에서 화면·조건부 visibility만 매핑한다.
+5. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
+6. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
    admission sweep의 `MO/SO/VX/PS/MF` 원시 transcript를 보존
-5. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
-6. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
-7. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
+7. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
+8. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
+9. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
 
 ## 10. 완료 의미
 

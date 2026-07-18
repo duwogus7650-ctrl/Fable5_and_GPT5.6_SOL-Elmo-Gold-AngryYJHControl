@@ -151,6 +151,23 @@ QLabel#pill[status="error"] {{ background: #4a1f27; color: #ff9c96; border-color
 QLabel#pill[status="neutral"] {{ background: #10243b; color: #8eb3d4; border-color: #315579; }}
 QToolTip {{ background: {CARD}; color: {TEXT}; border: 1px solid {INDIGO}; padding: 5px 9px; border-radius: 6px; }}
 
+QTableWidget#expertEvidenceTable {{
+    background: {INSET}; alternate-background-color: {CARD_SOFT};
+    color: {TEXT}; gridline-color: {BORDER};
+    border: 1px solid {BORDER}; border-radius: 8px;
+    selection-background-color: {CARD_SOFT}; selection-color: {TEXT};
+    outline: none; font-family: {MONO};
+}}
+QTableWidget#expertEvidenceTable::item {{ padding: 6px; }}
+QTableWidget#expertEvidenceTable QHeaderView::section {{
+    background: {CARD}; color: {SILVER}; border: none;
+    border-right: 1px solid {BORDER}; border-bottom: 1px solid {BORDER};
+    padding: 7px 5px; font-weight: 800;
+}}
+QTableWidget#expertEvidenceTable QTableCornerButton::section {{
+    background: {CARD}; border: 1px solid {BORDER};
+}}
+
 QPlainTextEdit {{
     background: {INSET}; border: 1px solid {BORDER}; border-radius: 10px;
     padding: 10px; font-family: {MONO}; font-size: 12px;

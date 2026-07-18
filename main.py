@@ -42,6 +42,7 @@ import autotune_current
 import autotune_velpos
 import expert_tuning_offline
 import expert_filter_scheduling_evidence
+import expert_limits_protections_evidence
 import expert_page_status
 import expert_user_units
 import single_axis_motion
@@ -7159,17 +7160,21 @@ class MainWindow(QtWidgets.QMainWindow):
             "4 · STATUS / ERRORS")
         self.btn_expert_step_user_units = QtWidgets.QPushButton(
             "5 · USER UNITS")
+        self.btn_expert_step_limits = QtWidgets.QPushButton(
+            "6 · LIMITS / PROTECT")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
         self.btn_expert_step_evidence.setCheckable(True)
         self.btn_expert_step_status.setCheckable(True)
         self.btn_expert_step_user_units.setCheckable(True)
+        self.btn_expert_step_limits.setCheckable(True)
         for button in (
                 self.btn_expert_step_current,
                 self.btn_expert_step_vp,
                 self.btn_expert_step_evidence,
                 self.btn_expert_step_status,
-                self.btn_expert_step_user_units):
+                self.btn_expert_step_user_units,
+                self.btn_expert_step_limits):
             button.setMinimumWidth(0)
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Ignored,
@@ -7182,6 +7187,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_step_group.addButton(self.btn_expert_step_status)
         self.expert_lab_step_group.addButton(
             self.btn_expert_step_user_units)
+        self.expert_lab_step_group.addButton(self.btn_expert_step_limits)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
@@ -7192,6 +7198,8 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self._set_expert_lab_step("status"))
         self.btn_expert_step_user_units.clicked.connect(
             lambda: self._set_expert_lab_step("user_units"))
+        self.btn_expert_step_limits.clicked.connect(
+            lambda: self._set_expert_lab_step("limits_protections"))
         expert_step_grid.addWidget(
             self.btn_expert_step_current, 0, 0, 1, 2)
         expert_step_grid.addWidget(
@@ -7199,9 +7207,11 @@ class MainWindow(QtWidgets.QMainWindow):
         expert_step_grid.addWidget(
             self.btn_expert_step_evidence, 0, 4, 1, 2)
         expert_step_grid.addWidget(
-            self.btn_expert_step_status, 1, 0, 1, 3)
+            self.btn_expert_step_status, 1, 0, 1, 2)
         expert_step_grid.addWidget(
-            self.btn_expert_step_user_units, 1, 3, 1, 3)
+            self.btn_expert_step_user_units, 1, 2, 1, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_limits, 1, 4, 1, 2)
         for column in range(6):
             expert_step_grid.setColumnStretch(column, 1)
         lab_layout.addLayout(expert_step_grid)
@@ -7590,13 +7600,111 @@ class MainWindow(QtWidgets.QMainWindow):
         user_units_layout.addStretch(1)
         self.expert_lab_stack.addWidget(self.expert_user_units_page)
 
+        self.expert_limits_protections_page = QtWidgets.QWidget()
+        limits_layout = QtWidgets.QVBoxLayout(
+            self.expert_limits_protections_page)
+        limits_layout.setContentsMargins(0, 0, 0, 0)
+        limits_layout.setSpacing(7)
+        self._expert_limits_protections = (
+            expert_limits_protections_evidence.build_evidence_snapshot())
+        self.expert_limits_banner = QtWidgets.QLabel(
+            self._expert_limits_protections.boundary)
+        self.expert_limits_banner.setProperty("role", "hint")
+        self.expert_limits_banner.setWordWrap(True)
+        limits_layout.addWidget(self.expert_limits_banner)
+        self.expert_limits_status = QtWidgets.QLabel()
+        self.expert_limits_status.setProperty("role", "field")
+        self.expert_limits_status.setWordWrap(True)
+        limits_layout.addWidget(self.expert_limits_status)
+
+        limits_selector_layout = QtWidgets.QHBoxLayout()
+        limits_selector_label = QtWidgets.QLabel(
+            "Documented EAS section")
+        limits_selector_label.setProperty("role", "field")
+        self.expert_limits_section = QtWidgets.QComboBox()
+        self.expert_limits_section.setEditable(False)
+        for section in self._expert_limits_protections.sections:
+            self.expert_limits_section.addItem(
+                "%s · %s" % (section.label, section.reference),
+                section.key)
+        limits_selector_layout.addWidget(limits_selector_label)
+        limits_selector_layout.addWidget(self.expert_limits_section, 1)
+        limits_layout.addLayout(limits_selector_layout)
+
+        self.expert_limits_table = QtWidgets.QTableWidget(0, 4)
+        self.expert_limits_table.setObjectName("expertEvidenceTable")
+        self.expert_limits_table.setHorizontalHeaderLabels((
+            "COMMAND",
+            "DOCUMENTED ROLE",
+            "UNIT / DOCUMENTED REF ACCESS",
+            "CONDITION / CONFLICT",
+        ))
+        self.expert_limits_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.expert_limits_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.expert_limits_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.expert_limits_table.setWordWrap(True)
+        self.expert_limits_table.setAlternatingRowColors(True)
+        self.expert_limits_table.setMinimumWidth(0)
+        self.expert_limits_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.expert_limits_table.verticalHeader().setVisible(False)
+        limits_header = self.expert_limits_table.horizontalHeader()
+        for column in range(4):
+            limits_header.setSectionResizeMode(
+                column,
+                QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.expert_limits_table.setMinimumHeight(250)
+        limits_layout.addWidget(self.expert_limits_table, 1)
+
+        self.expert_limits_conflicts = QtWidgets.QLabel(
+            "DOCUMENT CONFLICTS · " + " | ".join(
+                self._expert_limits_protections.document_conflicts))
+        self.expert_limits_warnings = QtWidgets.QLabel(
+            "PERSISTENT WARNINGS · " + " | ".join(
+                self._expert_limits_protections.persistent_warnings))
+        self.expert_limits_missing = QtWidgets.QLabel(
+            "MISSING EVIDENCE / NEED-DATA · " + " | ".join(
+                self._expert_limits_protections.missing_evidence))
+        for detail in (
+                self.expert_limits_conflicts,
+                self.expert_limits_warnings,
+                self.expert_limits_missing):
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            limits_layout.addWidget(detail)
+        self.expert_limits_sources = QtWidgets.QLabel(
+            "SOURCES · %d frozen identities · NetHelp HTML SHA-256 %s · "
+            "MAN-G-CR SHA-256 %s" % (
+                len(self._expert_limits_protections.sources),
+                self._expert_limits_protections.sources[0].sha256,
+                next(
+                    source.sha256
+                    for source in self._expert_limits_protections.sources
+                    if source.key == "command_reference")))
+        self.expert_limits_sources.setProperty("role", "hint")
+        self.expert_limits_sources.setWordWrap(True)
+        limits_layout.addWidget(self.expert_limits_sources)
+        self.expert_lab_stack.addWidget(
+            self.expert_limits_protections_page)
+
         self.expert_filter_type.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_filter_location.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_schedule_mode.valueChanged.connect(
             self._refresh_expert_evidence_panel)
+        self.expert_limits_section.currentIndexChanged.connect(
+            self._refresh_expert_limits_protections_panel)
         self._refresh_expert_evidence_panel()
+        self._refresh_expert_limits_protections_panel()
         lab_layout.addWidget(self.expert_lab_stack)
         expert_layout.addWidget(self.expert_lab_frame)
         self._expert_plant = None
@@ -7782,6 +7890,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._decorate_operation_control(
             self.expert_schedule_mode,
             "tuning.expert.scheduling.evidence.inspect")
+        self._decorate_operation_control(
+            self.expert_limits_section,
+            "tuning.expert.limits_protections.evidence.inspect")
         self._set_tuning_mode("quick")
         return f
 
@@ -7815,7 +7926,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _set_expert_lab_step(self, step):
         """Select one zero-I/O Expert model page without changing authority."""
         if step not in (
-                "current", "vp", "evidence", "status", "user_units"):
+                "current", "vp", "evidence", "status", "user_units",
+                "limits_protections"):
             raise ValueError("unknown Expert Lab step %r" % step)
         if step == "evidence":
             self.expert_lab_title.setText(
@@ -7843,6 +7955,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 "because their index groupings differ and the purpose "
                 "remains NEED-DATA. No current-drive readback, automatic "
                 "fill, FC/OF command, Apply, SV, or unit propagation.")
+        elif step == "limits_protections":
+            self.expert_lab_title.setText(
+                "EXPERT LIMITS / PROTECTIONS v0.1 · "
+                "DOCUMENTED PARAMETER MAP · PARTIAL / NEED-DATA")
+            self.expert_lab_note.setText(
+                "Immutable documentation catalog only: not current drive "
+                "config, not active protection state, and not a safety "
+                "assessment. No drive read, validation, recommendation, "
+                "command generation, write, Apply/SV, motion, or unit "
+                "propagation.")
         else:
             self.expert_lab_title.setText(self._expert_model_title)
             self.expert_lab_note.setText(self._expert_model_note)
@@ -7853,6 +7975,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_step_evidence.setChecked(step == "evidence")
         self.btn_expert_step_status.setChecked(step == "status")
         self.btn_expert_step_user_units.setChecked(step == "user_units")
+        self.btn_expert_step_limits.setChecked(
+            step == "limits_protections")
         self.expert_lab_stack.setCurrentIndex(
             {
                 "current": 0,
@@ -7860,9 +7984,38 @@ class MainWindow(QtWidgets.QMainWindow):
                 "evidence": 2,
                 "status": 3,
                 "user_units": 4,
+                "limits_protections": 5,
             }[step])
         if step == "status":
             self._refresh_expert_page_status()
+
+    def _refresh_expert_limits_protections_panel(self, *_args):
+        """Render one immutable documented section without authority changes."""
+        if not hasattr(self, "_expert_limits_protections"):
+            return
+        section = expert_limits_protections_evidence.section_evidence(
+            self.expert_limits_section.currentData())
+        self.expert_limits_status.setText(
+            "AUTHORITY %s · MODEL STATUS %s · %s · %d documented rows · "
+            "values intentionally absent" % (
+                self._expert_limits_protections.authority,
+                self._expert_limits_protections.model_status,
+                section.reference,
+                len(section.parameters)))
+        self.expert_limits_table.setRowCount(len(section.parameters))
+        for row, item in enumerate(section.parameters):
+            values = (
+                item.command,
+                "%s · %s" % (item.label, item.documented_effect),
+                "%s · document: %s · app: inspect-only" % (
+                    item.documented_unit, item.access),
+                "%s · %s" % (item.evidence_status, item.condition),
+            )
+            for column, value in enumerate(values):
+                cell = QtWidgets.QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.expert_limits_table.setItem(row, column, cell)
+        self.expert_limits_table.resizeRowsToContents()
 
     def _refresh_expert_evidence_panel(self, *_args):
         """Render only immutable public-document topology and blockers."""

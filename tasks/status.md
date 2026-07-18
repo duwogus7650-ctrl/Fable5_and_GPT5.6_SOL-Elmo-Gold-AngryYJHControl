@@ -1,12 +1,12 @@
-<!-- scope_progress: 93 -->
-<!-- offline_progress: 90 -->
+<!-- scope_progress: 94 -->
+<!-- offline_progress: 92 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections
 
-상태: **USER UNITS DOCUMENTED PREVIEW OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 20:10 KST**
+상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 20:58 KST**
 
 ## 현재 기준
 
@@ -25,10 +25,17 @@
 - Expert User Units · Documented Formula Preview v0.1 검증·구현 HEAD:
   `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- 현재 작업 대상: 다음 EAS 미연결 LOCAL/READ-ONLY 세부 화면의 최소 계약 확정
-- 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
-  1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
-  Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
+- Expert Limits / Protections · Documented Parameter Map v0.1:
+  working tree 구현·focused **69 passed**, 전체 **1513 passed**, 최신 runtime smoke와
+  독립 closeout 완료. private publish 전이라 구현 HEAD는 아직 기록하지 않음
+- 현재 작업 대상: Limits/Protections private Draft PR 갱신 뒤
+  Expert Application Settings의 근거 기반 LOCAL/no-I/O 최소 범위 확정
+- 제어창: 최신 source를 Python 3.14로 실행해 **OFFLINE · READ ONLY**에서
+  여섯 번째 `LIMITS / PROTECT`, `Current 7 / Motion 9 / Protections 11` row,
+  20개 frozen source identity와 `document: R/W · app: inspect-only` 표기를 확인했다.
+  초기 흰 표/밝은 글자 결함은 전용 QDD/amber/angrybirds 스타일로 수정했고,
+  최신 실행창에서 어두운 고대비 표를 재확인했다. 연결·읽기·쓰기·Apply/SV·구동은
+  실행하지 않았다.
 - Page Status runtime smoke: 네 번째 `STATUS / ERRORS` 단계에서
   `OVERALL PARTIAL · LOCAL STATUS ONLY`, P1 `MISSING`, P2 `BLOCKED`,
   Evidence `DOCUMENTED PARTIAL · 5 unresolved document conflicts`를 관찰.
@@ -52,10 +59,34 @@
 
 ## 검증 상태
 
+- `OBSERVED` Limits/Protections 모델·UI·operation catalog·authority focused 회귀:
+  **69 passed**. canonical frozen snapshot, 27개 command row, 9개 문서 충돌,
+  danger warning, strict lookup, 20개 source hash, zero file/process/network/worker/link/job/query/write,
+  기존 P1/P2/Evidence/Page Status/User Units/installed/dispatch/connection/safety 권한 불변,
+  세 테마 1366×820 geometry를 확인
+- 이 69-pass 결과에서 **로컬 immutable documented catalog만 GREEN**이다.
+  current drive config, active protection state, firmware/EAS parity, 값 유효성·추천,
+  protection efficacy, read/write/Apply/Revert/SV와 field safety는
+  **`NEED-DATA / NO-GO`**다.
 - `OBSERVED` 최신 전체 오프라인 suite:
-  **1498 passed, 0 failed in 275.50s**
-- `OBSERVED` Expert P1/P2·filter/scheduling evidence·Page Status·User Units·UI·catalog
-  집중 회귀: **162 passed, 0 failed in 59.11s**
+  **1513 passed in 698.16s**. 출력은 100%와 passed summary까지 완료됐고 stderr는
+  비어 있으며, 별도 capture-completeness 검사는 exit 0이다. 백그라운드 launcher가
+  원 pytest process의 숫자 exit code를 보존하지 않은 한계는 남긴다.
+- `OBSERVED` Limits/Protections 독립 closeout:
+  SimplIQ source, mutation digest, documented/app access 구분, fresh-import poison,
+  connection/safety authority snapshot과 세 테마 contrast를 재확인해
+  **잔여 HIGH/MEDIUM/LOW 없음**. 독립 focused 실행도 **69 passed**
+- `OBSERVED` 최신 runtime smoke:
+  Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 세 section 7/9/11 row,
+  20 frozen identities, dark high-contrast table, action control 없음,
+  Apply/Save `LOCKED`; drive/worker/command I/O와 motor action 없음
+- `OBSERVED` 최초 runtime table palette 결함:
+  흰 배경/밝은 글자를 RED로 재현한 뒤 `expertEvidenceTable` 전용 세 테마 스타일과
+  text/base contrast `>=4.5` 회귀로 수정
+- `OBSERVED` 직전 게시 기준 전체 오프라인 suite:
+  **1498 passed, 0 failed in 275.50s**. Limits/Protections 추가 전 기준선
+- `OBSERVED` 직전 게시 기준 Expert P1/P2·filter/scheduling evidence·Page Status·User Units·UI·catalog
+  집중 회귀: **162 passed, 0 failed in 59.11s**. 새 Limits/Protections working tree는 포함하지 않음
 - `OBSERVED` User Units 모델·UI·catalog·authority 집중 회귀:
   **51 passed, 0 failed in 10.09s**
 - `OBSERVED` User Units 독립 검토 3회 결과:
@@ -180,6 +211,18 @@
     `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` authority를 고정
   - `NOT CURRENT DRIVE CONFIG · NO FC/OF WRITE · NO APPLY/SV · NO DRIVE I/O`
   - Motion/Recorder/Status 단위 전파, drive readback, EAS parity와 안전 적합성은 비범위
+- **Expert Limits / Protections · Documented Parameter Map v0.1**
+  - Expert 여섯 번째 단계에서 `Current Limits`, `Motion Limits and Modulo`,
+    `Protections`의 27개 명령 row를 frozen static catalog로 표시
+  - authority `DOCUMENTED_PARAMETER_MAP_ONLY`, status `PARTIAL_NEED_DATA`
+  - `US[2]`, `ER[5]`, `CL[2..4]`, `XA[4]`, `CL[1]/PL[1]`, `LL[3]/HL[3]`,
+    `XM[1]/XM[2]`, FC-based unit 등 9개 문서 충돌을 임의 정규화하지 않음
+  - `CL[2] < 2`, `XA[4]` bypass, all-zero no-limit 조합과
+    `LL[3]=HL[3]=0`/`HL[2]=0` disable 경고를 항상 표시
+  - 로컬 inspect만 GREEN. current config/active protection/추천/검증/command/write/
+    Apply/SV/unit propagation/field safety는 `NEED-DATA / NO-GO`
+  - focused 69 passed, 전체 1513 passed, runtime smoke와 독립 closeout 완료;
+    private publish만 대기
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -187,7 +230,9 @@
 - **EAS 미연결 UI inventory**
   - Quick 6단계 명칭/순서가 현재 guided flow와 일치
   - Expert User Units는 documented 위치 식 preview만 부분 구현
-  - limits/protection·I/O·settling·time verification, User Units의 drive readback/write와
+  - limits/protection은 static documented map만 부분 구현; 값 read/validation/write와
+    protection efficacy는 미구현
+  - I/O·settling·time verification, User Units의 drive readback/write와
     EAS page icon/Enter/Apply·Summary recommendation은 잔여
   - Single Axis의 STO drive-reported snapshot은 부분 구현
   - Digital I/O·mode별 수동 구동·Terminal·docked Recorder parity는 잔여 `NEED-DATA`
@@ -205,19 +250,22 @@
 | Filter/Scheduling 문서 topology inspector | **완료 · `540877e` · private Draft PR #2** |
 | Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
 | Expert User Units · Documented Formula Preview v0.1 | **완료 · `0472ee5` · private Draft PR #2** |
+| Expert Limits / Protections · Documented Parameter Map v0.1 | **구현 + focused 69 / 전체 1513 passed + runtime/독립 closeout 완료 · private publish 대기** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1–2.5시간** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-User Units 게시 뒤 남은 무구동 매핑·비교는 **1–2.5시간**이다.
+Limits/Protections closeout 뒤 남은 무구동 매핑·비교는 **1–2.5시간**이다.
 이는 근거가 있는 LOCAL/READ-ONLY 계약을 고르는 시간이며 모든 EAS 페이지 구현 ETA가 아니다.
 Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
 
-1. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
-2. 근거가 충분한 다음 LOCAL/READ-ONLY 기능의 최소 범위와 음성 대조를 확정
-3. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
+1. Limits/Protections 문서/commit/private Draft PR을 갱신
+2. Expert Application Settings에서 문서 근거가 충분한 다음 LOCAL/no-I/O inspector 확정
+3. 새 기능도 실패 우선 zero-I/O/authority/geometry/contrast 계약부터 작성
+4. exact current config·EAS transaction·protection efficacy 근거 전까지
+   evaluator/recommendation/read/write/Apply/SV는 `NEED-DATA / NO-GO`
 
 ## 현장 안전 규칙
 
