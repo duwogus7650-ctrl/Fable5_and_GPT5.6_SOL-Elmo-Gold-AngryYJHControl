@@ -6,18 +6,18 @@
 # Gold Twitter · Quick + Single Axis + Expert Candidate Lab v1
 
 상태: **IN PROGRESS · CONTROL APP OFFLINE · EAS UI MAPPED / UNCONNECTED · READ-ONLY FIELD SESSION CLOSED**<br>
-업데이트: **2026-07-18 15:53 KST**
+업데이트: **2026-07-18 16:07 KST**
 
 ## 현재 기준
 
 - 브랜치: `codex/quick-single-axis-handoff`
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
-- GitHub 게시 HEAD: `9a596265afb31044d43d24015914f35de28d5706`
-  (`origin/codex/quick-single-axis-handoff`, Draft PR #2)
-- 현재 작업 대상: 게시 HEAD 위의 Single Axis Safety Snapshot v1
+- Single Axis 구현 HEAD: `6f1250ffbdd558e65499e4193d69a1872269c729`
+  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
+- 현재 작업 대상: Expert vNext P2·filter·scheduling OFFLINE candidate
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
-  1366×820, page-scroll reset, Quick/Expert 공통 제어와 Expert offline/locked 표시를
-  실제 실행창에서 재확인
+  1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
+  Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
 - EAS: 설치본을 실행해 **drive 미연결** 상태에서 Quick Automatic Tuning,
   Expert Tuning tree, Motion - Single Axis 화면 구조를 직접 관찰. Connect/Enable/Run/Apply/Save는
   누르지 않았고 직접 장비 식별자는 문서에서 제외
@@ -104,12 +104,11 @@
 
 | 작업 | 남은 예상 |
 |---|---:|
-| 최신 앱 OFFLINE smoke 후 문서 closeout | **0.25–0.5시간** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1.5–3시간** |
 | Expert vNext P2·필터·스케줄링 오프라인 구현 | **7–12시간** |
 | 통합 문서·독립 재검토 | **2–3시간** |
 
-**실기 검증 제외 잔여:** 약 **11–19 집중시간 / 2–3 작업일**.<br>
+**실기 검증 제외 잔여:** 약 **11–18 집중시간 / 2–3 작업일**.<br>
 전체 EAS 패리티나 vendor 비공개 알고리즘의 동일 복제는 별도 범위이며 현재 신뢰 가능한 ETA를 제시하지 않음.
 
 ## 다음 자동 진행

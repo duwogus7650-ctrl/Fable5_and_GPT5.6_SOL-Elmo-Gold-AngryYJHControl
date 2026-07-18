@@ -1,7 +1,7 @@
 # Quick Tuning + Single Axis + Expert Candidate Lab v1 작업 인계서
 
 상태: **READ ONLY FIELD ADMISSION OBSERVED · MOTOR ACTION NOT RUN · PRIVATE DRAFT**<br>
-기준 시각: **2026-07-18 15:53 KST**<br>
+기준 시각: **2026-07-18 16:07 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -9,19 +9,20 @@
 
 - 작업 브랜치: `codex/quick-single-axis-handoff`
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
-- GitHub 게시 HEAD:
-  `9a596265afb31044d43d24015914f35de28d5706`
+- Single Axis 구현 HEAD:
+  `6f1250ffbdd558e65499e4193d69a1872269c729`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
   `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
-- 현재 인계 대상은 위 기준에서 누적한 Quick/Single Axis/Expert·안전 경계 변경이다.
-  commit/push/PR은 수행하지 않았다.
-- 기존 사용자 media 변경과 신규 smoke 이미지는 보존했다.
+- Quick/Single Axis/Expert·안전 경계 변경은 새 비공개 `origin`의 기존 Draft PR #2에
+  위 HEAD까지 게시했다. 공개 원본 `source`에는 push하지 않았다.
+- 기존 사용자 `media/smoke_main.png` 변경은 working tree에 보존하고 게시에서 제외했다.
 - 최신 working tree의 앱으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - 후속 source 변경 뒤 Python 3.14로 다시 실행해 1366×820 OFFLINE/READ ONLY,
-  page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked 표시를 재확인했다.
+  page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
+  Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 재확인했다.
 - 이 admission에서는 motor enable, commutation, tuning, PTP 또는 setting write를
   실행했다는 증거가 없으며, 그런 동작을 검증한 것으로 간주하지 않는다.
 - progress monitor는 `tasks/status.md`를 읽어 갱신 중이다.
