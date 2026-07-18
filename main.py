@@ -42,6 +42,7 @@ import autotune_current
 import autotune_velpos
 import expert_tuning_offline
 import expert_filter_scheduling_evidence
+import expert_page_status
 import single_axis_motion
 import single_axis_status
 import recorder_control
@@ -7152,13 +7153,17 @@ class MainWindow(QtWidgets.QMainWindow):
             "2 · VELOCITY / POSITION P2 MODEL")
         self.btn_expert_step_evidence = QtWidgets.QPushButton(
             "3 · FILTER / SCHED EVIDENCE")
+        self.btn_expert_step_status = QtWidgets.QPushButton(
+            "4 · STATUS / ERRORS")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
         self.btn_expert_step_evidence.setCheckable(True)
+        self.btn_expert_step_status.setCheckable(True)
         for button in (
                 self.btn_expert_step_current,
                 self.btn_expert_step_vp,
-                self.btn_expert_step_evidence):
+                self.btn_expert_step_evidence,
+                self.btn_expert_step_status):
             button.setMinimumWidth(0)
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Ignored,
@@ -7168,15 +7173,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_step_group.addButton(self.btn_expert_step_current)
         self.expert_lab_step_group.addButton(self.btn_expert_step_vp)
         self.expert_lab_step_group.addButton(self.btn_expert_step_evidence)
+        self.expert_lab_step_group.addButton(self.btn_expert_step_status)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
             lambda: self._set_expert_lab_step("vp"))
         self.btn_expert_step_evidence.clicked.connect(
             lambda: self._set_expert_lab_step("evidence"))
+        self.btn_expert_step_status.clicked.connect(
+            lambda: self._set_expert_lab_step("status"))
         expert_step_row.addWidget(self.btn_expert_step_current)
         expert_step_row.addWidget(self.btn_expert_step_vp)
         expert_step_row.addWidget(self.btn_expert_step_evidence)
+        expert_step_row.addWidget(self.btn_expert_step_status)
         lab_layout.addLayout(expert_step_row)
 
         self.expert_lab_stack = QtWidgets.QStackedWidget()
@@ -7381,6 +7390,71 @@ class MainWindow(QtWidgets.QMainWindow):
         evidence_layout.addStretch(1)
         self.expert_lab_stack.addWidget(self.expert_evidence_page)
 
+        self.expert_page_status_page = QtWidgets.QWidget()
+        page_status_layout = QtWidgets.QVBoxLayout(
+            self.expert_page_status_page)
+        page_status_layout.setContentsMargins(0, 0, 0, 0)
+        page_status_layout.setSpacing(7)
+        self.expert_page_status_banner = QtWidgets.QLabel(
+            "LOCAL STATUS ONLY · NOT EAS ENTER/APPLY STATE · NOT INSTALLED · "
+            "NO CALCULATION · NO WRITE · NO DRIVE I/O")
+        self.expert_page_status_banner.setProperty("role", "hint")
+        self.expert_page_status_banner.setWordWrap(True)
+        page_status_layout.addWidget(self.expert_page_status_banner)
+        self.expert_page_status_overall = QtWidgets.QLabel(
+            "OVERALL PARTIAL · local state not yet classified")
+        self.expert_page_status_overall.setProperty("role", "field")
+        self.expert_page_status_overall.setWordWrap(True)
+        page_status_layout.addWidget(self.expert_page_status_overall)
+
+        page_status_grid = QtWidgets.QGridLayout()
+        page_status_grid.setHorizontalSpacing(10)
+        page_status_grid.setVerticalSpacing(7)
+        self.expert_page_status_rows = {}
+        self.expert_page_status_open_buttons = {}
+        for row, (key, label, target) in enumerate((
+                ("current", "Current P1", "current"),
+                ("vp", "Velocity / Position P2", "vp"),
+                ("evidence", "Filter / Scheduling Evidence", "evidence"))):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("role", "field")
+            detail = QtWidgets.QLabel()
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            open_button = QtWidgets.QPushButton("Open")
+            open_button.clicked.connect(
+                lambda _checked=False, page=target:
+                self._set_expert_lab_step(page))
+            self._decorate_operation_control(
+                open_button, "tuning.expert.page_status.inspect")
+            page_status_grid.addWidget(name, row, 0)
+            page_status_grid.addWidget(detail, row, 1)
+            page_status_grid.addWidget(open_button, row, 2)
+            self.expert_page_status_rows[key] = detail
+            self.expert_page_status_open_buttons[key] = open_button
+        page_status_grid.setColumnStretch(1, 1)
+        page_status_layout.addLayout(page_status_grid)
+        self.expert_page_status_source = QtWidgets.QLabel(
+            "SOURCE · %s · SHA-256 %s" % (
+                expert_page_status.SOURCE,
+                expert_page_status.SOURCE_SHA256))
+        self.expert_page_status_source.setProperty("role", "hint")
+        self.expert_page_status_source.setWordWrap(True)
+        page_status_layout.addWidget(self.expert_page_status_source)
+        page_status_boundary = QtWidgets.QLabel(
+            "EAS Idle/Changed/Warning icon parity, Enter, Apply, Apply All, "
+            "Revert, saved-last-page behavior and completion recommendations "
+            "remain unimplemented / NEED-DATA.")
+        page_status_boundary.setProperty("role", "hint")
+        page_status_boundary.setWordWrap(True)
+        page_status_layout.addWidget(page_status_boundary)
+        page_status_layout.addStretch(1)
+        self.expert_lab_stack.addWidget(self.expert_page_status_page)
+
         self.expert_filter_type.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_filter_location.currentIndexChanged.connect(
@@ -7397,6 +7471,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._expert_vp_candidate = None
         self._expert_current_inputs_stale = True
         self._expert_vp_inputs_stale = True
+        self._expert_current_error = None
+        self._expert_vp_error = None
+        self._expert_page_status_snapshot = None
+        self._expert_page_status_dirty = True
         for field in (
                 self.expert_lab_r_ohm,
                 self.expert_lab_l_uh,
@@ -7408,6 +7486,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self._mark_expert_current_input_stale)
         for field in (self.expert_vp_ka, self.expert_vp_b_visc):
             field.textEdited.connect(self._mark_expert_vp_input_stale)
+        self._refresh_expert_page_status()
         self._set_expert_lab_step("current")
 
         self.tuning_guided_run_frame = QtWidgets.QFrame()
@@ -7592,7 +7671,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_expert_lab_step(self, step):
         """Select one zero-I/O Expert model page without changing authority."""
-        if step not in ("current", "vp", "evidence"):
+        if step not in ("current", "vp", "evidence", "status"):
             raise ValueError("unknown Expert Lab step %r" % step)
         if step == "evidence":
             self.expert_lab_title.setText(
@@ -7603,6 +7682,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 "evaluation, controller selection, emulation, KV/KG/GS write, "
                 "worker, command, or drive I/O. Unresolved document conflicts "
                 "remain fail-closed as NEED-DATA.")
+        elif step == "status":
+            self.expert_lab_title.setText(
+                "EXPERT PAGE STATUS v0.1 · LOCAL STATUS ONLY · NO DRIVE I/O")
+            self.expert_lab_note.setText(
+                "Classifies existing in-memory P1/P2/evidence state only: "
+                "no calculation, installed-drive claim, EAS Enter/Apply "
+                "state, worker, command, file, or drive I/O.")
         else:
             self.expert_lab_title.setText(self._expert_model_title)
             self.expert_lab_note.setText(self._expert_model_note)
@@ -7611,8 +7697,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_step_current.setChecked(current)
         self.btn_expert_step_vp.setChecked(vp)
         self.btn_expert_step_evidence.setChecked(step == "evidence")
+        self.btn_expert_step_status.setChecked(step == "status")
         self.expert_lab_stack.setCurrentIndex(
-            {"current": 0, "vp": 1, "evidence": 2}[step])
+            {"current": 0, "vp": 1, "evidence": 2, "status": 3}[step])
+        if step == "status":
+            self._refresh_expert_page_status()
 
     def _refresh_expert_evidence_panel(self, *_args):
         """Render only immutable public-document topology and blockers."""
@@ -7690,9 +7779,57 @@ class MainWindow(QtWidgets.QMainWindow):
             "MISSING / NEED-DATA · " + " · ".join(
                 self._expert_evidence.missing_evidence))
 
+    def _refresh_expert_page_status(self, *_args):
+        """Project existing local Expert state without creating authority."""
+        if not hasattr(self, "expert_page_status_rows"):
+            return
+        if (self.expert_lab_stack.currentWidget()
+                is not self.expert_page_status_page):
+            self._expert_page_status_dirty = True
+            return
+        try:
+            snapshot = expert_page_status.build_page_status_snapshot(
+                current_plant=getattr(self, "_expert_plant", None),
+                current_candidate=getattr(self, "_expert_candidate", None),
+                current_stale=getattr(
+                    self, "_expert_current_inputs_stale", True),
+                current_error=getattr(self, "_expert_current_error", None),
+                vp_plant=getattr(self, "_expert_vp_plant", None),
+                vp_candidate=getattr(self, "_expert_vp_candidate", None),
+                vp_stale=getattr(self, "_expert_vp_inputs_stale", True),
+                vp_error=getattr(self, "_expert_vp_error", None),
+                filter_evidence=getattr(self, "_expert_evidence", None),
+            )
+        except (TypeError, ValueError, OverflowError) as exc:
+            self._expert_page_status_snapshot = None
+            self._expert_page_status_dirty = False
+            self.expert_page_status_overall.setText(
+                "OVERALL INVALID · local state classification failed · "
+                "NOT EAS COMPLETE")
+            detail = (
+                "INVALID · local state classification failed · %s · "
+                "no authority granted" % exc)
+            for label in self.expert_page_status_rows.values():
+                label.setText(detail)
+            return
+
+        self._expert_page_status_snapshot = snapshot
+        self._expert_page_status_dirty = False
+        self.expert_page_status_overall.setText(
+            "OVERALL PARTIAL · LOCAL STATUS ONLY · filter/scheduling "
+            "NEED-DATA · NOT EAS COMPLETE")
+        for page in snapshot.pages:
+            self.expert_page_status_rows[page.key].setText(
+                "%s · %s" % (
+                    page.state.replace("_", " "),
+                    page.detail,
+                ))
+
     def _mark_expert_current_input_stale(self, *_args):
         """Prevent a prior P1 PASS from appearing bound to edited inputs."""
+        self._expert_current_error = None
         if getattr(self, "_expert_candidate", None) is None:
+            self._refresh_expert_page_status()
             return
         self._expert_current_inputs_stale = True
         self.expert_lab_status.setText(
@@ -7703,18 +7840,22 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _mark_expert_vp_input_stale(self, *_args):
         """Keep prior immutable evidence but revoke its visible PASS status."""
+        self._expert_vp_error = None
         if getattr(self, "_expert_vp_candidate", None) is None:
+            self._refresh_expert_page_status()
             return
         self._expert_vp_inputs_stale = True
         self.expert_vp_status.setText(
             "STALE · K_a/B inputs changed · previous P2 MODEL retained "
             "as historical evidence · recalculation required")
+        self._refresh_expert_page_status()
 
     def _reset_expert_vp_candidate(self, reason):
         """Invalidate only the dependent offline P2 projection."""
         self._expert_vp_plant = None
         self._expert_vp_candidate = None
         self._expert_vp_inputs_stale = True
+        self._expert_vp_error = None
         for field in self.expert_vp_result_fields.values():
             field.setText("—")
         for key in (
@@ -7722,6 +7863,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "pm_vel", "pm_pos"):
             self.tune_gain_fields[key].setText("—")
         self.expert_vp_status.setText(str(reason))
+        self._refresh_expert_page_status()
 
     def _show_tuning_mode(self, mode):
         self._nav_to(3)
@@ -7765,14 +7907,17 @@ class MainWindow(QtWidgets.QMainWindow):
             response = expert_tuning_offline.current_frequency_response(
                 plant, candidate)
         except (TypeError, ValueError, OverflowError) as exc:
+            self._expert_current_error = "INVALID_INPUT · %s" % exc
             self.expert_lab_status.setText(
                 "INVALID · previous candidate preserved · %s" % exc)
+            self._refresh_expert_page_status()
             return
 
         self._expert_plant = plant
         self._expert_candidate = candidate
         self._expert_response = response
         self._expert_current_inputs_stale = False
+        self._expert_current_error = None
         self._reset_expert_vp_candidate(
             "MODEL · calculate after Current candidate · no P2 candidate")
         candidate_fields = self.tune_gain_fields
@@ -7807,6 +7952,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 response.frequency_hz[-1],
             ))
         self.expert_bode_widget.set_response(response)
+        self._refresh_expert_page_status()
 
     def _calculate_expert_vp_candidate(self):
         """Project a pure offline P2 candidate from the complete P1 MODEL.
@@ -7838,8 +7984,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 expert_tuning_offline.design_velocity_position_candidate(
                     plant))
         except (TypeError, ValueError, OverflowError) as exc:
+            self._expert_vp_error = "INVALID_INPUT · %s" % exc
             self.expert_vp_status.setText(
                 "INVALID · previous P2 candidate preserved · %s" % exc)
+            self._refresh_expert_page_status()
             return
 
         gain_margin = (
@@ -7850,6 +7998,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._expert_vp_plant = plant
         self._expert_vp_candidate = candidate
         self._expert_vp_inputs_stale = False
+        self._expert_vp_error = None
         results = self.expert_vp_result_fields
         results["kp_vel"].setText(
             "%.7g A_peak/(cnt/s)" % candidate.kp_vel_a_per_cnt_s)
@@ -7897,6 +8046,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 candidate.design_bandwidth_rad_s,
                 candidate.reductions,
             ))
+        self._refresh_expert_page_status()
 
     # ---- auto-tune GUI glue ----------------------------------------------------------
     def _claim_tune_dispatch(self, kind, trial=None):

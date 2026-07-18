@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status 작업 인계서
 
-상태: **FILTER/SCHEDULING INSPECTOR OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-18 18:25 KST**<br>
+상태: **PAGE STATUS INSPECTOR OFFLINE VERIFIED · PRIVATE DRAFT UPDATE PENDING · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-18 18:59 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -37,6 +37,11 @@
   `Scheduled position filter`, `GS[2]=64 · SPEED`를 관찰했다.
   다섯 문서 충돌과 `NO MODEL · NO EMULATION · NO WRITE · NO DRIVE I/O`가
   동시에 표시되고 Apply/Save가 계속 잠긴 상태를 확인했다.
+- Page Status inspector를 포함한 최신 source를 다시 실행해 네 번째
+  `STATUS / ERRORS` 단계에서 `OVERALL PARTIAL · LOCAL STATUS ONLY`,
+  P1 `MISSING`, P2 `BLOCKED`, Evidence `DOCUMENTED PARTIAL · 5 unresolved
+  document conflicts`를 관찰했다. `NOT EAS ENTER/APPLY STATE · NOT INSTALLED ·
+  NO DRIVE I/O`와 Apply/Save `LOCKED`가 동시에 유지됐다.
 - 이 admission에서는 motor enable, commutation, tuning, PTP 또는 setting write를
   실행했다는 증거가 없으며, 그런 동작을 검증한 것으로 간주하지 않는다.
 - progress monitor는 `tasks/status.md`를 읽어 갱신 중이다.
@@ -111,6 +116,20 @@
   readback, Verify/Apply/Save, dispatch authority를 바꾸지 않음
 - 상세 계약:
   [`expert-filter-scheduling-evidence-v0.1.md`](expert-filter-scheduling-evidence-v0.1.md)
+
+### 2.5 Expert Local Page Status / Errors v0.1
+
+- 네 번째 Expert 단계에서 현재 프로세스의 P1/P2/evidence immutable 상태만 분류
+- 상태는 `MISSING / BLOCKED / STALE / INVALID / CURRENT LOCAL MODEL /
+  DOCUMENTED PARTIAL`; 전체 verdict는 항상 `PARTIAL`
+- P1 수치 coherence, 정확한 P1↔P2 object binding과 P2 재계산,
+  canonical filter/scheduling snapshot 전체 동등성을 fail-closed로 확인
+- 입력 편집 중 숨겨진 Status page는 dirty만 기록하고 page 진입 시 한 번 재분류
+- page 열기와 `Open` 이동은 candidate, installed readback, `_vp_result`, dispatch,
+  Verify/Apply/Save authority를 바꾸지 않고 worker/link/command/file/drive I/O를 만들지 않음
+- EAS idle/changed/warning/error icon parity, Enter/Apply/Revert, saved-last-page,
+  Summary recommendation과 installed-drive 판정은 구현하지 않음
+- 상세 계약: [`expert-page-status-v0.1.md`](expert-page-status-v0.1.md)
 
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
@@ -217,8 +236,11 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1434 passed, 0 failed in 249.01s** | Expert v2와 filter/scheduling evidence inspector를 포함한 최신 working tree의 Python/mock/offscreen 경로 |
-| Filter/scheduling evidence·UI·catalog 집중 회귀 | **98 passed, 0 failed in 53.01s** | immutable public-document topology, strict inputs, five unresolved document conflicts, zero-I/O·authority isolation, 세 스킨 1366×820 |
+| 전체 repository suite | **1448 passed, 0 failed in 277.69s** | Expert v2, filter/scheduling evidence와 Page Status inspector를 포함한 최신 working tree의 Python/mock/offscreen 경로 |
+| Expert P1/P2·Evidence·Page Status·UI·catalog 집중 회귀 | **112 passed, 0 failed in 74.68s** | immutable local models/evidence, exact binding/coherence, strict inputs, 문서 충돌 5건, zero-I/O·authority isolation, hidden-page dirty refresh, 세 스킨 1366×820 |
+| Page Status pure projection | **10 passed** | missing/blocked/current/stale/invalid, forged evidence, mutated P2, I/O poison |
+| Page Status 독립 리뷰 | RED 5건 수정 뒤 **잔여 HIGH/MEDIUM/LOW 없음** | coherence-before-stale, canonical evidence, P2 MISSING, hidden-page one-shot refresh |
+| Page Status 최신 runtime smoke | **P1 MISSING · P2 BLOCKED · Evidence DOCUMENTED PARTIAL** | Python 3.14, 1366×820, OFFLINE/READ ONLY; LOCAL STATUS ONLY, NOT EAS ENTER/APPLY, NOT INSTALLED, Apply/Save LOCKED |
 | Filter/scheduling 최신 runtime smoke | **Notch · Scheduled position · GS[2]=64 SPEED** | Python 3.14, 1366×820, OFFLINE/READ ONLY; 다섯 문서 충돌, NO MODEL/EMULATION/WRITE/DRIVE I/O와 Apply/Save LOCKED 확인 |
 | Expert v2 수치·UI·catalog 집중 회귀 | **74 passed, 0 failed in 44.40s** | P1→P2 MODEL, provenance·mutation/음성 대조, zero-I/O, stale authority, 세 스킨 1366×820와 palette 격리 |
 | Expert v2 독립 리뷰 | HIGH 1 + MEDIUM 1 RED 재현 후 **5 passed** | 다른 plant의 P1 자기서명·모순 delegate PASS·입력 편집 뒤 stale PASS 차단 |

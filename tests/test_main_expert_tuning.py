@@ -517,6 +517,141 @@ def test_filter_scheduling_evidence_step_is_local_and_fail_closed(
     assert created == []
 
 
+def test_expert_page_status_step_is_local_and_authority_preserving(
+        window, qapp, monkeypatch):
+    created = []
+
+    def forbidden_constructor(*args, **kwargs):
+        created.append((args, kwargs))
+        raise AssertionError("page-status inspector must not construct transport")
+
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden_constructor)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden_constructor)
+    authority_before = {
+        "p1": window._expert_candidate,
+        "p2": window._expert_vp_candidate,
+        "installed": {
+            key: field.text()
+            for key, field in window.tune_installed_gain_fields.items()
+        },
+        "vp_result": window._vp_result,
+        "dispatch": window._tune_dispatch_inflight,
+        "verify_enabled": window.btn_tune_verify.isEnabled(),
+        "apply_enabled": window.btn_tune_vp_apply.isEnabled(),
+        "save_enabled": window.btn_tune_vp_save.isEnabled(),
+    }
+
+    window._show_tuning_mode("expert")
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+
+    assert window.worker is None
+    assert created == []
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_page_status_page)
+    assert "LOCAL STATUS ONLY" in window.expert_lab_title.text()
+    assert "NO DRIVE I/O" in window.expert_lab_title.text()
+    assert "NOT EAS ENTER/APPLY STATE" in (
+        window.expert_page_status_banner.text())
+    assert "NOT INSTALLED" in window.expert_page_status_banner.text()
+    assert "OVERALL PARTIAL" in window.expert_page_status_overall.text()
+    assert "MISSING" in window.expert_page_status_rows["current"].text()
+    assert "BLOCKED" in window.expert_page_status_rows["vp"].text()
+    assert "DOCUMENTED PARTIAL" in (
+        window.expert_page_status_rows["evidence"].text())
+    rendered = " ".join(
+        label.text() for label in window.expert_page_status_rows.values())
+    assert "READY" not in rendered
+    assert "APPLIED" not in rendered
+    assert window._expert_candidate is authority_before["p1"]
+    assert window._expert_vp_candidate is authority_before["p2"]
+    assert window._vp_result is authority_before["vp_result"]
+    assert window._tune_dispatch_inflight is authority_before["dispatch"]
+    assert window.btn_tune_verify.isEnabled() == (
+        authority_before["verify_enabled"])
+    assert window.btn_tune_vp_apply.isEnabled() == (
+        authority_before["apply_enabled"])
+    assert window.btn_tune_vp_save.isEnabled() == (
+        authority_before["save_enabled"])
+    assert {
+        key: field.text()
+        for key, field in window.tune_installed_gain_fields.items()
+    } == authority_before["installed"]
+
+
+def test_expert_page_status_tracks_current_and_stale_models(
+        window, qapp):
+    _calculate_current_model(window, qapp)
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+    p1_before = window._expert_candidate
+    p2_before = window._expert_vp_candidate
+
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+    assert "CURRENT LOCAL MODEL" in (
+        window.expert_page_status_rows["current"].text())
+    assert "CURRENT LOCAL MODEL" in (
+        window.expert_page_status_rows["vp"].text())
+    assert "NOT INSTALLED" in (
+        window.expert_page_status_rows["current"].text())
+    assert "NOT INSTALLED" in (
+        window.expert_page_status_rows["vp"].text())
+
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.8e6")
+    window.expert_vp_ka.textEdited.emit("5.8e6")
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+
+    assert window._expert_candidate is p1_before
+    assert window._expert_vp_candidate is p2_before
+    assert "CURRENT LOCAL MODEL" in (
+        window.expert_page_status_rows["current"].text())
+    assert "STALE" in window.expert_page_status_rows["vp"].text()
+
+
+def test_expert_page_status_defers_hidden_reclassification_until_opened(
+        window, qapp, monkeypatch):
+    _calculate_current_model(window, qapp)
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+
+    original = (
+        app_main.expert_tuning_offline.design_velocity_position_candidate)
+    calls = []
+
+    def counted(plant):
+        calls.append(plant)
+        return original(plant)
+
+    monkeypatch.setattr(
+        app_main.expert_tuning_offline,
+        "design_velocity_position_candidate",
+        counted,
+    )
+    window.expert_vp_ka.setText("5.8e6")
+    window.expert_vp_ka.textEdited.emit("5.8e6")
+    qapp.processEvents()
+
+    assert window.expert_lab_stack.currentIndex() == 1
+    assert window._expert_page_status_dirty is True
+    assert calls == []
+
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+
+    assert len(calls) == 1
+    assert window._expert_page_status_dirty is False
+    assert "STALE" in window.expert_page_status_rows["vp"].text()
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
     previous_style_sheet = qapp.styleSheet()
@@ -527,7 +662,7 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
     try:
         for themed in (theme_qdd, amber_theme, theme_angrybirds):
             qapp.setStyleSheet(themed.STYLE)
-            for step in ("current", "vp", "evidence"):
+            for step in ("current", "vp", "evidence", "status"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):

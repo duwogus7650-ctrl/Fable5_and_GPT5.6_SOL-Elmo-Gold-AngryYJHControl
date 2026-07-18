@@ -98,7 +98,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-029 | Quick Tuning: Velocity/Position Identification | [ ] | [x] G2 §2.3.4 | [x] MOTION | [x] | [~] | [ ] | [x] | [x] | Phase 2 |
 | A-030 | Quick Tuning: Velocity/Position Design | [ ] | [x] G2 §2.3.4 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
 | A-031 | Quick Tuning: Summary recommendation/apply | [ ] | [x] G2 §2.3.4 | [x] RAM/SV | [~] | [ ] | [ ] | [~] | [~] | 추천 action 정확한 의미 미확정 |
-| A-032 | Expert Tuning tree와 page status/error | [ ] | [x] G8 §8.2 | [x] LOCAL/READ | [~] | [ ] | — | — | [~] | 현재 Quick/Expert 보기 분리만 |
+| A-032 | Expert Tuning tree와 page status/error | [ ] | [x] G8 §8.2 | [x] LOCAL/READ | [~] local inspector | [ ] | — | — | [~] | P1/P2/evidence local 상태만; EAS icon/Enter/Apply/Summary parity 아님 |
 | A-033 | Expert Apply/Revert current page | [ ] | [x] G8 §8.2.1 | [x] RAM | [x] P1/P2 | [~] | [ ] | [x] | [x] | page 범위 제한 |
 | A-034 | Expert Apply All/Revert All | [ ] | [x] G8 §8.2.1/RIB | [x] RAM | [~] | [ ] | [ ] | [~] | [~] | aggregate transaction 필요 |
 | A-035 | Expert Drive Load/Drive Save/Reset | [ ] | [x] G8 §8.2.1~2 | [x] RAM/SV/RESET-FLASH | [~] 제한 SV | [ ] | [ ] | [~] | [~] | generic path 없음 |

@@ -56,6 +56,18 @@ def test_expert_filter_and_scheduling_evidence_inspection_is_local_only():
         assert "documented" in spec.summary.lower()
 
 
+def test_expert_page_status_inspection_is_local_partial_and_not_eas_apply():
+    spec = catalog.operation_spec("tuning.expert.page_status.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    assert "no drive" in spec.summary.lower()
+    assert "not eas enter/apply" in spec.summary.lower()
+    assert "not installed" in spec.summary.lower()
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 

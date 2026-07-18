@@ -110,6 +110,12 @@ _SPECS = (
           "Inspect documented GS[2] modes and KG table topology locally with "
           "no drive, worker, command, gain selection, emulation, or write I/O.",
           status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.page_status.inspect",
+          "Expert Page Status / Errors · LOCAL",
+          OperationRisk.LOCAL_UI,
+          "Project existing local P1/P2/evidence state with no drive I/O; "
+          "this is not EAS Enter/Apply state and not installed-drive evidence.",
+          status=OperationStatus.PARTIAL),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,
