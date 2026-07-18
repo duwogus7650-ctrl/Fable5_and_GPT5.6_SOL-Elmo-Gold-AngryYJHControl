@@ -1,12 +1,12 @@
-<!-- scope_progress: 87 -->
-<!-- offline_progress: 82 -->
+<!-- scope_progress: 90 -->
+<!-- offline_progress: 86 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert Candidate Lab v1
+# Gold Twitter · Quick + Single Axis + Expert Candidate Lab v2
 
-상태: **IN PROGRESS · CONTROL APP OFFLINE · EAS UI MAPPED / UNCONNECTED · READ-ONLY FIELD SESSION CLOSED**<br>
-업데이트: **2026-07-18 16:07 KST**
+상태: **EXPERT v2 OFFLINE VERIFIED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 17:03 KST**
 
 ## 현재 기준
 
@@ -14,10 +14,14 @@
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
 - Single Axis 구현 HEAD: `6f1250ffbdd558e65499e4193d69a1872269c729`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- 현재 작업 대상: Expert vNext P2·filter·scheduling OFFLINE candidate
+- 현재 작업 대상: Expert v2 비공개 GitHub 게시와 handoff 마감
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
   1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
   Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
+- Expert runtime smoke: P1은 `fc=430.129 Hz · PM=55.69 deg`, P2는
+  `K_a=5.794e6 cnt/s²/A_peak · B=1e-7 A_peak/(cnt/s)`에서
+  `MODEL GATE PASS · D=0.5794 1/s · bandwidth=457.500 rad/s`.
+  입력을 `5.8e6`으로 바꿨을 때 `STALE` 전환을 관찰한 뒤 기준값으로 복원·재계산
 - EAS: 설치본을 실행해 **drive 미연결** 상태에서 Quick Automatic Tuning,
   Expert Tuning tree, Motion - Single Axis 화면 구조를 직접 관찰. Connect/Enable/Run/Apply/Save는
   누르지 않았고 직접 장비 식별자는 문서에서 제외
@@ -27,7 +31,15 @@
 
 ## 검증 상태
 
-- `OBSERVED` 최신 전체 오프라인 suite: **1371 passed, 0 failed in 303.22s**
+- `OBSERVED` 최신 전체 오프라인 suite:
+  **1410 passed, 0 failed in 254.76s**
+- `OBSERVED` Expert v2 수치 모델·UI·operation catalog·palette 격리 집중 회귀:
+  **75 passed, 0 failed in 24.59s**
+- `OBSERVED` P2 동결 기준점, 대수 관계, malformed delegate mutation,
+  invalid-input atomic preservation, worker/link/job 0개, installed readback/Verify/Apply/Save
+  authority 불변, qdd/amber/angrybirds 1366×820 무수평스크롤을 고정
+- `OBSERVED` 독립 리뷰 HIGH 1건(P1 plant provenance/delegate self-pass)과
+  MEDIUM 1건(input edit 뒤 stale PASS)을 RED 5건으로 재현한 뒤 수정; 해당 5건 GREEN
 - `OBSERVED` Single Axis snapshot·connection generation·session log·motion 집중 회귀:
   **346 passed, 0 failed in 127.18s**
 - `OBSERVED` 집중 연결·텔레메트리·모니터·테마 회귀: **204 passed**
@@ -51,9 +63,11 @@
 - `OBSERVED` Disconnect/창 닫기 즉시 authority를 폐기하고 late
   telemetry/connected/failed에도 `DISCONNECTING`과 선택기 잠금을 유지하도록 수정.
   직접 영향 **169 passed**, 추가 UI/safety **182 passed**, 독립 재검토 **102 passed**
-- `OBSERVED` 최신 runtime smoke: System 하단에서 Status로 전환했을 때
-  `FAULT / STATUS / SESSION LOG` 상단이 즉시 보였고, Expert Candidate Lab은
-  `OFFLINE MODEL · NO DRIVE I/O`, Apply/Save `LOCKED`; hardware Run/Verify는 OFFLINE disabled
+- `OBSERVED` 최신 runtime smoke: Expert Candidate Lab v2에서 P1과 P2를 순서대로
+  계산했고 위 기준점에서 각각 PASS. K_a 편집 시 기존 immutable 결과는 보존되지만
+  상태가 `STALE · recalculation required`로 바뀌었고, 기준값 복원·재계산 뒤 PASS.
+  전체 과정은 `OFFLINE MODEL · NO DRIVE / WORKER / COMMAND I/O`,
+  Apply/Save `LOCKED`; hardware Run/Verify는 OFFLINE disabled
 - `OBSERVED` EAS 미연결 UI baseline:
   Quick 6단계, Expert의 Limits/Protections·Current·Commutation·Velocity/Position·Scheduling,
   Single Axis의 I/O·STO·UM·Current/Stepper/Sine·PTP·Terminal·Recorder 구조를 직접 매핑
@@ -83,9 +97,14 @@
   - telemetry authority 상실·energizing 중에는 snapshot만 blank하되 current-worker
     `motion_config_unknown` fail-safe latch는 계속 수용
   - live PTP는 기계 envelope·limit·정지거리·독립 E-stop/STO 근거 전까지 `NEED-DATA`
-- **Expert Candidate Lab v1**
-  - 전류루프 후보 계산과 read-only Bode 미리보기는 LOCAL MODEL
-  - EAS Expert 전체 패리티, P2·필터·스케줄링은 미구현/잔여
+- **Expert Candidate Lab v2**
+  - 두 단계 Current P1 → Velocity/Position P2 immutable LOCAL MODEL
+  - explicit phase-to-phase R/L/TS, count/s·peak-A `K_a/B` basis
+  - P1 성공 시 종속 P2 폐기, invalid 입력 시 이전 완전한 모델 보존
+  - P2 KP[2]/KI[2]/KP[3]와 modeled PM/GM 표시; `I_c`는 선형 모델에서 제외
+  - candidate/installed readback/`_vp_result` 권한 분리, drive/worker/command I/O 0
+  - `MODEL GATE`, `SINGLE-POINT`, `GS[2]=0 ONLY`, `FILTER NEED-DATA`를 UI에 고정
+  - EAS 전체 패리티·filter·gain scheduling·vendor 비공개 알고리즘 복제는 잔여
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -104,18 +123,20 @@
 
 | 작업 | 남은 예상 |
 |---|---:|
+| Expert v2 로컬 구현·전체 회귀·독립 재검토·runtime smoke | **완료** |
+| Expert v2 private Draft PR 게시 마감 | **0.25–0.5시간** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1.5–3시간** |
-| Expert vNext P2·필터·스케줄링 오프라인 구현 | **7–12시간** |
-| 통합 문서·독립 재검토 | **2–3시간** |
+| Expert filter·gain scheduling 근거 확보/오프라인 모델 | **5–9시간 · 현재 NEED-DATA** |
 
-**실기 검증 제외 잔여:** 약 **11–18 집중시간 / 2–3 작업일**.<br>
+**실기 검증 제외 잔여:** 게시 마감 뒤 약 **6.5–12 집중시간 / 1–2 작업일**.<br>
 전체 EAS 패리티나 vendor 비공개 알고리즘의 동일 복제는 별도 범위이며 현재 신뢰 가능한 ETA를 제시하지 않음.
 
 ## 다음 자동 진행
 
-1. Expert vNext P2·filter·scheduling을 순수 OFFLINE candidate 단계부터 구현
-2. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
-3. 현장 gate가 충족된 개별 동작만 별도 확인 후 제한 실기
+1. Expert v2 검증 증거와 현재 source를 private Draft PR #2에 갱신
+2. Expert filter/scheduling은 exact 식·단위·range·interpolation 근거 전까지 `NEED-DATA`
+3. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
+4. 현장 gate가 충족된 개별 동작만 별도 확인 후 제한 실기
 
 ## 현장 안전 규칙
 

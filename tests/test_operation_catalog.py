@@ -21,13 +21,26 @@ def test_catalog_classifies_the_user_facing_hardware_boundaries():
 
 
 def test_expert_offline_candidate_calculation_is_local_only():
-    spec = catalog.operation_spec("tuning.expert.offline.calculate")
+    for operation_id in (
+            "tuning.expert.offline.calculate",
+            "tuning.expert.offline.calculate_p2"):
+        spec = catalog.operation_spec(operation_id)
+        assert spec.risk is catalog.OperationRisk.LOCAL_UI
+        assert spec.status is catalog.OperationStatus.IMPLEMENTED
+        assert spec.gates == frozenset()
+        assert spec.risk not in catalog.DRIVE_MUTATING_RISKS
+        assert "no drive" in spec.summary.lower()
 
-    assert spec.risk is catalog.OperationRisk.LOCAL_UI
-    assert spec.status is catalog.OperationStatus.IMPLEMENTED
-    assert spec.gates == frozenset()
-    assert spec.risk not in catalog.DRIVE_MUTATING_RISKS
-    assert "no drive" in spec.summary.lower()
+
+def test_expert_filter_and_scheduling_are_visible_need_data_boundaries():
+    for operation_id in (
+            "tuning.expert.filter.offline.evaluate",
+            "tuning.expert.scheduling.offline.evaluate"):
+        spec = catalog.operation_spec(operation_id)
+        assert spec.risk is catalog.OperationRisk.NEED_DATA
+        assert spec.status is catalog.OperationStatus.NEED_DATA
+        assert spec.gates == frozenset()
+        assert not spec.menu_enabled
 
 
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():

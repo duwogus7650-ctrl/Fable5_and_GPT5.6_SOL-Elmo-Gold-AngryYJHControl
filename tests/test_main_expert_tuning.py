@@ -15,6 +15,9 @@ import pytest
 from PyQt6 import QtGui, QtWidgets
 
 import main as app_main
+import theme as amber_theme
+import theme_angrybirds
+import theme_qdd
 
 
 @pytest.fixture(scope="module")
@@ -122,7 +125,7 @@ def test_offline_expert_mode_switch_and_edit_create_no_worker(
     assert not window.expert_lab_frame.isHidden()
     assert (
         window.expert_lab_title.text()
-        == "EXPERT CANDIDATE LAB v1 · OFFLINE MODEL · NO DRIVE I/O"
+        == "EXPERT CANDIDATE LAB v2 · OFFLINE MODEL · NO DRIVE I/O"
     )
     assert "HARDWARE TUNING CONTROLS" in window.expert_hardware_title.text()
     assert window.worker is None
@@ -242,3 +245,228 @@ def test_offline_expert_mode_switch_and_calculate_enqueue_no_job(
     assert window.worker is None
     assert created == []
     assert window._expert_candidate.source == "AUTO_CALIBRATED_MODEL"
+
+
+def _calculate_current_model(window, qapp):
+    window._show_tuning_mode("expert")
+    window._set_expert_lab_step("current")
+    window.expert_lab_r_ohm.setText("0.139")
+    window.expert_lab_l_uh.setText("41.6")
+    window.expert_lab_ts_us.setText("100")
+    window.expert_lab_bandwidth_hz.clear()
+    window.expert_lab_ki_rule.setCurrentIndex(
+        window.expert_lab_ki_rule.findData("eas_ratio"))
+    window.btn_expert_calculate.click()
+    qapp.processEvents()
+    assert window._expert_candidate is not None
+
+
+def test_offline_expert_p2_requires_a_complete_current_model(
+        window, qapp):
+    window._show_tuning_mode("expert")
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+
+    assert window._expert_vp_plant is None
+    assert window._expert_vp_candidate is None
+    assert "INVALID" in window.expert_vp_status.text()
+    assert "Current" in window.expert_vp_status.text()
+    assert all(
+        field.text() == "—"
+        for field in window.expert_vp_result_fields.values())
+
+
+def test_offline_expert_p2_populates_model_only_and_preserves_all_authority(
+        window, qapp, monkeypatch):
+    created = []
+
+    def forbidden_constructor(*args, **kwargs):
+        created.append((args, kwargs))
+        raise AssertionError("offline P2 must not construct transport")
+
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden_constructor)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden_constructor)
+    _calculate_current_model(window, qapp)
+    installed_before = {}
+    for index, (key, field) in enumerate(
+            window.tune_installed_gain_fields.items(), start=1):
+        field.setText("INSTALLED-P2-SENTINEL-%d" % index)
+        installed_before[key] = field.text()
+    verify_enabled_before = window.btn_tune_verify.isEnabled()
+
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+
+    candidate = window._expert_vp_candidate
+    assert window.worker is None
+    assert created == []
+    assert candidate.model_status == "MODEL"
+    assert candidate.kp_vel_a_per_cnt_s == pytest.approx(7.896e-5, rel=1e-3)
+    assert candidate.ki_vel_hz == pytest.approx(10.7, rel=1e-3)
+    assert candidate.kp_pos_per_s == pytest.approx(85.211, rel=1e-3)
+    assert candidate.loop_model_passed
+    assert "MODEL GATE PASS" in window.expert_vp_status.text()
+    assert "SINGLE-POINT" in window.expert_vp_status.text()
+    assert "FILTER NEED-DATA" in window.expert_vp_status.text()
+    assert "GS[2]=0 ONLY" in window.expert_vp_status.text()
+    assert "A/(cnt/s)" in window.expert_vp_result_fields["kp_vel"].text()
+    assert "Hz" in window.expert_vp_result_fields["ki_vel"].text()
+    assert "1/s" in window.expert_vp_result_fields["kp_pos"].text()
+    assert "dB" in window.expert_vp_result_fields["pm_vel"].text()
+    assert "deg" in window.expert_vp_result_fields["pm_pos"].text()
+    assert "excluded" in window.tune_gain_fields["i_c"].text()
+    assert window._vp_result is None
+    assert not window.btn_tune_vp_apply.isEnabled()
+    assert not window.btn_tune_vp_save.isEnabled()
+    assert window.btn_tune_verify.isEnabled() == verify_enabled_before
+    assert {
+        key: field.text()
+        for key, field in window.tune_installed_gain_fields.items()
+    } == installed_before
+
+
+@pytest.mark.parametrize("invalid", ("nan", "inf", "-1", "0"))
+def test_offline_expert_p2_invalid_input_preserves_previous_complete_model(
+        window, qapp, invalid):
+    _calculate_current_model(window, qapp)
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+    candidate_before = window._expert_vp_candidate
+    fields_before = {
+        key: field.text()
+        for key, field in window.expert_vp_result_fields.items()
+    }
+
+    window.expert_vp_ka.setText(invalid)
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+
+    assert window._expert_vp_candidate is candidate_before
+    assert {
+        key: field.text()
+        for key, field in window.expert_vp_result_fields.items()
+    } == fields_before
+    assert "INVALID" in window.expert_vp_status.text()
+
+
+def test_new_current_model_invalidates_dependent_offline_p2(
+        window, qapp):
+    _calculate_current_model(window, qapp)
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+    assert window._expert_vp_candidate is not None
+
+    window._set_expert_lab_step("current")
+    window.expert_lab_r_ohm.setText("0.15")
+    window.btn_expert_calculate.click()
+    qapp.processEvents()
+
+    assert window._expert_vp_plant is None
+    assert window._expert_vp_candidate is None
+    assert all(
+        field.text() == "—"
+        for field in window.expert_vp_result_fields.values())
+    assert "calculate after Current" in window.expert_vp_status.text()
+
+
+def test_editing_current_inputs_marks_p1_stale_and_invalidates_p2(
+        window, qapp):
+    _calculate_current_model(window, qapp)
+    current_before = window._expert_candidate
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+    assert window._expert_vp_candidate is not None
+
+    window._set_expert_lab_step("current")
+    window.expert_lab_r_ohm.setText("0.15")
+    window.expert_lab_r_ohm.textEdited.emit("0.15")
+    qapp.processEvents()
+
+    assert window._expert_candidate is current_before
+    assert window._expert_current_inputs_stale is True
+    assert "STALE" in window.expert_lab_status.text()
+    assert window._expert_vp_candidate is None
+    assert "STALE" in window.expert_vp_status.text()
+    assert all(
+        field.text() == "—"
+        for field in window.expert_vp_result_fields.values())
+
+
+def test_editing_p2_inputs_marks_previous_model_stale_without_erasing_it(
+        window, qapp):
+    _calculate_current_model(window, qapp)
+    window._set_expert_lab_step("vp")
+    window.expert_vp_ka.setText("5.794e6")
+    window.expert_vp_b_visc.setText("1e-7")
+    window.btn_expert_vp_calculate.click()
+    qapp.processEvents()
+    candidate_before = window._expert_vp_candidate
+    fields_before = {
+        key: field.text()
+        for key, field in window.expert_vp_result_fields.items()
+    }
+
+    window.expert_vp_ka.setText("6.0e6")
+    window.expert_vp_ka.textEdited.emit("6.0e6")
+    qapp.processEvents()
+
+    assert window._expert_vp_candidate is candidate_before
+    assert window._expert_vp_inputs_stale is True
+    assert "STALE" in window.expert_vp_status.text()
+    assert "MODEL GATE PASS" not in window.expert_vp_status.text()
+    assert {
+        key: field.text()
+        for key, field in window.expert_vp_result_fields.items()
+    } == fields_before
+
+
+def test_expert_offline_lab_precedes_hardware_controls(window):
+    layout = window.tuning_expert_frame.parentWidget().layout()
+
+    assert layout.indexOf(window.tuning_expert_frame) < (
+        layout.indexOf(window.tuning_guided_run_frame))
+
+
+def test_expert_v2_steps_fit_1366x820_in_all_skins(
+        window, qapp):
+    previous_style_sheet = qapp.styleSheet()
+    previous_palette = QtGui.QPalette(qapp.palette())
+    window.resize(1366, 820)
+    window.show()
+    window._show_tuning_mode("expert")
+    try:
+        for themed in (theme_qdd, amber_theme, theme_angrybirds):
+            qapp.setStyleSheet(themed.STYLE)
+            for step in ("current", "vp"):
+                window._set_expert_lab_step(step)
+                window.resize(1366, 820)
+                for _ in range(3):
+                    qapp.processEvents()
+                assert window.minimumSizeHint().width() <= 1366
+                assert (
+                    window.workspace_scroll.horizontalScrollBar().maximum()
+                    == 0)
+                assert window.expert_lab_note.height() >= (
+                    window.expert_lab_note.sizeHint().height())
+                if step == "vp":
+                    assert window.expert_vp_basis.height() >= (
+                        window.expert_vp_basis.sizeHint().height())
+    finally:
+        qapp.setPalette(previous_palette)
+        qapp.setStyleSheet(previous_style_sheet)

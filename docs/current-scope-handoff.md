@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v1 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 작업 인계서
 
-상태: **READ ONLY FIELD ADMISSION OBSERVED · MOTOR ACTION NOT RUN · PRIVATE DRAFT**<br>
-기준 시각: **2026-07-18 16:07 KST**<br>
+상태: **EXPERT v2 OFFLINE VERIFIED · CONTROL APP OPEN · MOTOR ACTION NOT RUN · PRIVATE DRAFT**<br>
+기준 시각: **2026-07-18 17:03 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -11,6 +11,8 @@
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
 - Single Axis 구현 HEAD:
   `6f1250ffbdd558e65499e4193d69a1872269c729`
+- 현재 게시 기준 HEAD:
+  `52d47ca9448e4e8006b2c1829769f2864ff319f9`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -23,6 +25,10 @@
 - 후속 source 변경 뒤 Python 3.14로 다시 실행해 1366×820 OFFLINE/READ ONLY,
   page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
   Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 재확인했다.
+- 같은 최신 실행창에서 P1 `fc=430.129 Hz · PM=55.69 deg`와
+  P2 `K_a=5.794e6 cnt/s²/A_peak · B=1e-7 A_peak/(cnt/s)`의
+  `MODEL GATE PASS · D=0.5794 1/s · bandwidth=457.500 rad/s`를 관찰했다.
+  K_a 편집 뒤 `STALE` 전환과 기준값 복원·재계산 PASS도 관찰했다.
 - 이 admission에서는 motor enable, commutation, tuning, PTP 또는 setting write를
   실행했다는 증거가 없으며, 그런 동작을 검증한 것으로 간주하지 않는다.
 - progress monitor는 `tasks/status.md`를 읽어 갱신 중이다.
@@ -66,14 +72,21 @@
 - 기계 travel, 방향, output ratio, limit 입력, 정지거리, 독립 E-stop/STO 근거 전에는
   live gate를 열지 않는다.
 
-### 2.3 Expert Candidate Lab v1
+### 2.3 Expert Candidate Lab v2
 
-- 전류루프 후보 계산은 pure no-I/O LOCAL MODEL
-- R/L, sampling period, target bandwidth, KI rule을 명시 입력
-- candidate KP/KI와 bounded read-only Bode preview 제공
+- Current P1 후보 계산은 pure no-I/O LOCAL MODEL
+- P1은 R/L, sampling period, target bandwidth, KI rule을 명시 입력
+- P2는 완전한 passing P1 MODEL과 `K_a [cnt/s²/A_peak]`,
+  `B [A_peak/(cnt/s)]`를 명시 입력
+- P1 candidate KP/KI와 bounded read-only Bode preview,
+  P2 candidate KP[2]/KI[2]/KP[3]과 modeled margins 제공
+- 새 P1 성공 시 종속 offline P2를 폐기하고, invalid 입력은 이전 완전한 결과를 보존
 - candidate와 설치 drive readback을 별도 authority로 표시
-- EAS Expert 전체 패리티, P2, 필터, scheduling, vendor 비공개 알고리즘 복제는
-  아직 구현 완료가 아니다.
+- 계산은 worker/link/job/drive command를 만들지 않고 Apply/Save/Verify 권한을 바꾸지 않음
+- 결과는 현재 Gold Twitter/motor/TS 단일점 교정 `MODEL`; 다른 motor/feedback/
+  firmware/Gold 제품 일반화 또는 EAS 내부 알고리즘 동등성을 주장하지 않음
+- filter는 `NEED-DATA`, gain scheduling은 `GS[2]=0 ONLY`; KV/GS/KG emulation/write 없음
+- 상세 계약: [`expert-tuning-offline-v2.md`](expert-tuning-offline-v2.md)
 
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
@@ -180,7 +193,10 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1371 passed, 0 failed in 303.22s** | 최신 dirty tree의 Python/mock/offscreen 경로 |
+| 전체 repository suite | **1410 passed, 0 failed in 254.76s** | Expert v2 독립 리뷰 수정까지 포함한 최신 dirty tree의 Python/mock/offscreen 경로 |
+| Expert v2 수치·UI·catalog 집중 회귀 | **75 passed, 0 failed in 24.59s** | P1→P2 MODEL, provenance·mutation/음성 대조, zero-I/O, stale authority, 세 스킨 1366×820와 palette 격리 |
+| Expert v2 독립 리뷰 | HIGH 1 + MEDIUM 1 RED 재현 후 **5 passed** | 다른 plant의 P1 자기서명·모순 delegate PASS·입력 편집 뒤 stale PASS 차단 |
+| Expert v2 최신 runtime smoke | **P1 PASS · P2 PASS · edit→STALE→recalculate PASS** | Python 3.14, 1366×820, OFFLINE/READ ONLY; drive/worker/command I/O 없음 |
 | Single Axis snapshot 집중 회귀 | **346 passed, 0 failed in 127.18s** | decoder·UI·catalog·generation·telemetry·shutdown·session log·motion |
 | 연결·텔레메트리·모니터·테마 집중 회귀 | **204 passed** | access-mode와 UI lifecycle |
 | 1366×820 세 테마 회귀 | **33 passed** | qdd/amber/angrybirds geometry |

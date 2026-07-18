@@ -6987,24 +6987,28 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_tuning_page(self):
         f = theme.HudCard()
         v = QtWidgets.QVBoxLayout(f); v.setContentsMargins(16, 14, 16, 16); v.setSpacing(10)
-        mode_row = QtWidgets.QHBoxLayout(); mode_row.setSpacing(7)
+        mode_row = QtWidgets.QGridLayout()
+        mode_row.setHorizontalSpacing(7)
+        mode_row.setVerticalSpacing(6)
         self.btn_tuning_quick_mode = QtWidgets.QPushButton("Quick Tuning · Guided")
         self.btn_tuning_expert_mode = QtWidgets.QPushButton(
-            "Expert Tuning · Apply / Verify / Save")
-        for button in (self.btn_tuning_quick_mode, self.btn_tuning_expert_mode):
+            "Expert Tuning · Candidates / Drive Verify")
+        for column, button in enumerate((
+                self.btn_tuning_quick_mode, self.btn_tuning_expert_mode)):
             button.setCheckable(True)
             button.setStyleSheet(
                 "QPushButton:checked{background:%s;color:#052438;"
                 "border:1px solid #79d8ff;font-weight:900;}" % theme.INDIGO)
-            mode_row.addWidget(button)
+            mode_row.addWidget(button, 0, column)
         self.btn_tuning_quick_mode.clicked.connect(
             lambda: self._show_tuning_mode("quick"))
         self.btn_tuning_expert_mode.clicked.connect(
             lambda: self._show_tuning_mode("expert"))
-        mode_row.addStretch(1)
         self.lbl_tuning_mode_risk = QtWidgets.QLabel("ENERGIZES / MOTION")
         self.lbl_tuning_mode_risk.setObjectName("pill")
-        mode_row.addWidget(self.lbl_tuning_mode_risk)
+        mode_row.addWidget(
+            self.lbl_tuning_mode_risk, 1, 0, 1, 2,
+            QtCore.Qt.AlignmentFlag.AlignRight)
         v.addLayout(mode_row)
 
         self.tune_title = QtWidgets.QLabel(
@@ -7114,15 +7118,53 @@ class MainWindow(QtWidgets.QMainWindow):
         lab_layout.setContentsMargins(10, 10, 10, 10)
         lab_layout.setSpacing(7)
         self.expert_lab_title = QtWidgets.QLabel(
-            "EXPERT CANDIDATE LAB v1 · OFFLINE MODEL · NO DRIVE I/O")
+            "EXPERT CANDIDATE LAB v2 · OFFLINE MODEL · NO DRIVE I/O")
         self.expert_lab_title.setProperty("role", "celltitle")
         lab_layout.addWidget(self.expert_lab_title)
-        lab_note = QtWidgets.QLabel(
-            "Explicit phase-to-phase plant inputs produce a MODEL candidate only. "
-            "Calculate does not connect, enqueue, apply, verify, or save anything.")
-        lab_note.setProperty("role", "hint")
-        lab_note.setWordWrap(True)
-        lab_layout.addWidget(lab_note)
+        self.expert_lab_note = QtWidgets.QLabel(
+            "Two-step local model: first design Current P1 from explicit "
+            "phase-to-phase inputs, then project Velocity / Position P2 from "
+            "explicit K_a and B. Calculate never connects, enqueues, applies, "
+            "verifies, saves, or changes installed-drive authority.")
+        self.expert_lab_note.setProperty("role", "hint")
+        self.expert_lab_note.setWordWrap(True)
+        self.expert_lab_note.setMinimumWidth(0)
+        self.expert_lab_note.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        self.expert_lab_note.setMinimumHeight(max(
+            48, self.expert_lab_note.sizeHint().height()))
+        lab_layout.addWidget(self.expert_lab_note)
+
+        expert_step_row = QtWidgets.QHBoxLayout()
+        expert_step_row.setSpacing(8)
+        self.btn_expert_step_current = QtWidgets.QPushButton(
+            "1 · CURRENT P1 MODEL")
+        self.btn_expert_step_vp = QtWidgets.QPushButton(
+            "2 · VELOCITY / POSITION P2 MODEL")
+        self.btn_expert_step_current.setCheckable(True)
+        self.btn_expert_step_vp.setCheckable(True)
+        self.expert_lab_step_group = QtWidgets.QButtonGroup(self)
+        self.expert_lab_step_group.setExclusive(True)
+        self.expert_lab_step_group.addButton(self.btn_expert_step_current)
+        self.expert_lab_step_group.addButton(self.btn_expert_step_vp)
+        self.btn_expert_step_current.clicked.connect(
+            lambda: self._set_expert_lab_step("current"))
+        self.btn_expert_step_vp.clicked.connect(
+            lambda: self._set_expert_lab_step("vp"))
+        expert_step_row.addWidget(self.btn_expert_step_current)
+        expert_step_row.addWidget(self.btn_expert_step_vp)
+        lab_layout.addLayout(expert_step_row)
+
+        self.expert_lab_stack = QtWidgets.QStackedWidget()
+        self.expert_lab_stack.setMinimumWidth(0)
+        self.expert_lab_stack.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        current_page = QtWidgets.QWidget()
+        current_page_layout = QtWidgets.QVBoxLayout(current_page)
+        current_page_layout.setContentsMargins(0, 0, 0, 0)
+        current_page_layout.setSpacing(7)
 
         lab_form = QtWidgets.QGridLayout()
         lab_form.setHorizontalSpacing(10)
@@ -7155,24 +7197,116 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_calculate.clicked.connect(
             self._calculate_expert_candidate)
         lab_form.addWidget(self.btn_expert_calculate, 5, 0, 1, 2)
-        lab_layout.addLayout(lab_form)
+        current_page_layout.addLayout(lab_form)
 
         self.expert_lab_status = QtWidgets.QLabel(
             "MODEL · waiting for explicit plant inputs · no candidate")
         self.expert_lab_status.setProperty("role", "hint")
         self.expert_lab_status.setWordWrap(True)
-        lab_layout.addWidget(self.expert_lab_status)
+        current_page_layout.addWidget(self.expert_lab_status)
         self.expert_lab_response_summary = QtWidgets.QLabel(
             "Bode-ready response · not calculated")
         self.expert_lab_response_summary.setProperty("role", "hint")
         self.expert_lab_response_summary.setWordWrap(True)
-        lab_layout.addWidget(self.expert_lab_response_summary)
+        current_page_layout.addWidget(self.expert_lab_response_summary)
         self.expert_bode_widget = ExpertBodeWidget()
-        lab_layout.addWidget(self.expert_bode_widget)
+        current_page_layout.addWidget(self.expert_bode_widget)
+        self.expert_lab_stack.addWidget(current_page)
+
+        vp_page = QtWidgets.QWidget()
+        vp_page_layout = QtWidgets.QVBoxLayout(vp_page)
+        vp_page_layout.setContentsMargins(0, 0, 0, 0)
+        vp_page_layout.setSpacing(7)
+        self.expert_vp_basis = QtWidgets.QLabel(
+            "MODEL basis · velocity = encoder counts/s · current = peak A · "
+            "K_a = cnt/s²/A_peak · B = A_peak/(cnt/s). Requires the complete "
+            "passing Current P1 MODEL above. Single-point calibrated for the "
+            "current Gold Twitter / motor / TS combination; not generalized "
+            "to other motors, feedbacks, firmware, or Gold products.")
+        self.expert_vp_basis.setProperty("role", "hint")
+        self.expert_vp_basis.setWordWrap(True)
+        self.expert_vp_basis.setMinimumWidth(0)
+        self.expert_vp_basis.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        self.expert_vp_basis.setMinimumHeight(max(
+            58, self.expert_vp_basis.sizeHint().height()))
+        vp_page_layout.addWidget(self.expert_vp_basis)
+
+        vp_form = QtWidgets.QGridLayout()
+        vp_form.setHorizontalSpacing(10)
+        vp_form.setVerticalSpacing(6)
+        self.expert_vp_ka = QtWidgets.QLineEdit()
+        self.expert_vp_b_visc = QtWidgets.QLineEdit()
+        for row, (label, field) in enumerate((
+                ("Acceleration constant K_a [cnt/s²/A_peak]",
+                 self.expert_vp_ka),
+                ("Viscous friction B [A_peak/(cnt/s)]",
+                 self.expert_vp_b_visc))):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("role", "field")
+            vp_form.addWidget(name, row, 0)
+            vp_form.addWidget(field, row, 1)
+        self.btn_expert_vp_calculate = QtWidgets.QPushButton(
+            "Calculate P2 Candidate · OFFLINE")
+        self.btn_expert_vp_calculate.clicked.connect(
+            self._calculate_expert_vp_candidate)
+        vp_form.addWidget(self.btn_expert_vp_calculate, 2, 0, 1, 2)
+        vp_page_layout.addLayout(vp_form)
+
+        self.expert_vp_status = QtWidgets.QLabel(
+            "MODEL · calculate after Current candidate · no P2 candidate")
+        self.expert_vp_status.setProperty("role", "hint")
+        self.expert_vp_status.setWordWrap(True)
+        vp_page_layout.addWidget(self.expert_vp_status)
+        vp_results = QtWidgets.QGridLayout()
+        vp_results.setHorizontalSpacing(10)
+        vp_results.setVerticalSpacing(6)
+        self.expert_vp_result_fields = {}
+        for row, (key, label) in enumerate((
+                ("kp_vel", "Velocity KP[2] [A/(cnt/s)]"),
+                ("ki_vel", "Velocity KI[2] [Hz]"),
+                ("kp_pos",
+                 "Position KP[3] [rad/s command ref; count MODEL 1/s]"),
+                ("pm_vel", "Velocity margin [deg; GM dB]"),
+                ("pm_pos", "Position margin [deg]"))):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("role", "field")
+            value = QtWidgets.QLineEdit("—")
+            value.setReadOnly(True)
+            vp_results.addWidget(name, row, 0)
+            vp_results.addWidget(value, row, 1)
+            self.expert_vp_result_fields[key] = value
+        vp_page_layout.addLayout(vp_results)
+        expert_vp_boundary = QtWidgets.QLabel(
+            "FILTER NEED-DATA · GAIN SCHEDULING GS[2]≠0 NEED-DATA · "
+            "no KV / GS / KG emulation or writes")
+        expert_vp_boundary.setProperty("role", "hint")
+        expert_vp_boundary.setWordWrap(True)
+        vp_page_layout.addWidget(expert_vp_boundary)
+        vp_page_layout.addStretch(1)
+        self.expert_lab_stack.addWidget(vp_page)
+        lab_layout.addWidget(self.expert_lab_stack)
         expert_layout.addWidget(self.expert_lab_frame)
         self._expert_plant = None
         self._expert_candidate = None
         self._expert_response = None
+        self._expert_vp_plant = None
+        self._expert_vp_candidate = None
+        self._expert_current_inputs_stale = True
+        self._expert_vp_inputs_stale = True
+        for field in (
+                self.expert_lab_r_ohm,
+                self.expert_lab_l_uh,
+                self.expert_lab_ts_us,
+                self.expert_lab_bandwidth_hz):
+            field.textEdited.connect(
+                self._mark_expert_current_input_stale)
+        self.expert_lab_ki_rule.currentIndexChanged.connect(
+            self._mark_expert_current_input_stale)
+        for field in (self.expert_vp_ka, self.expert_vp_b_visc):
+            field.textEdited.connect(self._mark_expert_vp_input_stale)
+        self._set_expert_lab_step("current")
 
         self.tuning_guided_run_frame = QtWidgets.QFrame()
         self.tuning_guided_run_frame.setObjectName("chip")
@@ -7211,7 +7345,9 @@ class MainWindow(QtWidgets.QMainWindow):
         guided_run_layout.addWidget(cap_hint)
         # Keep measurement/motion actions separate from production-locked gain
         # mutation controls so the available authority remains visually explicit.
-        btnrow = QtWidgets.QHBoxLayout(); btnrow.setSpacing(8)
+        btnrow = QtWidgets.QGridLayout()
+        btnrow.setHorizontalSpacing(8)
+        btnrow.setVerticalSpacing(8)
         self.btn_tune = QtWidgets.QPushButton("Run Phase 1 (Current)"); self.btn_tune.setEnabled(False)
         self.btn_tune.clicked.connect(self._run_autotune_clicked)
         self.btn_tune_signature = QtWidgets.QPushButton("Run Commutation Signature (≤1.30 A)")
@@ -7224,12 +7360,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_verify = QtWidgets.QPushButton("Verify Installed P2 on Motor")
         self.btn_tune_verify.setEnabled(False)
         self.btn_tune_verify.clicked.connect(self._run_verify_clicked)
-        for b in (self.btn_tune, self.btn_tune_signature, self.btn_tune_vp,
-                  self.btn_tune_verify, self.btn_tune_abort):
-            btnrow.addWidget(b)
+        for index, b in enumerate((
+                self.btn_tune, self.btn_tune_signature, self.btn_tune_vp,
+                self.btn_tune_verify, self.btn_tune_abort)):
+            btnrow.addWidget(b, index // 2, index % 2)
         guided_run_layout.addLayout(btnrow)
 
-        p1row = QtWidgets.QHBoxLayout(); p1row.setSpacing(8)
+        p1row = QtWidgets.QGridLayout()
+        p1row.setHorizontalSpacing(8)
+        p1row.setVerticalSpacing(6)
         p1label = QtWidgets.QLabel("P1 CURRENT GAINS"); p1label.setProperty("role", "field")
         self.btn_tune_apply = QtWidgets.QPushButton("Apply P1 → RAM (LOCKED)"); self.btn_tune_apply.setEnabled(False)
         self.btn_tune_apply.clicked.connect(self._apply_autotune_clicked)
@@ -7239,13 +7378,16 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_p1_save = QtWidgets.QPushButton("Save P1 → SV (LOCKED)")
         self.btn_tune_p1_save.setEnabled(False)
         self.btn_tune_p1_save.clicked.connect(self._save_current_clicked)
-        p1row.addWidget(p1label)
-        for b in (self.btn_tune_apply, self.btn_tune_p1_restore,
-                  self.btn_tune_p1_save):
-            p1row.addWidget(b)
+        p1row.addWidget(p1label, 0, 0, 1, 2)
+        for index, b in enumerate((
+                self.btn_tune_apply, self.btn_tune_p1_restore,
+                self.btn_tune_p1_save)):
+            p1row.addWidget(b, 1 + index // 2, index % 2)
         expert_layout.addLayout(p1row)
 
-        p2row = QtWidgets.QHBoxLayout(); p2row.setSpacing(8)
+        p2row = QtWidgets.QGridLayout()
+        p2row.setHorizontalSpacing(8)
+        p2row.setVerticalSpacing(6)
         p2label = QtWidgets.QLabel("P2 VELOCITY / POSITION GAINS"); p2label.setProperty("role", "field")
         self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → RAM (LOCKED)"); self.btn_tune_vp_apply.setEnabled(False)
         self.btn_tune_vp_apply.clicked.connect(self._apply_velpos_clicked)
@@ -7255,10 +7397,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_vp_save = QtWidgets.QPushButton("Save P2 → SV (LOCKED)")
         self.btn_tune_vp_save.setEnabled(False)
         self.btn_tune_vp_save.clicked.connect(self._save_velpos_clicked)
-        p2row.addWidget(p2label)
-        for b in (self.btn_tune_vp_apply, self.btn_tune_vp_restore,
-                  self.btn_tune_vp_save):
-            p2row.addWidget(b)
+        p2row.addWidget(p2label, 0, 0, 1, 2)
+        for index, b in enumerate((
+                self.btn_tune_vp_apply, self.btn_tune_vp_restore,
+                self.btn_tune_vp_save)):
+            p2row.addWidget(b, 1 + index // 2, index % 2)
         gain_lock_reason = (
             "Hardware gain Apply/Save is locked until a durable "
             "pre-assignment RAM-trial WAL is implemented.")
@@ -7266,8 +7409,8 @@ class MainWindow(QtWidgets.QMainWindow):
                   self.btn_tune_vp_apply, self.btn_tune_vp_save):
             b.setToolTip(gain_lock_reason)
         expert_layout.addLayout(p2row)
-        v.addWidget(self.tuning_guided_run_frame)
         v.addWidget(self.tuning_expert_frame)
+        v.addWidget(self.tuning_guided_run_frame)
         note = QtWidgets.QLabel("ⓘ 우리 자체 오토튠 — EAS 내부 알고리즘 재현이 아니라, 드라이브 명령으로 "
                                 "R·L을 실측해 표준 PI 설계식으로 게인을 계산합니다. 시뮬 검증 완료(오라클 대비 KP/KI ≤1%), "
                                 "실기 최초 실행은 통전·미세회전이 있으므로 감독 하에서만.")
@@ -7304,6 +7447,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self._decorate_operation_control(widget, operation_id)
         self._decorate_operation_control(
             self.btn_expert_calculate, "tuning.expert.offline.calculate")
+        self._decorate_operation_control(
+            self.btn_expert_vp_calculate,
+            "tuning.expert.offline.calculate_p2")
         self._set_tuning_mode("quick")
         return f
 
@@ -7333,6 +7479,48 @@ class MainWindow(QtWidgets.QMainWindow):
                 "motor; commutation and Phase 2 can rotate it. Hardware gain Apply/Save "
                 "remain locked in every mode pending a durable pre-assignment trial WAL.")
             self.lbl_tuning_mode_risk.setText("ENERGIZES / MOTION")
+
+    def _set_expert_lab_step(self, step):
+        """Select one zero-I/O Expert model page without changing authority."""
+        if step not in ("current", "vp"):
+            raise ValueError("unknown Expert Lab step %r" % step)
+        current = step == "current"
+        self.btn_expert_step_current.setChecked(current)
+        self.btn_expert_step_vp.setChecked(not current)
+        self.expert_lab_stack.setCurrentIndex(0 if current else 1)
+
+    def _mark_expert_current_input_stale(self, *_args):
+        """Prevent a prior P1 PASS from appearing bound to edited inputs."""
+        if getattr(self, "_expert_candidate", None) is None:
+            return
+        self._expert_current_inputs_stale = True
+        self.expert_lab_status.setText(
+            "STALE · Current inputs changed · previous P1 MODEL retained "
+            "as historical evidence · recalculate before P2")
+        self._reset_expert_vp_candidate(
+            "STALE · Current inputs changed · calculate Current, then P2")
+
+    def _mark_expert_vp_input_stale(self, *_args):
+        """Keep prior immutable evidence but revoke its visible PASS status."""
+        if getattr(self, "_expert_vp_candidate", None) is None:
+            return
+        self._expert_vp_inputs_stale = True
+        self.expert_vp_status.setText(
+            "STALE · K_a/B inputs changed · previous P2 MODEL retained "
+            "as historical evidence · recalculation required")
+
+    def _reset_expert_vp_candidate(self, reason):
+        """Invalidate only the dependent offline P2 projection."""
+        self._expert_vp_plant = None
+        self._expert_vp_candidate = None
+        self._expert_vp_inputs_stale = True
+        for field in self.expert_vp_result_fields.values():
+            field.setText("—")
+        for key in (
+                "k_a", "b_visc", "i_c", "kp_vel", "ki_vel", "kp_pos",
+                "pm_vel", "pm_pos"):
+            self.tune_gain_fields[key].setText("—")
+        self.expert_vp_status.setText(str(reason))
 
     def _show_tuning_mode(self, mode):
         self._nav_to(3)
@@ -7383,6 +7571,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._expert_plant = plant
         self._expert_candidate = candidate
         self._expert_response = response
+        self._expert_current_inputs_stale = False
+        self._reset_expert_vp_candidate(
+            "MODEL · calculate after Current candidate · no P2 candidate")
         candidate_fields = self.tune_gain_fields
         candidate_fields["r_pp"].setText(
             "%.6g ohm" % resistance_ohm)
@@ -7415,6 +7606,96 @@ class MainWindow(QtWidgets.QMainWindow):
                 response.frequency_hz[-1],
             ))
         self.expert_bode_widget.set_response(response)
+
+    def _calculate_expert_vp_candidate(self):
+        """Project a pure offline P2 candidate from the complete P1 MODEL.
+
+        Parsing and design finish before any P2 field is changed.  Invalid
+        inputs therefore preserve the previous complete projection and cannot
+        create a worker, command, installed-gain claim, or motion authority.
+        """
+        try:
+            if (not isinstance(self._expert_plant,
+                               expert_tuning_offline.CurrentPlant)
+                    or not isinstance(
+                        self._expert_candidate,
+                        expert_tuning_offline.CurrentCandidate)):
+                raise ValueError(
+                    "complete passing Current MODEL candidate required")
+            if self._expert_current_inputs_stale:
+                raise ValueError(
+                    "Current inputs changed; recalculate Current MODEL first")
+            k_a = float(self.expert_vp_ka.text().strip())
+            b_visc = float(self.expert_vp_b_visc.text().strip())
+            plant = expert_tuning_offline.VelocityPositionPlant(
+                current_plant=self._expert_plant,
+                current_candidate=self._expert_candidate,
+                accel_constant_cnt_per_s2_per_a_peak=k_a,
+                viscous_friction_a_peak_per_cnt_s=b_visc,
+            )
+            candidate = (
+                expert_tuning_offline.design_velocity_position_candidate(
+                    plant))
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.expert_vp_status.setText(
+                "INVALID · previous P2 candidate preserved · %s" % exc)
+            return
+
+        gain_margin = (
+            "%.2f dB" % candidate.velocity_gain_margin_db
+            if candidate.velocity_gain_margin_db is not None
+            else "not crossed on bounded grid")
+        gate = "PASS" if candidate.loop_model_passed else "FAIL"
+        self._expert_vp_plant = plant
+        self._expert_vp_candidate = candidate
+        self._expert_vp_inputs_stale = False
+        results = self.expert_vp_result_fields
+        results["kp_vel"].setText(
+            "%.7g A/(cnt/s)" % candidate.kp_vel_a_per_cnt_s)
+        results["ki_vel"].setText(
+            "%.7g Hz" % candidate.ki_vel_hz)
+        results["kp_pos"].setText(
+            "%.7g rad/s · count-domain MODEL %.7g 1/s"
+            % (candidate.kp_pos_per_s, candidate.kp_pos_per_s))
+        results["pm_vel"].setText(
+            "%.2f deg · GM %s · fc %.3f Hz"
+            % (
+                candidate.velocity_phase_margin_deg,
+                gain_margin,
+                candidate.velocity_crossover_hz,
+            ))
+        results["pm_pos"].setText(
+            "%.2f deg · fc %.3f Hz"
+            % (
+                candidate.position_phase_margin_deg,
+                candidate.position_crossover_hz,
+            ))
+
+        fields = self.tune_gain_fields
+        fields["k_a"].setText(
+            "%.7g cnt/s²/A_peak"
+            % plant.accel_constant_cnt_per_s2_per_a_peak)
+        fields["b_visc"].setText(
+            "%.7g A_peak/(cnt/s)"
+            % plant.viscous_friction_a_peak_per_cnt_s)
+        fields["i_c"].setText(
+            "— · excluded from linear P2 MODEL")
+        fields["kp_vel"].setText(results["kp_vel"].text())
+        fields["ki_vel"].setText(results["ki_vel"].text())
+        fields["kp_pos"].setText(results["kp_pos"].text())
+        fields["pm_vel"].setText(results["pm_vel"].text())
+        fields["pm_pos"].setText(results["pm_pos"].text())
+        self.expert_vp_status.setText(
+            "MODEL GATE %s · SINGLE-POINT CALIBRATION · "
+            "GS[2]=0 ONLY · FILTER NEED-DATA · D=%.7g 1/s · "
+            "design bandwidth %.3f rad/s · reductions %d · "
+            "no drive / worker / command I/O"
+            % (
+                gate,
+                candidate.d_visc_per_s,
+                candidate.design_bandwidth_rad_s,
+                candidate.reductions,
+            ))
 
     # ---- auto-tune GUI glue ----------------------------------------------------------
     def _claim_tune_dispatch(self, kind, trial=None):

@@ -91,6 +91,24 @@ _SPECS = (
           OperationRisk.LOCAL_UI,
           "Calculate a phase-to-phase MODEL candidate and bounded frequency "
           "response locally with no drive, worker, or command I/O."),
+    _spec("tuning.expert.offline.calculate_p2",
+          "Expert Candidate Lab · Calculate Offline P2 Model",
+          OperationRisk.LOCAL_UI,
+          "Project a velocity/position MODEL candidate from the complete "
+          "Current P1 MODEL plus explicit K_a and B with no drive, worker, "
+          "command, gain-write, or motion I/O."),
+    _spec("tuning.expert.filter.offline.evaluate",
+          "Expert Filter Model · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "Exact EAS/drive filter transfer functions, discretization, ranges "
+          "and interaction with loop design are not established.",
+          status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.scheduling.offline.evaluate",
+          "Expert Gain Scheduling Model · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "GS/KG table selection, interpolation, units and transition "
+          "semantics are not established; no emulation or writes are exposed.",
+          status=OperationStatus.NEED_DATA),
     _spec("nav.axis", "Axis Summary · Read only", OperationRisk.LOCAL_UI,
           "Open the raw, read-only axis summary.", menu_enabled=True),
     _spec("axis.safety_snapshot",
