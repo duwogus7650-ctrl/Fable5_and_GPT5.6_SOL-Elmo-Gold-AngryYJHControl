@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Evidence Maps through Summary + Single Axis Authority 작업 인계서
+# Quick Tuning + Single Axis + Expert v2 + Digital Input Read v0.1 작업 인계서
 
-상태: **SINGLE AXIS AUTHORITY DOC MAP VERIFIED · LOCAL CATALOG/UI ONLY GREEN · ACTUAL DRIVE/OUTPUT/MODE/ENABLE/MOTION/TERMINAL/RECORDER ACTION NOT RUN**<br>
-기준 시각: **2026-07-19 05:02 KST**<br>
+상태: **DIGITAL INPUT READ v0.1 · CURRENT TARGET READBACK OBSERVED · PHYSICAL INPUT/EAS PARITY/OUTPUT/MOTION NOT VALIDATED**<br>
+기준 시각: **2026-07-19 05:46 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -31,13 +31,15 @@
   `9ed565eb5ee40a768876e4c192505fd65bb121a7`
 - Single Axis Controls · Documented Authority Map v0.1:
   `0974ba061b2f616d9515f5eaa26b0f815055894c`
+- Single Axis Digital Inputs · Read-Only Snapshot v0.1:
+  `8c2a955a0d11c63c691b77f8eeeb21aaa5a2d269`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
   `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
 - Quick/Single Axis/Expert·Filter/Scheduling evidence·Page Status·User Units·
   Limits/Protections·Application Settings·Hidden Bode·Verification–Time·
-  Summary Map·안전 경계 변경은
+  Summary Map·Single Axis Authority/Digital Input·안전 경계 변경은
   새 비공개 `origin`의 기존 Draft PR #2에
   위 게시 HEAD까지 반영했다.
   공개 원본 `source`에는 push하지 않았다.
@@ -73,6 +75,20 @@
   SHA-256 **3/3 일치**를 확인했다. 실제 drive read, Digital Output toggle,
   UM change, Enable/Disable, PTP/Jog/Current/Sine/Homing/Stepper,
   Terminal command, Recorder config/acquisition은 실행하지 않았다.
+- Single Axis Digital Inputs v0.1은 별도 Motion frame과 pure decoder/reader,
+  observer transport/worker allowlist, operation catalog/test/docs로 구성됐다.
+  `IL[1..6]`, `IF[1..6]`, final `IP`만 같은 connection session에서 읽고
+  150 ms/query·2 s/snapshot으로 제한한다. 직접 영향 범위
+  **133 passed in 96.03s / exit 0**, 전체 stdout
+  **1639 passed in 827.24s / 100% / stderr 0**이다. 전체 suite numeric
+  exit watcher는 빈 값을 남겨 그 숫자 exit만 `UNVERIFIED`로 보존한다.
+- 첫 live refresh는 worker observer-job allowlist 누락으로 RED였고, 새
+  query-only guard case로 재현한 뒤 `axis_digital_inputs_read` 하나만
+  allowlist에 추가했다. 수정된 Python 3.14 새 창에서 현재 target Read Only
+  snapshot은 Input 1–6 모두 `ACTIVE · DRIVE LOGICAL / General purpose /
+  ACTIVE_HIGH · non-sticky / 0.000 ms`, acquisition **25.9 ms**였다.
+  `IB`, assignment, output, mapping/filter mutation, Enable 또는 motion은
+  실행하지 않았다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -150,6 +166,18 @@
   live/safety/parity claim은 모두 `False`
 - inspector section 전환은 worker/connection/telemetry/commutation/
   Session Zero/PTP/STOP authority를 바꾸지 않고 runtime drive I/O를 만들지 않음
+- `Digital Inputs · Read-Only Snapshot v0.1`은 explicit refresh에서
+  `IL[1..6]`, `IF[1..6]`, final `IP`만 읽고 drive logical state/function/
+  polarity/sticky/filter를 6개 고정 row에 표시
+- start/end session token 동일성, query 150 ms, total 2 s, current-worker/
+  fresh-telemetry/connection authority를 요구하며 missing/invalid/reserved/
+  session-change/timing/forged-partial snapshot은 전체 `UNKNOWN`
+- `IP` bit 16–21과 `IL` bit 0/1–4/8, `IF` 0..500 ms만 해석.
+  `IB` sticky clear, `IL/IF` assignment, Digital Output read/write와
+  physical pin voltage/safety claim은 제공하지 않음
+- current target readback 1회는 `OBSERVED`지만 배선·raw voltage·known
+  inactive/active stimulus·EAS same-moment parity·filter/sticky timing은
+  `NEED-DATA`
 - `FINITE_PTP_LIVE_ENABLED=False`
 - live PTP catalog 상태는 `NEED-DATA`
 - 기계 travel, 방향, output ratio, limit 입력, 정지거리, 독립 E-stop/STO 근거 전에는
@@ -521,9 +549,18 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | 추가 UI/motor-safety 회귀 | **182 passed** | persistence/status/system 포함 |
 | 종료 경계 독립 재검토 | **102 passed** | prior P1 해소, 잔여 finding 없음 |
 | `git diff --check` | **exit 0** | whitespace error 없음; LF→CRLF 경고만 존재 |
+| Digital Input 최신 직접 영향 범위 | **133 passed in 96.03s · exit 0** | decoder/reader, source hash, transport/worker observe-only gate, operation catalog, UI authority/geometry |
+| Digital Input 포함 전체 repository stdout | **1639 passed in 827.24s · 100% · stderr 0** | numeric exit watcher는 빈 값이어서 전체 숫자 exit만 `UNVERIFIED`; 통과 개수/summary/stderr와 focused exit 0은 직접 관찰 |
+| Digital Input current-target runtime | **6/6 CURRENT DRIVE READ ONLY · 25.9 ms** | 모두 ACTIVE logical/General purpose/ACTIVE_HIGH/non-sticky/0 ms; physical I/O/EAS parity/safety 아님 |
+| Digital Input 설치 source | **4 / 4 SHA-256 일치** | Single Axis help + `IP`/`IL`/`IF` command reference |
 
 유용한 실패 이력:
 
+- 첫 Digital Input field refresh는 transport query allowlist 뒤 worker의
+  query-only job guard에서 거부됐다. 기존 tests는 queue와 transport를
+  따로 확인했지만 두 allowlist의 합성 경로를 놓쳤다. query-only worker의
+  허용-case test를 RED로 추가한 뒤 exact read job 하나만 허용해 수정했고,
+  6 gate tests와 최신 focused/full regression, 실제 readback으로 닫았다.
 - 첫 Hidden Bode 전체 회귀는 기존 Status Monitor GUI 테스트의 Qt native
   access violation으로 65%에서 종료됐다. 같은 시각 오래 실행 중인 별도
   pytest process가 관찰됐지만 인과는 `UNVERIFIED`다.
@@ -617,8 +654,9 @@ motor action과 hardware-safety 판정은 계속 **NEED-DATA**다.
 
 ## 8. 현장 상태와 `NEED-DATA`
 
-사용자가 현장에 복귀했고 Read Only admission까지는 수행했다. 상태판의 field 5%는
-이 host-observed admission/close 증거만 가리키는 계획 지표다. 현재 working tree로
+사용자가 현장에 복귀했고 Read Only admission과 bounded Digital Input snapshot 1회까지
+수행했다. 상태판의 field 6%는 이 host-observed read evidence만 가리키는 계획 지표다.
+현재 working tree로
 motor action은 아직 실행하지 않았으므로 **motor-action field validation은 0%**다.
 
 다음 자료는 live PTP와 넓은 실기 판정 전에 필요하다.
@@ -641,13 +679,17 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 3. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
 4. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
    admission sweep의 `MO/SO/VX/PS/MF` 원시 transcript를 보존
-5. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
-6. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
-7. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
+5. Digital Input은 EAS same-moment comparison과 known inactive/active
+   physical stimulus 전까지 표시/진단용 readback으로만 사용하고 safety
+   interlock authority를 부여하지 않음
+6. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
+7. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
+8. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
 
 ## 10. 완료 의미
 
-현재 `READ ONLY FIELD ADMISSION OBSERVED`는 host-observed 연결과 정지/비활성 readback을
-보존했다는 뜻이다. 최신 리비전의 supervised hardware transcript, closeout, recovery,
+현재 `READ ONLY FIELD ADMISSION + DIGITAL INPUT SNAPSHOT OBSERVED`는 host-observed
+연결/정지 telemetry와 한 번의 bounded logical-input readback을 보존했다는 뜻이다.
+최신 리비전의 supervised hardware transcript, closeout, recovery,
 cold audit와 motion envelope가 없으면 `hardware safe`, `field complete`, `EAS parity`,
 `Gold-compatible`을 선언하지 않는다.
