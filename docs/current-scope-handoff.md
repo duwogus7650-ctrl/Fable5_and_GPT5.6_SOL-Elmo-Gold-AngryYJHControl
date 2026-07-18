@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode Map 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode + Verification–Time Maps 작업 인계서
 
-상태: **HIDDEN BODE MAP PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-19 01:03 KST**<br>
+상태: **VERIFICATION–TIME DOC MAP VERIFIED · LOCAL CATALOG/UI ONLY GREEN · ACTUAL VERIFICATION/MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-19 02:23 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -45,6 +45,12 @@
   **211 passed in 65.06s**, 현재 트리 전체 **1547 passed in 503.66s**
   (직접 종료코드 0), 7개 source SHA-256 독립 재대조와 read-only 검토를
   완료했다. 실제 Current/V·P Bode Verify는 실행하지 않았다.
+- Verification–Time Map 구현은 별도 아홉 번째 `TIME DOC MAP` page와
+  3 sections/24 rows(8/8/8)의 frozen model, operation catalog/test/docs로
+  구성됐다. 핵심 계약 **40 passed**, Expert 영향범위 **99 passed**, 현재
+  트리 전체 **1567 passed**(직접 종료코드 0), Python 3.14 runtime UI smoke,
+  8개 source SHA-256 독립 재대조와 독립 read-only 검토를 완료했다. 실제
+  Current/V·P Verification–Time은 실행하지 않았다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -272,6 +278,42 @@
 - 상세 계약:
   [`expert-bode-verification-evidence-v0.1.md`](expert-bode-verification-evidence-v0.1.md)
 
+### 2.10 Expert Verification – Time · Documented Map v0.1
+
+- 아홉 번째 `TIME DOC MAP` Expert 단계에서 `Current Verification - Time`,
+  `Velocity / Position Recording Setup`, `Velocity / Position Verification -
+  Time`의 static documentation row를 별도 page로 표시
+- canonical shape는 3 sections / 24 grouped rows = **8 / 8 / 8**
+- authority는 `DOCUMENTED_TIME_VERIFICATION_MAP_ONLY`, model status는
+  `PARTIAL_NEED_DATA`; local immutable catalog/UI inspect만 GREEN
+- 8개 frozen source identity/path suffix, 3개 document conflict, 9개
+  persistent warning, 5개 missing-evidence를 보존
+- Current page의 KI[1] label, PMW/PWM spelling, XP[5] unit syntax 충돌을
+  임의 정규화하지 않음
+- V/P의 `Current`는 telemetry-only가 아니라 PTP/Jog 중 변경 가능한 motion
+  current input이며, control parameters에는 field weakening과 friction
+  compensation이 포함될 수 있음을 위험 경계로 표시
+- 실제 Current Verification–Time은 `ENERGY + possible motion/twitch`이고
+  EAS motor-movement warning이 존재한다. current envelope, Recorder
+  provenance, abort/closeout와 quantitative acceptance가 없으므로 NO-GO
+- 실제 V/P Verification–Time은 editable Current/control parameters,
+  PTP/Jog/Sine-Step을 포함하는 `MOTION`이다. Recorder provenance,
+  abort/restore와 quantitative acceptance가 없으므로 NO-GO
+- inspector는 drive read/current-state observation, Recorder
+  configuration/acquisition, Verify, Enable/Disable, injection, PTP/Jog,
+  command/write/Apply/Revert/SV, energization/motion을 모두 차단
+- 핵심 계약 **40 passed**, Expert 영향범위 **99 passed**, 현재 트리 전체
+  **1567 passed / exit 0**
+- 8개 설치 NetHelp HTML/image SHA-256을 독립 재계산해 frozen 값과 전부 일치
+- 독립 read-only 재검토에서 잔여 HIGH/MEDIUM/LOW 없음. editable Current,
+  motor-movement warning, field weakening/friction, fail-closed capability,
+  Recorder poison과 UI 표시 single-source 경계를 재확인
+- Python 3.14, 1366×820 OFFLINE runtime 구조 smoke에서 8/8/8 rows,
+  8 frozen identities, action/edit widget 0, horizontal scroll 0;
+  Connect/Verify/Recorder/drive I/O/motor action 없음
+- 상세 계약:
+  [`expert-time-verification-evidence-v0.1.md`](expert-time-verification-evidence-v0.1.md)
+
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
 
@@ -382,11 +424,14 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | Hidden Verification–Bode source 재대조 | **7 / 7 SHA-256 일치** | 설치 NetHelp HTML 2개, Current/V/P page·motor-warning image 4개, Tuner Verification image 1개; `_11.png`은 다른 화면이라 제외 |
 | Hidden Verification–Bode 독립 검토 | **HIGH/MEDIUM 없음 · LOW 표현 2건 수정** | 실제 실행처럼 읽히던 `VERIFY BODE`→`BODE DOC MAP`, `MODEL STATUS`→`EVIDENCE STATUS`; 현재 트리 영향범위·전체 회귀 재통과 |
 | Hidden Verification–Bode runtime 구조 smoke | **8 / 8 / 8 rows · 7 frozen identities · OFFLINE** | Python 3.14, 1366×820, action/edit widget 0, horizontal scroll 0; Connect/Verify/settings change/drive I/O/motor action 없음 |
+| Verification–Time model·UI·catalog 영향범위 | **40 focused · 99 Expert passed** | immutable singleton, exact 3 sections/24 grouped rows(8/8/8), strict lookup, 8 source identity/path suffix, 3 conflicts, 9 warnings, 5 missing, fail-closed capability와 worker/link/dispatch/Recorder/file-action poison. **로컬 catalog/UI만 GREEN** |
+| Verification–Time source 재대조·독립 검토 | **8 / 8 SHA-256 일치 · 잔여 HIGH/MEDIUM/LOW 없음** | editable Current, Current motor-movement warning, field weakening/friction current·torque 위험, `can_energize/can_revert=false`, Recorder poison, display-group single source, source suffix와 operation risk/zero-I/O를 재확인 |
+| Verification–Time runtime 구조 smoke | **8 / 8 / 8 rows · 8 frozen identities · OFFLINE** | Python 3.14, 1366×820, action/edit widget 0, horizontal scroll 0; Connect/Verify/Recorder/drive I/O/motor action 없음 |
 | Application Settings model·UI·catalog·authority focused 회귀 | **85 passed** | immutable 3 sections/13 rows(4/4/5), 24 sources, 9 conflicts, 16 warnings, 6 missing, strict lookup/digest, poison file/process/network/worker/link/drive I/O, 기존 Expert/connection/safety/Run/Verify/Apply/Restore/Save authority 불변, late summary 비전파, 세 테마 geometry/contrast. **로컬 catalog/UI만 GREEN** |
 | Application Settings 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음** | 24개 source SHA-256 독립 재계산 전부 일치, 미검증 Gold Twitter 설치/하드웨어 PDF 제외, zero-I/O·fail-closed·authority 경계 재확인 |
 | Application Settings 최신 runtime smoke | **4 / 4 / 5 rows · 24 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, 짧은 표 헤더, app inspect-only, action 없음, Connect 미실행, drive/worker/command/output/motion I/O 없음 |
 | Limits/Protections 모델·UI·catalog·authority focused 회귀 | **69 passed** | immutable 27-row documented map, 9개 conflict, danger warning, strict lookup/20개 source hash, poison file/process/network/worker/link/job/query/write, 기존 모든 Expert/installed/dispatch/connection/safety authority 불변과 세 스킨 1366×820. **로컬 catalog만 GREEN** |
-| 최신 전체 repository suite | **1547 passed in 503.66s** | LOW 표현 개선 뒤 현재 게시 트리에서 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
+| 최신 전체 repository suite | **1567 passed** | Verification–Time static doc map 반영 현재 트리에서 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
 | Limits/Protections 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음 · 독립 69 passed** | SimplIQ source, stable mutation digest, document/app access, fresh-import poison, connection/safety snapshot, 세 테마 contrast 재확인 |
 | Limits/Protections 최신 runtime smoke | **7 / 9 / 11 rows · 20 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, dark high-contrast table, app inspect-only, action 없음, Apply/Save LOCKED, drive/worker/command I/O와 motor action 없음 |
 | Limits table palette 실패→수정 | **white/bright unreadable RED → 세 테마 contrast `>=4.5` GREEN** | `expertEvidenceTable` 전용 QSS와 실제 QDD runtime 재확인 |

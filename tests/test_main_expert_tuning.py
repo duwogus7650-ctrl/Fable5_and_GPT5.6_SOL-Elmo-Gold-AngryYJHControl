@@ -1757,6 +1757,217 @@ def test_expert_bode_verification_never_absorbs_axis_or_model_state(
         assert str(value) not in rendered
 
 
+def test_expert_time_verification_page_is_static_zero_io_and_authority_isolated(
+        window, qapp, monkeypatch):
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError(
+            "Time verification evidence inspector entered I/O/dispatch")
+
+    class PoisonWorker:
+        def __getattr__(self, name):
+            def forbidden_worker_call(*args, **kwargs):
+                calls.append((name, args, kwargs))
+                raise AssertionError(
+                    "Time verification evidence touched worker.%s" % name)
+
+            return forbidden_worker_call
+
+    poison_worker = PoisonWorker()
+    window.worker = poison_worker
+    before = _limits_authority_snapshot(window)
+    status_before = tuple(
+        window.expert_page_status_rows[key].text()
+        for key in ("current", "vp", "evidence"))
+    dirty_before = window._expert_page_status_dirty
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden)
+    monkeypatch.setattr(window, "_claim_tune_dispatch", forbidden)
+    for method_name in (
+            "_recorder_signals_clicked",
+            "_recorder_immediate_clicked",
+            "_recorder_upload_clicked",
+            "_recorder_stop_clicked",
+            "_recorder_save_workspace",
+            "_recorder_open_workspace"):
+        monkeypatch.setattr(window, method_name, forbidden)
+
+    window._set_expert_lab_step("time_verification")
+    expected_controls = {
+        "current_time": (
+            "Controller KP[1] / KI[1]",
+            "Experiment Type · Auto / Single",
+            "Excitation Type · Step / Sine",
+            "Test in Phases · A / B / C",
+            "Unbalanced / Vertical Axis",
+            "Verify",
+            "Advanced Current Range / Frequency",
+            "XP[6] / XP[5] / US[1] / US[2] / Show Phase Voltage",
+        ),
+        "velocity_position_recording": (
+            "Recorder Signals",
+            "Chart Assignment",
+            "Trigger Editor",
+            "Trigger Slope",
+            "Trigger Source",
+            "Trigger Delay",
+            "Start Recording",
+            "Start Ignore Trigger",
+        ),
+        "velocity_position_time": (
+            "Position / Velocity / Current",
+            "Enable / Disable + Status",
+            "PTP Absolute / Relative",
+            "Jogging + Run Held",
+            "Acc / Dec / Stop Dec / Smooth / Speed / Dwell",
+            "Sine / Step Injection",
+            "Injection Run Held + Start / Stop",
+            "Control Parameters",
+        ),
+    }
+    assert tuple(
+        window.expert_time_verification_section.itemData(index)
+        for index in range(window.expert_time_verification_section.count())
+    ) == tuple(expected_controls)
+    for index, section_key in enumerate(expected_controls):
+        window.expert_time_verification_section.setCurrentIndex(index)
+        qapp.processEvents()
+        assert window.expert_time_verification_table.rowCount() == 8
+        assert tuple(
+            window.expert_time_verification_table.item(row, 0).text()
+            for row in range(8)
+        ) == expected_controls[section_key]
+
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_time_verification_page)
+    assert window.btn_expert_step_time_verification.text() == (
+        "9 · TIME DOC MAP")
+    assert "EVIDENCE STATUS" in (
+        window.expert_time_verification_status.text())
+    assert "MODEL STATUS" not in (
+        window.expert_time_verification_status.text())
+    assert window.worker is poison_worker
+    assert calls == []
+    assert _limits_authority_snapshot(window) == before
+    assert tuple(
+        window.expert_page_status_rows[key].text()
+        for key in ("current", "vp", "evidence")) == status_before
+    assert window._expert_page_status_dirty == dirty_before
+    assert window.expert_time_verification_section.isEditable() is False
+    assert window.expert_time_verification_page.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert window.expert_time_verification_page.findChildren(
+        QtWidgets.QPushButton) == []
+    assert window.expert_time_verification_page.findChildren(
+        QtWidgets.QCheckBox) == []
+    assert window.expert_time_verification_page.findChildren(
+        QtWidgets.QSlider) == []
+    assert not window.expert_time_verification_page.isAncestorOf(
+        window.expert_bode_widget)
+    assert not window.expert_time_verification_page.isAncestorOf(
+        window.recorder_page_stack)
+    assert tuple(
+        window.expert_time_verification_table
+        .horizontalHeaderItem(column).text()
+        for column in range(4)
+    ) == (
+        "CONTROL GROUP",
+        "DOCUMENTED ROLE / REF",
+        "UNIT / ACCESS",
+        "STATUS / BOUNDARY",
+    )
+    assert all(
+        "app: inspect-only" in
+        window.expert_time_verification_table.item(row, 2).text()
+        for row in range(window.expert_time_verification_table.rowCount()))
+    rendered = " ".join((
+        window.expert_lab_title.text(),
+        window.expert_lab_note.text(),
+        window.expert_time_verification_banner.text(),
+        window.expert_time_verification_status.text(),
+        window.expert_time_verification_conflicts.text(),
+        window.expert_time_verification_warnings.text(),
+        window.expert_time_verification_missing.text(),
+        *(
+            window.expert_time_verification_table.item(row, column).text()
+            for row in range(
+                window.expert_time_verification_table.rowCount())
+            for column in range(
+                window.expert_time_verification_table.columnCount())
+        ),
+    )).upper()
+    for phrase in (
+            "DOCUMENTED VERIFICATION-TIME MAP",
+            "NOT EAS VERIFICATION RESULT",
+            "NOT CURRENT DRIVE/EAS/RECORDER STATE",
+            "NOT MEASURED RESPONSE",
+            "NOT MODEL/MEASUREMENT PARITY",
+            "NOT TUNING PASS",
+            "NO DRIVE READ",
+            "NO RECORDER CONFIGURATION/ACQUISITION",
+            "NO APPLY/VERIFY",
+            "NO ENABLE/DISABLE",
+            "NO CURRENT INJECTION",
+            "NO PTP/JOG/SINE/STEP",
+            "DOCUMENTED UI STOP IS NOT STO/E-STOP",
+            "NO COMMAND/WRITE/SV",
+            "NO ENERGIZATION/MOTION",
+            "NO DRIVE I/O"):
+        assert phrase in rendered
+    for forbidden_text in (
+            "VERIFICATION PASSED",
+            "VALIDATED SAFE",
+            "CURRENT VALUE IS",
+            "CURRENT DRIVE IS",
+            "RECORDER READY",
+            "INSTALLED RESULT",
+            "RECOMMENDED VALUE",
+            "APP: R/W"):
+        assert forbidden_text not in rendered
+
+
+def test_expert_time_verification_never_absorbs_live_or_recorder_state(
+        window, qapp):
+    window._set_expert_lab_step("time_verification")
+    before = tuple(
+        window.expert_time_verification_table.item(row, column).text()
+        for row in range(window.expert_time_verification_table.rowCount())
+        for column in range(
+            window.expert_time_verification_table.columnCount())
+    )
+    sentinels = {
+        "PX": 817263544,
+        "VX": 726354481,
+        "IQ": 635448172,
+        "CL[1]": 4.32198765,
+        "MO": 987654321,
+    }
+    window._on_axis_summary({
+        "scope": "LAST OBSERVED",
+        "mode": "UM=5",
+        "raw": sentinels,
+    })
+    window._expert_plant = object()
+    window._expert_candidate = object()
+    window._expert_response = object()
+    qapp.processEvents()
+
+    after = tuple(
+        window.expert_time_verification_table.item(row, column).text()
+        for row in range(window.expert_time_verification_table.rowCount())
+        for column in range(
+            window.expert_time_verification_table.columnCount())
+    )
+    assert after == before
+    rendered = " ".join(after)
+    for value in sentinels.values():
+        assert str(value) not in rendered
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
     def contrast_ratio(first, second):
@@ -1790,7 +2001,7 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
             for step in (
                     "current", "vp", "evidence", "status", "user_units",
                     "limits_protections", "application_settings",
-                    "bode_verification"):
+                    "bode_verification", "time_verification"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):
@@ -1855,6 +2066,28 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         assert required <= (
                             window.expert_bode_verification_table
                             .columnWidth(column))
+                if step == "time_verification":
+                    table_palette = (
+                        window.expert_time_verification_table
+                        .viewport().palette())
+                    assert contrast_ratio(
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Text),
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Base),
+                    ) >= 4.5
+                    for column in range(
+                            window.expert_time_verification_table
+                            .columnCount()):
+                        header_text = (
+                            window.expert_time_verification_table
+                            .horizontalHeaderItem(column).text())
+                        required = (
+                            window.expert_time_verification_table
+                            .fontMetrics().horizontalAdvance(header_text) + 20)
+                        assert required <= (
+                            window.expert_time_verification_table
+                            .columnWidth(column))
                 buttons = (
                         window.btn_expert_step_current,
                         window.btn_expert_step_vp,
@@ -1863,7 +2096,8 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         window.btn_expert_step_user_units,
                         window.btn_expert_step_limits,
                         window.btn_expert_step_application,
-                        window.btn_expert_step_bode_verification)
+                        window.btn_expert_step_bode_verification,
+                        window.btn_expert_step_time_verification)
                 for button in buttons:
                     assert button.isVisible()
                     required = (

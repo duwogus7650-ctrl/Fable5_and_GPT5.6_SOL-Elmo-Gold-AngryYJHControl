@@ -167,6 +167,32 @@ _SPECS = (
           "sampling provenance, abort and closeout behavior, and quantitative "
           "acceptance criteria remain unimplemented and NEED-DATA.",
           status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.time_verification.evidence.inspect",
+          "Expert Time Verification - Documented Map",
+          OperationRisk.LOCAL_UI,
+          "Inspect an immutable Verification-Time document map locally. It "
+          "performs no drive read, no recorder configuration, no acquisition, "
+          "no Verify, no enable, no PTP, no jog, no injection, no "
+          "energization, and no motion.",
+          status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.time_verification.current.execute",
+          "Expert Current Time Verification Execution - NEED-DATA",
+          OperationRisk.ENERGIZING,
+          "Actual Current Verification-Time execution energizes the selected "
+          "phase and can move or twitch the motor; EAS displays a motor-"
+          "movement warning. The current envelope, recorder provenance, "
+          "abort, closeout, and quantitative acceptance contracts remain "
+          "unimplemented and NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.time_verification.velocity_position.execute",
+          "Expert Velocity / Position Time Verification Execution - NEED-DATA",
+          OperationRisk.MOTION,
+          "Actual Velocity/Position Verification-Time execution can enable "
+          "the drive, change a motion current input and control parameters, "
+          "and perform PTP, jog, and sine/step motion. The travel envelope, "
+          "independent stop, telemetry, restore, and fault-recovery contracts "
+          "remain unimplemented and NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,

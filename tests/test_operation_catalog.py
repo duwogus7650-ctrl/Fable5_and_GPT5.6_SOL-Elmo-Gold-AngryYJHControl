@@ -197,6 +197,76 @@ def test_expert_bode_verification_execute_remains_need_data():
         assert phrase in summary
 
 
+def test_expert_time_verification_evidence_is_local_partial_zero_io():
+    spec = catalog.operation_spec(
+        "tuning.expert.time_verification.evidence.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "immutable",
+            "verification-time",
+            "document",
+            "no drive read",
+            "no recorder configuration",
+            "no acquisition",
+            "no verify",
+            "no enable",
+            "no ptp",
+            "no jog",
+            "no injection",
+            "no energization",
+            "no motion"):
+        assert phrase in summary
+
+
+def test_expert_current_time_execution_is_energizing_and_need_data():
+    spec = catalog.operation_spec(
+        "tuning.expert.time_verification.current.execute")
+
+    assert spec.risk is catalog.OperationRisk.ENERGIZING
+    assert spec.status is catalog.OperationStatus.NEED_DATA
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "current",
+            "energizes",
+            "phase",
+            "current envelope",
+            "recorder provenance",
+            "abort",
+            "closeout",
+            "acceptance"):
+        assert phrase in summary
+
+
+def test_expert_velocity_position_time_execution_is_motion_and_need_data():
+    spec = catalog.operation_spec(
+        "tuning.expert.time_verification.velocity_position.execute")
+
+    assert spec.risk is catalog.OperationRisk.MOTION
+    assert spec.status is catalog.OperationStatus.NEED_DATA
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "enable",
+            "ptp",
+            "jog",
+            "sine/step",
+            "current input",
+            "control parameter",
+            "travel",
+            "independent stop",
+            "telemetry",
+            "restore"):
+        assert phrase in summary
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 
@@ -245,6 +315,13 @@ def test_gain_mutation_catalog_is_need_data_and_installed_verify_uses_signature_
 def test_every_mutating_operation_declares_fail_closed_gates():
     for spec in catalog.OPERATIONS.values():
         if spec.risk not in catalog.DRIVE_MUTATING_RISKS:
+            continue
+        if not spec.gates:
+            # A disabled NEED-DATA entry may classify the physical risk
+            # before any executable gate contract exists.  It remains
+            # fail-closed because no menu or dispatch path is exposed.
+            assert spec.status is catalog.OperationStatus.NEED_DATA
+            assert spec.menu_enabled is False
             continue
         assert "verified_identity" in spec.gates, spec.operation_id
         assert "fresh_telemetry" in spec.gates, spec.operation_id
