@@ -1,12 +1,12 @@
-<!-- scope_progress: 97 -->
-<!-- offline_progress: 95 -->
+<!-- scope_progress: 98 -->
+<!-- offline_progress: 96 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence Maps through Summary
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence Maps through Summary + Single Axis Authority
 
-상태: **SUMMARY TRANSACTION DOC MAP PUBLISHED TO PRIVATE DRAFT PR · FULL REGRESSION + RUNTIME COMPLETE · LOCAL CATALOG/UI ONLY GREEN · SAVE/DRIVE/FILE/DB/MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-19 03:50 KST**
+상태: **SINGLE AXIS AUTHORITY DOC MAP VERIFIED · FULL REGRESSION + RUNTIME COMPLETE · LOCAL CATALOG/UI ONLY GREEN · DRIVE/OUTPUT/MODE/ENABLE/MOTION/TERMINAL/RECORDER ACTION NOT RUN**<br>
+업데이트: **2026-07-19 05:02 KST**
 
 ## 현재 기준
 
@@ -40,10 +40,15 @@
 - Expert Summary · Documented Transaction Map v0.1 검증·구현 HEAD:
   `9ed565eb5ee40a768876e4c192505fd65bb121a7`
   (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
+- Single Axis Controls · Documented Authority Map v0.1 검증·구현 HEAD:
+  `0974ba061b2f616d9515f5eaa26b0f815055894c`
+  (private Draft PR #2 게시 closeout 대상)
 - 현재 작업 대상:
-  Expert 열 번째 `SUMMARY DOC MAP`의 zero-I/O 구현·영향범위·전체 repository
-  회귀·runtime closeout 완료. actual Summary Save/SV/drive upload/file/design/
-  DB mutation은 실행하지 않았고 다음 bounded no-I/O slice 선정 전 상태
+  Motion page `SINGLE AXIS CONTROLS - DOCUMENTED AUTHORITY MAP`의 zero-I/O
+  구현·영향범위·전체 repository 회귀·runtime closeout 완료. actual drive read,
+  Digital Output toggle, UM change, Enable/Disable, PTP/Jog/Current/Sine/
+  Homing/Stepper, Terminal command와 Recorder config/acquisition은 실행하지
+  않았고 다음 bounded slice 선정 전 상태
 - 사용자 제공 현장 상태: 드라이버 전원 연결. 이는 `UNVERIFIED` 현장 진술이며
   drive 연결, Enable, parameter download, Verify, recorder 시작, 통전·모션
   승인으로 사용하지 않는다. 제어창은 화면 확인만 수행한다.
@@ -89,6 +94,28 @@
 
 ## 검증 상태
 
+- `OBSERVED` Single Axis Controls immutable model/UI/catalog:
+  exact 3 sections/12 grouped rows(4/4/4), frozen singleton, strict lookup,
+  fail-closed capabilities, fresh import/build file·socket·subprocess I/O poison,
+  worker/connection/telemetry/commutation/Session Zero/PTP/STOP authority 불변,
+  inspector action/edit widget 0을 **53 passed in 45.33s**로 확인했다.
+- `OBSERVED` 관련 Motion·menu·safety·Recorder·status/system/tool 영향 범위:
+  **560 passed**.
+- `OBSERVED` 최신 전체 repository:
+  **1604 passed in 478.69s**, 종료코드 **0**, stderr **0 bytes**.
+- `OBSERVED` 새 Python 3.14 제어창 runtime:
+  1366×820 `OFFLINE · READ ONLY`; QDD dark high-contrast table에서
+  `Status & I/O`, `Mode & Reference`, `Activation & Tools`가 각각
+  **4 documented groups**로 전환됨을 확인했다. 세 skin geometry test는
+  수평 scroll 0과 table contrast **≥4.5:1**을 고정한다.
+- `OBSERVED` 설치 Gold UM HTML + Single Axis overview/areas image SHA-256:
+  **3/3 일치**.
+- 이 `GREEN`은
+  `DOCUMENTED_SINGLE_AXIS_AUTHORITY_MAP_ONLY · PARTIAL_NEED_DATA`의
+  로컬 문서 catalog/UI에만 적용된다. live state, Digital Output write,
+  UM transaction, Enable/Disable, PTP/Jog/Current/Sine/Homing/Stepper,
+  Terminal command, Recorder config/acquisition과 Gold family/EAS parity는
+  모두 **`NEED-DATA / NO-GO`**다.
 - `OBSERVED` Summary immutable model/UI/catalog 영향범위:
   **276 passed in 62.86s**. exact 3 sections/12 grouped rows(4/4/4),
   frozen singleton, 3 source identity, strict lookup, fail-closed capability,

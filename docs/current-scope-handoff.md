@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Evidence Maps through Summary 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Evidence Maps through Summary + Single Axis Authority 작업 인계서
 
-상태: **SUMMARY TRANSACTION DOC MAP VERIFIED · LOCAL CATALOG/UI ONLY GREEN · ACTUAL SAVE/DRIVE/FILE/DB/MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-19 03:50 KST**<br>
+상태: **SINGLE AXIS AUTHORITY DOC MAP VERIFIED · LOCAL CATALOG/UI ONLY GREEN · ACTUAL DRIVE/OUTPUT/MODE/ENABLE/MOTION/TERMINAL/RECORDER ACTION NOT RUN**<br>
+기준 시각: **2026-07-19 05:02 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -29,6 +29,8 @@
   `91d6ee40d866a4626891a094e51c5561a122a63f`
 - Expert Summary · Documented Transaction Map v0.1:
   `9ed565eb5ee40a768876e4c192505fd65bb121a7`
+- Single Axis Controls · Documented Authority Map v0.1:
+  `0974ba061b2f616d9515f5eaa26b0f815055894c`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -63,6 +65,14 @@
   OFFLINE/READ ONLY runtime UI smoke와 3개 source SHA-256 재대조를
   완료했다. actual Summary Save/SV/drive upload/file/design/DB mutation은
   실행하지 않았다.
+- Single Axis Authority Map 구현은 Motion page의 별도 LOCAL frame과
+  3 sections/12 rows(4/4/4)의 frozen model, operation catalog/test/docs로
+  구성됐다. 핵심 **53 passed in 45.33s**, 관련 영향 범위 **560 passed**,
+  현재 트리 전체 **1604 passed in 478.69s**(종료코드 0, stderr 0),
+  Python 3.14 1366×820 `OFFLINE · READ ONLY` runtime과 설치 source
+  SHA-256 **3/3 일치**를 확인했다. 실제 drive read, Digital Output toggle,
+  UM change, Enable/Disable, PTP/Jog/Current/Sine/Homing/Stepper,
+  Terminal command, Recorder config/acquisition은 실행하지 않았다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -128,6 +138,18 @@
 - telemetry authority 상실·energizing 중에는 safety projection만 blank하고,
   current worker가 보내는 `motion_config_unknown`/energy-closeout latch는 계속 수용
 - 이 projection은 STO 배선·반응시간·torque isolation·독립 E-stop 시험의 증거가 아님
+- `Single Axis Controls · Documented Authority Map v0.1`은 설치 Gold UM
+  §8.9와 overview/areas image를 SHA-256 3개로 동결한 pure local catalog
+- `Status & I/O`, `Mode & Reference`, `Activation & Tools`의
+  3 section/12 row를 `document: inspect-only · app: inspect-only`로 표시
+- Digital Output checkbox는 `DRIVE_WRITE`, UM은 `RAM_WRITE / CONTROL MODE`,
+  Enable/Current는 `ENERGIZING`, PTP/Jog/Homing/Sine/Stepper는
+  `MOTION / ENERGIZING`, Terminal은 `UNBOUNDED COMMAND SURFACE`로 분리
+- map의 유일한 `True` capability는 `can_inspect`; drive read, output toggle,
+  mode change, enable, command, recorder, write, energization, motion,
+  live/safety/parity claim은 모두 `False`
+- inspector section 전환은 worker/connection/telemetry/commutation/
+  Session Zero/PTP/STOP authority를 바꾸지 않고 runtime drive I/O를 만들지 않음
 - `FINITE_PTP_LIVE_ENABLED=False`
 - live PTP catalog 상태는 `NEED-DATA`
 - 기계 travel, 방향, output ratio, limit 입력, 정지거리, 독립 E-stop/STO 근거 전에는
