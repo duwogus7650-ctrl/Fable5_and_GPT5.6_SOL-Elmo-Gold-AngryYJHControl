@@ -3,10 +3,10 @@
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode Map
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode + Verification–Time Maps
 
-상태: **HIDDEN BODE MAP PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-19 01:03 KST**
+상태: **VERIFICATION–TIME DOC MAP PUBLISHED TO PRIVATE DRAFT PR · FULL REGRESSION + RUNTIME COMPLETE · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-19 02:29 KST**
 
 ## 현재 기준
 
@@ -34,8 +34,20 @@
 - Expert Hidden Verification – Bode · Documented Map v0.1 검증·구현 HEAD:
   `80731767b0f0b591d4330d6fabd461a1244537bd`
   (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
+- Expert Verification – Time · Documented Map v0.1 검증·구현 HEAD:
+  `91d6ee40d866a4626891a094e51c5561a122a63f`
+  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
 - 현재 작업 대상:
-  Hidden Bode 게시 closeout 기록과 다음 no-I/O EAS bounded slice 선정
+  Expert 아홉 번째 `TIME DOC MAP`의 zero-I/O 구현·영향범위·전체 repository
+  회귀·runtime·독립 재검토 closeout 완료. 실제 Current/V·P Time Verify는
+  실행하지 않았고 다음 bounded no-I/O slice 선정 전 상태
+- 사용자 제공 현장 상태: 드라이버 전원 연결. 이는 `UNVERIFIED` 현장 진술이며
+  drive 연결, Enable, parameter download, Verify, recorder 시작, 통전·모션
+  승인으로 사용하지 않는다. 제어창은 화면 확인만 수행한다.
+- Gold/SimplIQ 설치 문서에서 Current §8.2.8.3과 V/P §8.2.13.4를 다음
+  bounded slice로 동결했다. Current Verify는 통전과 비의도 이동/twitch 가능성이
+  있고 V/P Profiler·Sine/Step·편집 가능한 Current와 control parameters는
+  MOTION/전류·토크 변경 위험이 있으므로 문서 열람만 구현하고 실행 권한은 잠갔다.
 - Hidden Bode 구현은 private `origin`의 게시 HEAD다. 여덟 번째
   `BODE DOC MAP` page에 Tuner Settings 8 / Current Bode 8 /
   Velocity·Position Bode 8개 immutable documentation row, 7 frozen source
@@ -74,6 +86,32 @@
 
 ## 검증 상태
 
+- `OBSERVED` Verification–Time immutable model/UI/catalog 영향범위:
+  핵심 계약 **40 passed in 22.68s**, Expert 전체 영향범위 **99 passed in
+  98.84s**. exact 3 sections/24 grouped rows(8/8/8), frozen singleton,
+  8 source identity/path suffix, strict lookup, fail-closed capability,
+  worker/link/dispatch/recorder/file action poison, late Axis/Recorder 비전파와
+  세 테마 1366×820 contrast/header/no-horizontal-scroll을 확인했다.
+- `OBSERVED` 독립 검토에서 발견한 V/P editable Current, Current Verify의
+  motor-movement warning, field weakening/friction의 current·torque 위험,
+  `can_energize/can_revert=false`, recorder poison coverage와 UI 표시 단일
+  truth-source 누락을 RED로 재현한 뒤 수정했다.
+- `OBSERVED` Verification–Time을 포함한 최신 전체 repository suite:
+  **1567 passed in 524.64s**, 직접 `pytest` 실행의 숫자 종료코드 **0**.
+- `OBSERVED` 새 제어창 runtime smoke:
+  Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 아홉 번째
+  `TIME DOC MAP` page와 selector 3개 section, section별 8개 documented
+  group, action/edit widget **0**을 확인했다. Connect, drive/Recorder read,
+  Verify, Enable, PTP, Jog, Sine/Step, recording, Apply/SV, 통전·모션은
+  실행하지 않았다.
+- `OBSERVED` Verification–Time 독립 read-only 재검토:
+  **잔여 HIGH/MEDIUM/LOW 없음**. 8개 설치 source location을 독립적으로
+  다시 해시해 SHA-256 **8/8 일치**를 확인했다.
+- 이 GREEN은 `DOCUMENTED_TIME_VERIFICATION_MAP_ONLY · PARTIAL_NEED_DATA`
+  로컬 문서 열람 계약에만 적용된다. actual Current Verification–Time은
+  `ENERGY + possible motion`, V/P Verification–Time은 `MOTION`; 둘 다
+  별도 envelope/recorder provenance/abort/restore/acceptance 전에는
+  **`NEED-DATA / NO-GO`**다.
 - `OBSERVED` Hidden Bode immutable model contract:
   **14 passed**. exact 3 sections/24 rows(8/8/8), frozen singleton,
   strict lookup, 7 sources, 4 conflicts, 12 warnings, 8 missing-evidence,
@@ -82,7 +120,7 @@
   **211 passed in 65.06s**. 기존 P1/P2 MODEL과 다른 Expert inspector,
   operation catalog, late Axis/model 비전파, 8-step UI zero-I/O/authority,
   세 테마 1366×820 geometry/contrast를 재확인했다.
-- `OBSERVED` 현재 게시 트리의 최신 전체 repository suite:
+- `OBSERVED` 직전 Hidden Bode 게시 트리의 전체 repository suite:
   **1547 passed in 503.66s**, 직접 `pytest` 실행의 숫자 종료코드 **0**
 - `OBSERVED` Hidden Bode 독립 read-only 검토:
   **HIGH/MEDIUM 없음**. 7개 설치 source SHA-256을 원본에서 독립 재계산해
@@ -321,8 +359,10 @@
     부분 구현; current readback/write/transaction/actuation은 잔여
   - Hidden Current/V/P Bode는 static documented map만 부분 구현;
     actual Verify와 setting mutation/recording은 잔여 `NEED-DATA`
-  - time verification, User Units의 drive readback/write와
-    EAS page icon/Enter/Apply·Summary recommendation은 잔여
+  - Verification–Time은 static documented map만 구현; 실제 Current/V·P
+    Verify, Recorder 구성·acquisition과 정량 acceptance는 잔여 `NEED-DATA`
+  - User Units의 drive readback/write와 EAS page icon/Enter/Apply·Summary
+    recommendation은 잔여
   - Single Axis의 STO drive-reported snapshot은 부분 구현
   - Digital I/O·mode별 수동 구동·Terminal·docked Recorder parity는 잔여 `NEED-DATA`
 - **Elmo 자료 인벤토리**
@@ -343,12 +383,13 @@
 | Expert Application Settings · Documented Map v0.1 | **완료 · focused 85 / 전체 1529 passed + runtime/독립 검토 · `e577f79` · private Draft PR #2** |
 | Application Settings private Draft PR 게시 | **완료 · `e577f79`** |
 | Expert Hidden Verification – Bode · Documented Map v0.1 | **완료 · pure 14 / 영향범위 211 / 전체 1547 passed + runtime/독립 검토 · `8073176` · private Draft PR #2** |
+| Expert Verification – Time · Documented Map v0.1 | **완료 · focused 40 / 영향범위 99 / 전체 1567 passed + runtime/독립 재검토 · `91d6ee4` · private Draft PR #2 · motor action not run** |
 | 실제 Current Bode / V·P Bode 실행 | **NEED-DATA · ENERGY/MOTION 별도 gate · 신뢰 가능한 ETA 없음** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-Hidden Bode static map 로컬 closeout과 private 게시는 완료됐다.
+Hidden Bode와 Verification–Time static map의 로컬 closeout과 private 게시는 완료됐다.
 이는 근거가 있는 LOCAL/READ-ONLY 계약의 완료이며 모든 EAS 페이지 구현 완료를 뜻하지 않는다.
-Actual Bode Verify, exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
+Actual Bode/Time Verify, exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
