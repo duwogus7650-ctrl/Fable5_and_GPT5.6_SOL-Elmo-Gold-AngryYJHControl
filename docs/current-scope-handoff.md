@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode + Verification–Time Maps 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Evidence Maps through Summary 작업 인계서
 
-상태: **VERIFICATION–TIME DOC MAP VERIFIED · LOCAL CATALOG/UI ONLY GREEN · ACTUAL VERIFICATION/MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-19 02:23 KST**<br>
+상태: **SUMMARY TRANSACTION DOC MAP VERIFIED · LOCAL CATALOG/UI ONLY GREEN · ACTUAL SAVE/DRIVE/FILE/DB/MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-19 03:50 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -25,12 +25,17 @@
   `e577f790f6b15c418f1cd6a8fd9bd55da9a46d1f`
 - Expert Hidden Verification – Bode · Documented Map v0.1:
   `80731767b0f0b591d4330d6fabd461a1244537bd`
+- Expert Verification – Time · Documented Map v0.1:
+  `91d6ee40d866a4626891a094e51c5561a122a63f`
+- Expert Summary · Documented Transaction Map v0.1:
+  `9ed565eb5ee40a768876e4c192505fd65bb121a7`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
   `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
 - Quick/Single Axis/Expert·Filter/Scheduling evidence·Page Status·User Units·
-  Limits/Protections·Application Settings·Hidden Bode Map·안전 경계 변경은
+  Limits/Protections·Application Settings·Hidden Bode·Verification–Time·
+  Summary Map·안전 경계 변경은
   새 비공개 `origin`의 기존 Draft PR #2에
   위 게시 HEAD까지 반영했다.
   공개 원본 `source`에는 push하지 않았다.
@@ -51,6 +56,13 @@
   트리 전체 **1567 passed**(직접 종료코드 0), Python 3.14 runtime UI smoke,
   8개 source SHA-256 독립 재대조와 독립 read-only 검토를 완료했다. 실제
   Current/V·P Verification–Time은 실행하지 않았다.
+- Summary Map 구현은 별도 열 번째 `SUMMARY DOC MAP` page와
+  3 sections/12 rows(4/4/4)의 frozen model, operation catalog/test/docs로
+  구성됐다. 영향범위 **276 passed in 62.86s**, 현재 트리 전체
+  **1587 passed in 266.87s**(직접 종료코드 0), Python 3.14
+  OFFLINE/READ ONLY runtime UI smoke와 3개 source SHA-256 재대조를
+  완료했다. actual Summary Save/SV/drive upload/file/design/DB mutation은
+  실행하지 않았다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -314,6 +326,35 @@
 - 상세 계약:
   [`expert-time-verification-evidence-v0.1.md`](expert-time-verification-evidence-v0.1.md)
 
+### 2.11 Expert Summary · Documented Transaction Map v0.1
+
+- 열 번째 `SUMMARY DOC MAP` 단계에서 EAS Summary의
+  `Recommended Actions`, `Save Transaction`, `Authority Split`을 별도
+  static page로 표시
+- canonical shape는 3 sections / 12 grouped rows = **4 / 4 / 4**
+- authority는 `DOCUMENTED_SUMMARY_TRANSACTION_MAP_ONLY`, model status는
+  `PARTIAL_NEED_DATA`; local immutable catalog/UI inspect만 GREEN
+- 설치 Gold UM §8.2.2 steps 80–85와 before/after Summary image를 근거로
+  `Save Parameters in Drive (SV)`, `Upload Parameters from Drive`,
+  `Save Design Plants`, `Import to DB…`, 단일 `Save`를 문서화
+- 실제 효과는 drive flash persist, drive read + local parameter file,
+  design artifact files, motor database mutation의 네 authority로 분리
+- actual operation 네 개는 catalog에 존재하지만 모두 menu-disabled
+  `NEED_DATA`
+- inspector는 drive read/upload, checkbox/path/file dialog, SV/Drive Save,
+  file/design export, DB import/mutation, Save/Apply, command, energization/
+  motion을 모두 차단
+- 3 document ambiguity, 6 persistent warning, 8 missing-evidence category와
+  3 frozen source identity를 보존
+- 영향범위 **276 passed in 62.86s**, 현재 트리 전체
+  **1587 passed in 266.87s / exit 0**
+- 설치 source SHA-256 **3/3 match**
+- Python 3.14, 1366×820 새 OFFLINE/READ ONLY runtime에서 4/4/4 rows,
+  action/edit widget 0을 확인. Connect/Summary Save/SV/file/DB/Apply/통전/
+  모션은 실행하지 않음
+- 상세 계약:
+  [`expert-summary-transaction-evidence-v0.1.md`](expert-summary-transaction-evidence-v0.1.md)
+
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
 
@@ -431,7 +472,9 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | Application Settings 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음** | 24개 source SHA-256 독립 재계산 전부 일치, 미검증 Gold Twitter 설치/하드웨어 PDF 제외, zero-I/O·fail-closed·authority 경계 재확인 |
 | Application Settings 최신 runtime smoke | **4 / 4 / 5 rows · 24 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, 짧은 표 헤더, app inspect-only, action 없음, Connect 미실행, drive/worker/command/output/motion I/O 없음 |
 | Limits/Protections 모델·UI·catalog·authority focused 회귀 | **69 passed** | immutable 27-row documented map, 9개 conflict, danger warning, strict lookup/20개 source hash, poison file/process/network/worker/link/job/query/write, 기존 모든 Expert/installed/dispatch/connection/safety authority 불변과 세 스킨 1366×820. **로컬 catalog만 GREEN** |
-| 최신 전체 repository suite | **1567 passed** | Verification–Time static doc map 반영 현재 트리에서 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
+| Summary model·catalog·UI 영향범위 | **276 passed in 62.86s** | frozen 3×4 map, strict lookup, import/build I/O poison, 네 mutation authority 분리, 기존 Expert/connection/persistence/safety 불변, 세 테마 1366×820 |
+| Summary runtime 구조 smoke | **4 / 4 / 4 rows · 3 frozen identities · OFFLINE/READ ONLY** | 새 Python 3.14 창, action/edit widget 0; Connect/Save/SV/file/DB/Apply/energization/motion 없음 |
+| 최신 전체 repository suite | **1587 passed in 266.87s** | Summary static transaction map 반영 현재 트리에서 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
 | Limits/Protections 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음 · 독립 69 passed** | SimplIQ source, stable mutation digest, document/app access, fresh-import poison, connection/safety snapshot, 세 테마 contrast 재확인 |
 | Limits/Protections 최신 runtime smoke | **7 / 9 / 11 rows · 20 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, dark high-contrast table, app inspect-only, action 없음, Apply/Save LOCKED, drive/worker/command I/O와 motor action 없음 |
 | Limits table palette 실패→수정 | **white/bright unreadable RED → 세 테마 contrast `>=4.5` GREEN** | `expertEvidenceTable` 전용 QSS와 실제 QDD runtime 재확인 |

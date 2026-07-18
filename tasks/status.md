@@ -1,12 +1,12 @@
-<!-- scope_progress: 96 -->
-<!-- offline_progress: 94 -->
+<!-- scope_progress: 97 -->
+<!-- offline_progress: 95 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode + Verification–Time Maps
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence Maps through Summary
 
-상태: **VERIFICATION–TIME DOC MAP PUBLISHED TO PRIVATE DRAFT PR · FULL REGRESSION + RUNTIME COMPLETE · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-19 02:29 KST**
+상태: **SUMMARY TRANSACTION DOC MAP PUBLISHED TO PRIVATE DRAFT PR · FULL REGRESSION + RUNTIME COMPLETE · LOCAL CATALOG/UI ONLY GREEN · SAVE/DRIVE/FILE/DB/MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-19 03:50 KST**
 
 ## 현재 기준
 
@@ -37,10 +37,13 @@
 - Expert Verification – Time · Documented Map v0.1 검증·구현 HEAD:
   `91d6ee40d866a4626891a094e51c5561a122a63f`
   (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
+- Expert Summary · Documented Transaction Map v0.1 검증·구현 HEAD:
+  `9ed565eb5ee40a768876e4c192505fd65bb121a7`
+  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
 - 현재 작업 대상:
-  Expert 아홉 번째 `TIME DOC MAP`의 zero-I/O 구현·영향범위·전체 repository
-  회귀·runtime·독립 재검토 closeout 완료. 실제 Current/V·P Time Verify는
-  실행하지 않았고 다음 bounded no-I/O slice 선정 전 상태
+  Expert 열 번째 `SUMMARY DOC MAP`의 zero-I/O 구현·영향범위·전체 repository
+  회귀·runtime closeout 완료. actual Summary Save/SV/drive upload/file/design/
+  DB mutation은 실행하지 않았고 다음 bounded no-I/O slice 선정 전 상태
 - 사용자 제공 현장 상태: 드라이버 전원 연결. 이는 `UNVERIFIED` 현장 진술이며
   drive 연결, Enable, parameter download, Verify, recorder 시작, 통전·모션
   승인으로 사용하지 않는다. 제어창은 화면 확인만 수행한다.
@@ -86,6 +89,26 @@
 
 ## 검증 상태
 
+- `OBSERVED` Summary immutable model/UI/catalog 영향범위:
+  **276 passed in 62.86s**. exact 3 sections/12 grouped rows(4/4/4),
+  frozen singleton, 3 source identity, strict lookup, fail-closed capability,
+  fresh import/build file·socket·subprocess I/O poison, actual Save/SV/file/
+  DB control 부재, 기존 Expert/connection/persistence/safety authority 불변,
+  세 테마 1366×820 contrast/header/no-horizontal-scroll을 확인했다.
+- `OBSERVED` Summary를 포함한 최신 전체 repository suite:
+  **1587 passed in 266.87s**, 직접 `pytest` 실행의 숫자 종료코드 **0**.
+- `OBSERVED` 새 Python 3.14 제어창 runtime:
+  1366×820, `OFFLINE · READ ONLY`; 열 번째 `SUMMARY DOC MAP` page와
+  `Recommended Actions`, `Save Transaction`, `Authority Split` 각
+  **4 documented groups**, Summary page action/edit widget **0**을 확인했다.
+  Connect, drive read/upload, Summary Save, SV, file dialog/export,
+  design export, DB import/mutation, Apply, energization/motion은 실행하지 않았다.
+- `OBSERVED` 설치 Gold UM HTML + before/after image SHA-256:
+  **3/3 일치**.
+- 이 GREEN은 `DOCUMENTED_SUMMARY_TRANSACTION_MAP_ONLY · PARTIAL_NEED_DATA`
+  로컬 문서 열람 계약에만 적용된다. actual drive/file/design/DB transaction,
+  saved/complete claim, atomicity/rollback과 field behavior는 모두
+  **`NEED-DATA / NO-GO`**다.
 - `OBSERVED` Verification–Time immutable model/UI/catalog 영향범위:
   핵심 계약 **40 passed in 22.68s**, Expert 전체 영향범위 **99 passed in
   98.84s**. exact 3 sections/24 grouped rows(8/8/8), frozen singleton,
@@ -387,7 +410,7 @@
 | 실제 Current Bode / V·P Bode 실행 | **NEED-DATA · ENERGY/MOTION 별도 gate · 신뢰 가능한 ETA 없음** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-Hidden Bode와 Verification–Time static map의 로컬 closeout과 private 게시는 완료됐다.
+Hidden Bode, Verification–Time, Summary static map의 로컬 closeout은 완료됐다.
 이는 근거가 있는 LOCAL/READ-ONLY 계약의 완료이며 모든 EAS 페이지 구현 완료를 뜻하지 않는다.
 Actual Bode/Time Verify, exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
