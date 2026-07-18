@@ -86,6 +86,11 @@ _SPECS = (
           OperationRisk.LOCAL_UI,
           "Review candidates and run installed-gain verification; hardware gain Apply/Save are locked.",
           menu_enabled=True),
+    _spec("tuning.expert.offline.calculate",
+          "Expert Candidate Lab · Calculate Offline Model",
+          OperationRisk.LOCAL_UI,
+          "Calculate a phase-to-phase MODEL candidate and bounded frequency "
+          "response locally with no drive, worker, or command I/O."),
     _spec("nav.axis", "Axis Summary · Read only", OperationRisk.LOCAL_UI,
           "Open the raw, read-only axis summary.", menu_enabled=True),
     _spec("nav.recorder", "Recorder", OperationRisk.LOCAL_UI,
@@ -236,8 +241,10 @@ _SPECS = (
           gates=_PERSIST | frozenset(("durable_gain_trial_wal", "verified_trial_capability")),
           status=OperationStatus.NEED_DATA),
     _spec("motion.ptp.run", "Run finite PTP move", OperationRisk.MOTION,
-          "Run one bounded finite position move and always close out disabled.",
-          gates=_MOTION),
+          "The offline finite-PTP kernel is implemented, but live execution "
+          "remains locked until an identity-bound commissioning envelope is "
+          "supplied and validated.",
+          gates=_MOTION, status=OperationStatus.NEED_DATA),
     _spec("recorder.immediate", "Recorder Immediate",
           OperationRisk.DRIVE_STATE,
           "Configure and arm one finite Immediate recorder capture.",

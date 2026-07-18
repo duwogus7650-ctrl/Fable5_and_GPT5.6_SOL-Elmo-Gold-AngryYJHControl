@@ -110,15 +110,15 @@ def test_valid_status_has_exact_values_and_honest_labels(monitor):
     assert "QUICK TUNING" in window.scope_label.text()
     assert "PROVISIONAL" in window.offline_label.text()
     assert "NEED-DATA" in window.field_label.text()
-    assert window.scope_bar.format() == "%p% · SCOPE FROZEN"
+    assert window.scope_bar.format() == "%p% · PLAN MAPPED"
     assert window.offline_bar.format() == "%p% · PROVISIONAL"
     assert window.field_bar.format() == "NEED-DATA · LIVE NOT RUN"
     assert "481 passed" in window.document.toPlainText()
-    assert window.windowTitle() == "AngryYJH · Quick + Single Axis Monitor"
+    assert window.windowTitle() == "AngryYJH · Tuning + Single Axis Monitor"
     assert window.findChild(QtWidgets.QLabel, "title").text() == (
-        "GOLD TWITTER QUICK + SINGLE AXIS")
+        "GOLD TWITTER · QUICK / EXPERT / SINGLE AXIS")
     assert window.findChild(QtWidgets.QLabel, "subtitle").text() == (
-        "OFFLINE HARDEN → FIELD GATES → SUPERVISED VALIDATION")
+        "READ-ONLY SAFETY → EAS MAPPING → OFFLINE IMPLEMENTATION")
     assert "NEED-DATA" in window.document.toPlainText()
     assert str(path) in window.watcher.files()
     assert str(path.parent) in window.watcher.directories()

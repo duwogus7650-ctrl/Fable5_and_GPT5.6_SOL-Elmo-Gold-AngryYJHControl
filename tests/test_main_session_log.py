@@ -92,13 +92,25 @@ def _telemetry(sequence=1, *, mo=0, received=None):
     }
 
 
-def _connection_info(*, sequence=1, identity=HASHED_ID):
+def _freeze_connection_access_mode(
+        win, mode=app_main.SUPERVISED_ACCESS_MODE) -> None:
+    """Freeze the same one-shot access mode on the UI and active worker."""
+    worker = getattr(win, "worker", None)
+    if worker is None:
+        raise AssertionError("connection admission fixture requires a worker")
+    win._requested_connection_access_mode = mode
+    worker.access_mode = mode
+
+
+def _connection_info(win, *, sequence=1, identity=HASHED_ID):
+    _freeze_connection_access_mode(win)
     return {
         "fw": "Twitter 01.01.16.00",
         "pal": "90",
         "boot": "DSP Boot",
         "target_type": "Gold Drive",
         "drive_identity": identity,
+        "access_mode": app_main.SUPERVISED_ACCESS_MODE,
         "initial_telemetry": _telemetry(sequence),
         "persistence_status": {
             "status": "CLEAR",
@@ -171,7 +183,7 @@ def test_connection_and_same_state_telemetry_are_logged_without_event_flood(
         window):
     poison = _PoisonWorker()
     window.worker = poison
-    window._on_connected(_connection_info())
+    window._on_connected(_connection_info(window))
     baseline = len(window.session_log.snapshot())
 
     for sequence in range(2, 102):
@@ -187,7 +199,7 @@ def test_connection_and_same_state_telemetry_are_logged_without_event_flood(
 def test_axis_summary_preserves_nonzero_raw_fault_without_decoding(window):
     poison = _PoisonWorker()
     window.worker = poison
-    window._on_connected(_connection_info())
+    window._on_connected(_connection_info(window))
     window._on_axis_summary({
         "raw": {"MO": 0, "SO": 0, "MF": 8, "SR": 49152, "MS": 3},
         "errors": {},
@@ -268,7 +280,7 @@ def test_session_log_contract_and_export_actions_are_visible_above_table(
 def test_repeated_authority_revocation_is_logged_once(window):
     poison = _PoisonWorker()
     window.worker = poison
-    window._on_connected(_connection_info())
+    window._on_connected(_connection_info(window))
 
     window._revoke_telemetry_authority("watchdog expired")
     window._revoke_telemetry_authority("watchdog expired again")
@@ -310,7 +322,7 @@ def test_previous_worker_signal_cannot_change_current_session_log(window, qapp):
         window._on_persistence_audit_status)
     old_worker.motion_result.connect(window._on_motion_result)
     window.worker = current_worker
-    window._on_connected(_connection_info())
+    window._on_connected(_connection_info(window))
     baseline = window.session_log.snapshot()
 
     old_worker.axis_summary.emit({
@@ -334,13 +346,15 @@ def test_previous_worker_signal_cannot_change_current_session_log(window, qapp):
 def test_new_connection_accepts_sequence_reset_without_old_stopped_signal(window):
     first = _ConnectionWorker()
     window.worker = first
-    window._on_connected(_connection_info(sequence=50, identity=HASHED_ID))
+    window._on_connected(_connection_info(
+        window, sequence=50, identity=HASHED_ID))
     assert window._connection_admitted is True
     assert window._last_telemetry_sequence == 50
 
     second = _ConnectionWorker()
     window.worker = second
-    window._on_connected(_connection_info(sequence=1, identity=HASHED_ID_B))
+    window._on_connected(_connection_info(
+        window, sequence=1, identity=HASHED_ID_B))
 
     assert window._connection_admitted is True
     assert window._last_telemetry_sequence == 1
@@ -359,7 +373,8 @@ def test_new_connect_attempt_closes_orphaned_generation_before_failure(
         window, monkeypatch):
     first = _ConnectionWorker()
     window.worker = first
-    window._on_connected(_connection_info(sequence=1, identity=HASHED_ID))
+    window._on_connected(_connection_info(
+        window, sequence=1, identity=HASHED_ID))
     assert window.session_log.connection_active is True
 
     window.worker = None
@@ -428,7 +443,7 @@ def test_malformed_hashed_identity_is_not_admitted(window):
     window.worker = worker
 
     window._on_connected(_connection_info(
-        identity="elmo-sn4-sha256:" + ("g" * 64)))
+        window, identity="elmo-sn4-sha256:" + ("g" * 64)))
 
     assert window._connection_admitted is False
     assert worker.stop_calls == 1
@@ -442,7 +457,7 @@ def test_malformed_hashed_identity_is_not_admitted(window):
 def test_regressed_source_timestamp_is_rejected_without_consuming_sequence(window):
     worker = _ConnectionWorker()
     window.worker = worker
-    window._on_connected(_connection_info(sequence=1))
+    window._on_connected(_connection_info(window, sequence=1))
     accepted_time = window._last_telemetry_received_monotonic
 
     window._on_telemetry(_telemetry(
@@ -474,7 +489,7 @@ def test_initial_telemetry_expiry_after_open_requests_worker_stop(
         window, "_telemetry_envelope_valid",
         lambda *_args, **_kwargs: next(decisions))
 
-    window._on_connected(_connection_info())
+    window._on_connected(_connection_info(window))
 
     assert window._connection_admitted is False
     assert window._telemetry_authoritative is False
@@ -487,7 +502,7 @@ def test_initial_telemetry_expiry_after_open_requests_worker_stop(
 def test_late_telemetry_after_connection_failure_cannot_restore_authority(window):
     worker = _ConnectionWorker()
     window.worker = worker
-    window._on_connected(_connection_info(sequence=1))
+    window._on_connected(_connection_info(window, sequence=1))
     window._on_failed("transport failed")
 
     window._on_telemetry(_telemetry(2, mo=0))
@@ -499,11 +514,167 @@ def test_late_telemetry_after_connection_failure_cannot_restore_authority(window
     assert window.session_log.snapshot()[-1]["freshness"] == "UI_REJECTED"
 
 
+def test_field_age_burst_reproduces_one_loss_then_fresh_restore(
+        window, monkeypatch):
+    """Replay the observed 690..695 queue ages without drive or wall-clock I/O."""
+    clock = [10_000.0]
+    monkeypatch.setattr(app_main.time, "monotonic", lambda: clock[0])
+    worker = _ConnectionWorker()
+    window.worker = worker
+    info = _connection_info(window, sequence=1)
+    worker.access_mode = app_main.OBSERVE_ONLY_ACCESS_MODE
+    window._requested_connection_access_mode = (
+        app_main.OBSERVE_ONLY_ACCESS_MODE)
+    info["access_mode"] = app_main.OBSERVE_ONLY_ACCESS_MODE
+    info["quiescent_state"] = {
+        "MO": 0.0, "SO": 0.0, "VX": 0.0, "PS": -2.0, "MF": 0.0,
+    }
+    window._on_connected(info)
+    window._on_telemetry(_telemetry(689, mo=0, received=clock[0]))
+    baseline = len(window.session_log.snapshot())
+
+    clock[0] = 10_002.0
+    for sequence, age_s in enumerate(
+            (1.514, 1.295, 1.077, 0.860, 0.640, 0.420), start=690):
+        window._on_telemetry(_telemetry(
+            sequence, mo=0, received=clock[0] - age_s))
+
+    names = [
+        row["name"] for row in window.session_log.snapshot()[baseline:]
+    ]
+    assert names == [
+        "telemetry.rejected",
+        "telemetry.authority_lost",
+        "telemetry.rejected",
+        "telemetry.rejected",
+        "telemetry.rejected",
+        "telemetry.rejected",
+        "telemetry.authority_restored",
+    ]
+    assert window._last_telemetry_sequence == 695
+    assert window._telemetry_authoritative is True
+    assert window._last_mo == 0
+    assert not window.btn_motor_write.isEnabled()
+
+
+def test_close_timeout_queue_cannot_restore_terminating_connection_authority(
+        window, monkeypatch):
+    """A timed-out close must reject even a fresh queued worker sample."""
+
+    class ShutdownTimeoutWorker(_ConnectionWorker):
+        def __init__(self):
+            super().__init__()
+            self.wait_calls = []
+
+        def wait(self, timeout_ms):
+            self.wait_calls.append(int(timeout_ms))
+            return False
+
+    clock = [10_000.0]
+    monkeypatch.setattr(app_main.time, "monotonic", lambda: clock[0])
+    worker = ShutdownTimeoutWorker()
+    window.worker = worker
+    window._on_connected(_connection_info(window, sequence=1))
+    assert window._connection_admitted is True
+    assert window._telemetry_authoritative is True
+
+    close_event = SimpleNamespace(ignored=False)
+    close_event.ignore = lambda: setattr(close_event, "ignored", True)
+    window.closeEvent(close_event)
+
+    assert close_event.ignored is True
+    assert worker.stop_calls == 1
+    assert worker.wait_calls == [1500]
+    assert window._connection_admitted is False
+    assert window._telemetry_authoritative is False
+    assert window._ui_connected is False
+
+    # Replay the field trace's queue ages: five samples exceed the 0.5 s
+    # source-age gate, while the sixth is fresh enough.  Shutdown admission,
+    # not sample freshness, must remain the final authority boundary.
+    clock[0] = 10_002.0
+    for sequence, age_s in enumerate(
+            (1.514, 1.295, 1.077, 0.860, 0.640, 0.420), start=2):
+        window._on_telemetry(_telemetry(
+            sequence, mo=0, received=clock[0] - age_s))
+
+    rows = window.session_log.snapshot()
+    assert not any(
+        row["name"] == "telemetry.authority_restored"
+        for row in rows
+    )
+    assert window._last_telemetry_sequence == 1
+    assert window._telemetry_authoritative is False
+    assert window._connection_admitted is False
+    assert getattr(window, "_connection_shutdown_pending", False) is True
+    assert window.lbl_state.text() == "DISCONNECTING"
+    assert not window.btn_conn.isEnabled()
+    assert not window.cmb_port.isEnabled()
+    assert not window.cmb_conn.isEnabled()
+    assert not window.cmb_access_mode.isEnabled()
+
+    window._on_stopped()
+
+    assert window._connection_shutdown_pending is False
+    assert window.lbl_state.text() == "OFFLINE"
+    assert window.btn_conn.isEnabled()
+    assert window.cmb_port.isEnabled()
+    assert window.cmb_conn.isEnabled()
+    assert window.cmb_access_mode.isEnabled()
+
+
+def test_disconnect_request_rejects_fresh_sample_before_stopped_signal(window):
+    """Disconnect authority must close synchronously, not on a later signal."""
+    worker = _ConnectionWorker()
+    window.worker = worker
+    window._on_connected(_connection_info(window, sequence=1))
+    assert window._telemetry_authoritative is True
+
+    window.disconnect_drive()
+    window._on_telemetry(_telemetry(2, mo=0))
+
+    assert worker.stop_calls == 1
+    assert window._connection_admitted is False
+    assert window._ui_connected is False
+    assert window._telemetry_authoritative is False
+    assert window._last_telemetry_sequence == 1
+    assert not any(
+        row["name"] == "telemetry.authority_restored"
+        for row in window.session_log.snapshot()
+    )
+    assert getattr(window, "_connection_shutdown_pending", False) is True
+    assert window.lbl_state.text() == "DISCONNECTING"
+    assert not window.btn_conn.isEnabled()
+    assert not window.cmb_port.isEnabled()
+    assert not window.cmb_conn.isEnabled()
+    assert not window.cmb_access_mode.isEnabled()
+
+
+def test_late_connected_signal_cannot_hide_pending_worker_cleanup(window):
+    """A pre-stop connected signal cannot turn DISCONNECTING into OFFLINE."""
+    worker = _ConnectionWorker()
+    window.worker = worker
+    window._on_connected(_connection_info(window, sequence=1))
+    queued_connected = _connection_info(window, sequence=2)
+
+    window.disconnect_drive()
+    window._on_connected(queued_connected)
+
+    assert window._connection_admitted is False
+    assert window._telemetry_authoritative is False
+    assert getattr(window, "_connection_shutdown_pending", False) is True
+    assert window.lbl_state.text() == "DISCONNECTING"
+    assert not window.btn_conn.isEnabled()
+    assert not window.cmb_port.isEnabled()
+    assert not window.cmb_conn.isEnabled()
+    assert not window.cmb_access_mode.isEnabled()
+
+
 def test_recorder_button_status_is_applied_locally_and_blocks_duplicate_queue(
         window, qapp):
     worker = _RecorderWorker()
     window.worker = worker
-    window._on_connected(_connection_info())
+    window._on_connected(_connection_info(window))
     assert window.btn_rec_signals.isEnabled()
 
     window.btn_rec_signals.click()

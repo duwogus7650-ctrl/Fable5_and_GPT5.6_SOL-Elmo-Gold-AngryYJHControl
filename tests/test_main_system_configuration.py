@@ -79,6 +79,7 @@ def _connection_info(sequence=1, identity=HASH_A):
         "boot": "DSP Boot",
         "target_type": "Gold Drive",
         "drive_identity": identity,
+        "access_mode": app_main.SUPERVISED_ACCESS_MODE,
         "initial_telemetry": _telemetry(sequence),
         "persistence_status": {
             "status": "CLEAR", "lock_active": False,
@@ -87,6 +88,15 @@ def _connection_info(sequence=1, identity=HASH_A):
             "resolved": False,
         },
     }
+
+
+def _admit_connection(window, worker, info=None):
+    info = _connection_info() if info is None else info
+    access_mode = info["access_mode"]
+    worker.access_mode = access_mode
+    window.worker = worker
+    window._requested_connection_access_mode = access_mode
+    window._on_connected(info)
 
 
 @pytest.fixture(scope="module")
@@ -135,6 +145,7 @@ def test_open_and_render_are_zero_io_and_do_not_change_authority(window, qapp):
     poison = _PoisonWorker()
     window.worker = poison
     window._connection_admitted = True
+    window._connection_access_mode = app_main.SUPERVISED_ACCESS_MODE
     window._telemetry_authoritative = True
 
     window.app_menu_actions["nav.system_config"].trigger()
@@ -164,9 +175,8 @@ def test_page_is_read_only_and_full_eas_mutations_are_visibly_locked(window):
 
 def test_admitted_connection_populates_one_level_direct_drive_projection(window):
     worker = _ConnectionWorker()
-    window.worker = worker
 
-    window._on_connected(_connection_info())
+    _admit_connection(window, worker)
 
     snapshot = window.system_configuration.snapshot()
     assert snapshot.state == sc.CURRENT
@@ -195,7 +205,6 @@ def test_admitted_connection_populates_one_level_direct_drive_projection(window)
 
 def test_connection_metadata_is_safe_in_every_global_display_projection(window):
     worker = _ConnectionWorker()
-    window.worker = worker
     info = _connection_info()
     info.update({
         "fw": "Twitter <b>ONLINE</b> \u202eENILNO COM3 " + (
@@ -204,7 +213,7 @@ def test_connection_metadata_is_safe_in_every_global_display_projection(window):
         "boot": r"DSP Boot C:\Users\alice\secret.bin",
     })
 
-    window._on_connected(info)
+    _admit_connection(window, worker, info)
 
     assert window._connection_admitted is True
     rendered = " | ".join((
@@ -258,8 +267,7 @@ def test_connection_metadata_is_safe_in_every_global_display_projection(window):
 
 def test_replayed_telemetry_revokes_projection_and_fresh_sequence_restores(window):
     worker = _ConnectionWorker()
-    window.worker = worker
-    window._on_connected(_connection_info(sequence=1))
+    _admit_connection(window, worker, _connection_info(sequence=1))
 
     window._on_telemetry(_telemetry(sequence=1))
 
@@ -277,8 +285,7 @@ def test_old_worker_signal_cannot_change_current_projection(window, qapp):
     old = _OldWorker()
     old.telemetry.connect(window._on_telemetry)
     current = _ConnectionWorker()
-    window.worker = current
-    window._on_connected(_connection_info(sequence=1))
+    _admit_connection(window, current, _connection_info(sequence=1))
     before = window.system_configuration.snapshot()
 
     old.telemetry.emit(_telemetry(sequence=99, mo=1))
@@ -290,8 +297,7 @@ def test_old_worker_signal_cannot_change_current_projection(window, qapp):
 
 def test_failure_and_late_telemetry_cannot_restore_current_target(window):
     worker = _ConnectionWorker()
-    window.worker = worker
-    window._on_connected(_connection_info(sequence=1))
+    _admit_connection(window, worker, _connection_info(sequence=1))
 
     window._on_failed("transport lost")
     window._on_telemetry(_telemetry(sequence=2))
@@ -306,8 +312,7 @@ def test_failure_and_late_telemetry_cannot_restore_current_target(window):
 def test_inspector_failure_cannot_abort_core_motor_safety_update(
         window, monkeypatch, failure_site):
     worker = _ConnectionWorker()
-    window.worker = worker
-    window._on_connected(_connection_info(sequence=1))
+    _admit_connection(window, worker, _connection_info(sequence=1))
 
     def fail(*_args, **_kwargs):
         raise RuntimeError("injected Inspector observer failure")
@@ -349,10 +354,10 @@ def test_inspector_failure_cannot_abort_core_motor_safety_update(
 
 def test_uppercase_identity_is_rejected_at_connection_admission(window):
     worker = _ConnectionWorker()
-    window.worker = worker
 
-    window._on_connected(_connection_info(
-        identity="elmo-sn4-sha256:" + ("C" * 64)))
+    _admit_connection(
+        window, worker,
+        _connection_info(identity="elmo-sn4-sha256:" + ("C" * 64)))
 
     assert window._connection_admitted is False
     assert window._telemetry_authoritative is False
@@ -367,8 +372,8 @@ def test_uppercase_identity_is_rejected_at_connection_admission(window):
 
 def test_new_connect_attempt_clears_old_projection_before_worker_admission(
         window, monkeypatch):
-    window.worker = _ConnectionWorker()
-    window._on_connected(_connection_info(sequence=1))
+    _admit_connection(
+        window, _ConnectionWorker(), _connection_info(sequence=1))
     assert window.system_configuration.snapshot().state == sc.CURRENT
 
     window.worker = None
@@ -389,6 +394,42 @@ def test_contract_label_is_not_clipped(window, qapp):
     assert window.lbl_system_config_contract.height() >= (
         window.lbl_system_config_contract.sizeHint().height())
     assert window.workspace_scroll.horizontalScrollBar().maximum() == 0
+
+
+def test_workspace_tab_change_resets_shared_scroll_to_new_page_origin(
+        window, qapp):
+    window.resize(1366, 820)
+    assert window._navigate_tool("system") is True
+    qapp.processEvents()
+
+    vertical = window.workspace_scroll.verticalScrollBar()
+    assert vertical.maximum() > vertical.minimum()
+    vertical.setValue(vertical.maximum())
+    qapp.processEvents()
+    assert vertical.value() > vertical.minimum()
+
+    assert window._navigate_tool("status") is True
+    qapp.processEvents()
+
+    assert vertical.value() == vertical.minimum()
+
+
+def test_reselecting_current_workspace_page_preserves_its_scroll_position(
+        window, qapp):
+    window.resize(1366, 820)
+    assert window._navigate_tool("system") is True
+    qapp.processEvents()
+
+    vertical = window.workspace_scroll.verticalScrollBar()
+    assert vertical.maximum() > vertical.minimum()
+    expected = max(vertical.minimum() + 1, vertical.maximum() // 2)
+    vertical.setValue(expected)
+    qapp.processEvents()
+
+    assert window._navigate_tool("system") is True
+    qapp.processEvents()
+
+    assert vertical.value() == expected
 
 
 def test_eight_page_navigation_and_system_page_fit_declared_1366_width(
@@ -423,8 +464,7 @@ def test_eight_page_navigation_and_system_page_fit_declared_1366_width(
     assert "Session Log" in window._nav_btns[-2].toolTip()
     assert "System Configuration" in window._nav_btns[-1].toolTip()
 
-    window.worker = _ConnectionWorker()
-    window._on_connected(_connection_info())
+    _admit_connection(window, _ConnectionWorker())
     window._persistence_audit_summary = {
         "ledger_error": "injected", "lock_active": True,
         "other_active_count": 0,

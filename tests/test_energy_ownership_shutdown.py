@@ -24,6 +24,10 @@ class _SafetyLink:
     """Query-capable fake whose command log proves final torque removal."""
 
     def __init__(self, *, mo: int = 0):
+        # Every DriveWorker.run() case in this module intentionally exercises
+        # the write-capable supervised path.  Make that transport evidence
+        # explicit instead of relying on the worker's requested-mode fallback.
+        self.access_mode = app_main.DriveWorker.SUPERVISED_ACCESS_MODE
         self.mo = int(mo)
         self.command_log: list[tuple[str, int]] = []
         self.disconnect_called = False

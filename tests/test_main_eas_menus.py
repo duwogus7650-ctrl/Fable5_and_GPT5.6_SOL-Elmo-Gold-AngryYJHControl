@@ -65,6 +65,47 @@ def test_quick_and_expert_menu_routes_are_local_and_visually_separate(
     assert window.worker is None
 
 
+def test_quick_mode_exposes_guided_runs_but_hides_expert_transactions(
+        window, qapp):
+    window._show_tuning_mode("quick")
+    qapp.processEvents()
+
+    assert window.tuning_guided_run_frame.isVisibleTo(window)
+    assert "SUPERVISED" in window.guided_run_title.text()
+    assert "MOTION" in window.guided_run_title.text()
+    for button in (
+            window.btn_tune,
+            window.btn_tune_signature,
+            window.btn_tune_vp,
+            window.btn_tune_abort,
+            window.btn_tune_verify):
+        assert button.isVisibleTo(window)
+
+    assert not window.expert_lab_frame.isVisibleTo(window)
+    for button in (
+            window.btn_tune_apply,
+            window.btn_tune_p1_restore,
+            window.btn_tune_p1_save,
+            window.btn_tune_vp_apply,
+            window.btn_tune_vp_restore,
+            window.btn_tune_vp_save):
+        assert not button.isVisibleTo(window)
+
+    window._show_tuning_mode("expert")
+    qapp.processEvents()
+
+    assert window.tuning_guided_run_frame.isVisibleTo(window)
+    assert window.expert_lab_frame.isVisibleTo(window)
+    for button in (
+            window.btn_tune_apply,
+            window.btn_tune_p1_restore,
+            window.btn_tune_p1_save,
+            window.btn_tune_vp_apply,
+            window.btn_tune_vp_restore,
+            window.btn_tune_vp_save):
+        assert button.isVisibleTo(window)
+
+
 def test_need_data_menu_entries_are_visible_but_not_executable(window):
     for operation_id in (
             "eas.native_files", "eas.multiaxis", "eas.floating_terminal",

@@ -20,6 +20,25 @@ def test_catalog_classifies_the_user_facing_hardware_boundaries():
     assert {key: catalog.operation_spec(key).risk for key in expected} == expected
 
 
+def test_expert_offline_candidate_calculation_is_local_only():
+    spec = catalog.operation_spec("tuning.expert.offline.calculate")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.IMPLEMENTED
+    assert spec.gates == frozenset()
+    assert spec.risk not in catalog.DRIVE_MUTATING_RISKS
+    assert "no drive" in spec.summary.lower()
+
+
+def test_live_ptp_catalog_matches_the_production_field_gate():
+    spec = catalog.operation_spec("motion.ptp.run")
+
+    assert spec.risk is catalog.OperationRisk.MOTION
+    assert spec.status is catalog.OperationStatus.NEED_DATA
+    assert "commissioning envelope" in spec.summary
+    assert "site_motion_envelope" in spec.gates
+
+
 def test_gain_mutation_catalog_is_need_data_and_installed_verify_uses_signature_gate():
     for operation_id in (
             "tuning.p1.apply", "tuning.p1.save",

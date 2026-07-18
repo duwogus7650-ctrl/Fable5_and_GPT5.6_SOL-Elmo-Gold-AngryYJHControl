@@ -23,6 +23,25 @@ Recorder 상단 리본의 항목별 쉬운 설명과 구현/잠금 상태는
 
 `LIVE`도 필드 안전 인증을 뜻하지 않는다. 소프트웨어 STOP은 독립 STO/E-stop을 대신하지 않는다.
 
+## 2026-07-18 EAS 미연결 UI 관찰 기준선
+
+`OBSERVED`: 설치된 EAS III를 실행한 뒤 target tree가
+`Drive01 (G-Twitter 140A / 100V) (Disconnected)`인 상태에서 아래 화면만 열었다.
+Connect, Enable, Run Automatic Tuning, Apply, Save, Reset, Force Upload/Download,
+PTP 또는 Recorder activation은 누르지 않았다. 이 target 이름/형식은 저장된 EAS workspace 표시이며
+실제 board readback이나 Gold 계열 호환성 증거가 아니다. 직접 serial/device identity는 문서에 기록하지 않는다.
+
+| EAS 화면 | 미연결 상태에서 직접 관찰한 구조 | 현재 AngryYJH 대응 / 차이 |
+|---|---|---|
+| Quick Tuning | `Axis Configurations`; `Motor and Feedback → Motor Settings / Feedback Settings`; `Automatic Tuning` | Motor/Feedback 읽기·preview와 Quick guided flow가 대응한다. EAS page import/export·wizard Apply/Revert parity는 미구현 |
+| Quick Automatic Tuning | `Initialization (Starting Phase) → Current Identification → Current Design → Commutation → Velocity & Position Identification → Velocity & Position Design`; Start-from-phase, Full Log, Run/Cancel | 6단계 명칭/순서는 현재 Quick UI와 일치. EAS 실행 버튼은 Disconnected에서 disabled였고, 이 관찰은 알고리즘/수치 동등성을 증명하지 않음 |
+| Expert Tuning | Axis; Motor/Feedback; User Units; Limits/Protections; Application Settings; Current; Commutation; Velocity/Position; Summary | 현재 v1은 current-loop offline Candidate Lab + 공통 P1/commutation/P2/Verify까지만 제공. 아래 세부 차이는 backlog |
+| Expert 세부 | `Current Limits`; `Motion Limits and Modulo`; `Protections`; `Settling Window`; `Inputs and Outputs`; Current `Identification / Design / Verification-Time`; Commutation; Velocity/Position `Identification / Design / Scheduling / Verification-Time`; Summary | User Units, protection/limit 편집, I/O, settling, scheduling, time-domain verification, summary 및 EAS import/export는 아직 parity가 아님 |
+| Motion - Single Axis | Position/position error/velocity/active current/last fault/status/program status; Digital In/Out; `STO1/STO2/ERR`; Drive Mode(UM); Enable; `Current / Stepper / Sine Reference`; PTP Absolute/Relative; Terminal/Command Reference; 2-chart Recorder | 현재 앱은 core telemetry, session zero, locked finite PTP, 별도 Recorder만 보유. I/O/STO panel, mode별 수동 구동, terminal, EAS recorder docking parity는 미구현/NEED-DATA |
+
+이 관찰은 **UI inventory**다. Disconnected 화면이므로 command ID, 단위, firmware 지원,
+side effect, rollback, save semantics, motor response 또는 safety를 검증하지 않는다.
+
 ## 기능 범위
 
 상단 `File / Parameters / Tools / Views / Floating Tools`는 로컬 실행이 확인된 항목만 활성화한
@@ -34,6 +53,7 @@ ENERGIZES / MOTION / PERSIST-SV / SAFETY STOP / NEED-DATA`를 분류하며, Quic
 
 | 영역 | 현재 상태 | 근거 수준 | 다음 게이트 |
 |---|---|---|---|
+| EAS Quick/Expert/Single Axis 미연결 UI inventory | 직접 화면 구조 매핑 | OBSERVED UI · NO DRIVE I/O | 연결·실행 동작과 수치 parity는 각각 별도 oracle/현장 gate |
 | USB 연결, 펌웨어/PAL/부트 식별 | 구현 | LIVE | 다른 통신 경로별 동일 identity/readback 계약 |
 | PX/VX/PE/IQ/MO 텔레메트리 | 구현 | LIVE | stale-telemetry 표시와 통신 품질 카운터 |
 | Session Zero (`PX=0`) | 구현 | LIVE 1회 + OFFLINE 회귀 | MO=0·정지·무전류·PX 되읽기 유지; 전원 재인가 후 복원된다고 주장하지 않음 |

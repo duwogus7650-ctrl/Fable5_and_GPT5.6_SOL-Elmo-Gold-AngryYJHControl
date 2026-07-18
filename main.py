@@ -40,6 +40,7 @@ from elmo_link import ElmoLink
 import feedback_spec
 import autotune_current
 import autotune_velpos
+import expert_tuning_offline
 import single_axis_motion
 import recorder_control
 import recorder_view
@@ -69,6 +70,12 @@ FINITE_PTP_LIVE_ENABLED = False
 # Synthetic kernels opt in inside their domain modules; the desktop UI never
 # exposes that test-only capability.
 PRODUCTION_GAIN_TRIALS_ENABLED = False
+OBSERVE_ONLY_ACCESS_MODE = "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"
+SUPERVISED_ACCESS_MODE = "SUPERVISED_CONTROL"
+_ACCESS_MODE_LABELS = {
+    OBSERVE_ONLY_ACCESS_MODE: "Read Only",
+    SUPERVISED_ACCESS_MODE: "Supervised Control",
+}
 
 
 class SessionCoordinateError(RuntimeError):
@@ -151,6 +158,114 @@ def list_serial_ports():
         pass
     # de-dup, natural-ish sort
     return sorted(set(ports), key=lambda s: (len(s), s))
+
+
+class ExpertBodeWidget(QtWidgets.QWidget):
+    """Compact read-only view of an offline Expert current-loop response.
+
+    The widget accepts only immutable response data.  It deliberately owns no
+    worker, link, command callback, or editable control.
+    """
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.response = None
+        self.setMinimumHeight(180)
+        self.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Expanding,
+            QtWidgets.QSizePolicy.Policy.Fixed)
+
+    def set_response(self, response):
+        self.response = response
+        self.update()
+
+    @staticmethod
+    def _path(x_values, y_values, rect, *, y_min=None, y_max=None):
+        path = QtGui.QPainterPath()
+        if not x_values or not y_values:
+            return path
+        x_min = math.log10(float(x_values[0]))
+        x_max = math.log10(float(x_values[-1]))
+        if y_min is None:
+            y_min = min(float(value) for value in y_values)
+        if y_max is None:
+            y_max = max(float(value) for value in y_values)
+        y_span = max(1e-12, y_max - y_min)
+        x_span = max(1e-12, x_max - x_min)
+        for index, (x_value, y_value) in enumerate(zip(x_values, y_values)):
+            x_norm = (math.log10(float(x_value)) - x_min) / x_span
+            y_norm = (float(y_value) - y_min) / y_span
+            point = QtCore.QPointF(
+                rect.left() + x_norm * rect.width(),
+                rect.bottom() - y_norm * rect.height())
+            if index:
+                path.lineTo(point)
+            else:
+                path.moveTo(point)
+        return path
+
+    def paintEvent(self, event):
+        del event
+        painter = QtGui.QPainter(self)
+        painter.setRenderHint(QtGui.QPainter.RenderHint.Antialiasing, True)
+        painter.fillRect(self.rect(), QtGui.QColor(theme.INSET))
+        if self.response is None:
+            painter.setPen(QtGui.QColor(theme.MUTED))
+            painter.drawText(
+                self.rect(), QtCore.Qt.AlignmentFlag.AlignCenter,
+                "OFFLINE BODE PREVIEW · calculate a MODEL candidate")
+            return
+
+        outer = QtCore.QRectF(self.rect()).adjusted(52, 20, -16, -26)
+        magnitude = QtCore.QRectF(
+            outer.left(), outer.top(), outer.width(), outer.height() * 0.55)
+        phase = QtCore.QRectF(
+            outer.left(), magnitude.bottom() + 18,
+            outer.width(), outer.height() * 0.30)
+        grid_pen = QtGui.QPen(QtGui.QColor(theme.MUTED))
+        grid_pen.setWidthF(0.7)
+        painter.setPen(grid_pen)
+        painter.drawRect(magnitude)
+        painter.drawRect(phase)
+        painter.drawText(
+            QtCore.QRectF(4, magnitude.top(), 46, 18),
+            QtCore.Qt.AlignmentFlag.AlignRight, "MAG dB")
+        painter.drawText(
+            QtCore.QRectF(4, phase.top(), 46, 18),
+            QtCore.Qt.AlignmentFlag.AlignRight, "PH deg")
+        painter.drawText(
+            QtCore.QRectF(
+                outer.left(), phase.bottom() + 3, outer.width(), 20),
+            QtCore.Qt.AlignmentFlag.AlignCenter, "frequency [Hz] · log")
+
+        frequencies = self.response.frequency_hz
+        magnitude_values = (
+            self.response.open_loop_magnitude_db
+            + self.response.closed_loop_magnitude_db)
+        magnitude_min = min(magnitude_values)
+        magnitude_max = max(magnitude_values)
+        for values, color in (
+                (self.response.open_loop_magnitude_db, theme.C_BLUE),
+                (self.response.closed_loop_magnitude_db, theme.C_AMBER)):
+            pen = QtGui.QPen(QtGui.QColor(color))
+            pen.setWidthF(1.6)
+            painter.setPen(pen)
+            painter.drawPath(self._path(
+                frequencies, values, magnitude,
+                y_min=magnitude_min, y_max=magnitude_max))
+        painter.setPen(QtGui.QColor(theme.C_BLUE))
+        painter.drawText(
+            QtCore.QRectF(magnitude.left() + 6, magnitude.top() + 3, 60, 16),
+            QtCore.Qt.AlignmentFlag.AlignLeft, "OPEN")
+        painter.setPen(QtGui.QColor(theme.C_AMBER))
+        painter.drawText(
+            QtCore.QRectF(magnitude.left() + 68, magnitude.top() + 3, 70, 16),
+            QtCore.Qt.AlignmentFlag.AlignLeft, "CLOSED")
+        phase_pen = QtGui.QPen(QtGui.QColor(theme.C_CYAN))
+        phase_pen.setWidthF(1.4)
+        painter.setPen(phase_pen)
+        painter.drawPath(self._path(
+            frequencies, self.response.open_loop_phase_deg, phase))
 
 
 class RecorderPlotWidget(QtWidgets.QWidget):
@@ -608,6 +723,12 @@ class RecorderPlotWidget(QtWidgets.QWidget):
 # Drive worker — owns ALL drive I/O in one thread (pythonnet COM object is single-thread)
 # ---------------------------------------------------------------------------------------
 class DriveWorker(QtCore.QThread):
+    OBSERVE_ONLY_ACCESS_MODE = OBSERVE_ONLY_ACCESS_MODE
+    SUPERVISED_ACCESS_MODE = SUPERVISED_ACCESS_MODE
+    _QUIESCENT_ADMISSION_REGISTERS = ("MO", "SO", "VX", "PS", "MF")
+    _OBSERVE_ONLY_JOB_ALLOWLIST = frozenset((
+        "axis_read", "persistence_audit", "motion_stop", "recorder_stop",
+    ))
     _READ_ONLY_QUERY_ALLOWLIST = frozenset((
         "VR", "VP", "VB", "SN[4]", "PX", "VX", "PE", "IQ",
         "MO", "SO", "MS", "MF", "SR", "ID", "UM", "RM",
@@ -659,9 +780,13 @@ class DriveWorker(QtCore.QThread):
     persistence_audit_status = QtCore.pyqtSignal(object)      # durable UNKNOWN/audit dict
     stopped = QtCore.pyqtSignal()
 
-    def __init__(self, port: str, parent=None):
+    def __init__(self, port: str, parent=None, *, query_only: bool = False):
         super().__init__(parent)
         self.port = port
+        self.query_only = bool(query_only)
+        self.access_mode = (
+            self.OBSERVE_ONLY_ACCESS_MODE
+            if self.query_only else self.SUPERVISED_ACCESS_MODE)
         self._run = True
         self._pending = collections.deque()   # one-shot commands from the GUI thread
         self._jobs = collections.deque()      # structured jobs (writes) from the GUI thread
@@ -1048,6 +1173,12 @@ class DriveWorker(QtCore.QThread):
 
     def _trial_job_guard(self, kind, payload):
         """Worker-owned phase/state allowlist and exact trial identity gate."""
+        if self.query_only:
+            if kind in self._OBSERVE_ONLY_JOB_ALLOWLIST:
+                return True, ""
+            return False, (
+                "observe-only connection permits Axis/persistence reads and "
+                "software shutdown only")
         persistence_allowlist = frozenset((
             "axis_read", "persistence_audit", "motion_stop", "recorder_stop"))
         if self._persistence_recovery_unknown:
@@ -1908,6 +2039,59 @@ class DriveWorker(QtCore.QThread):
         self.persistence_audit_status.emit(status)
         return status
 
+    @classmethod
+    def _read_quiescent_admission(cls, link):
+        """Require two identical, finite disabled/stationary safety sweeps."""
+        sweeps = []
+        for _sweep_index in range(2):
+            observed = {}
+            for register in cls._QUIESCENT_ADMISSION_REGISTERS:
+                raw = link.command(register)
+                try:
+                    number = float(str(raw).strip().rstrip(";"))
+                except (TypeError, ValueError, OverflowError) as exc:
+                    raise RuntimeError(
+                        "observe-only quiescent admission has unreadable %s"
+                        % register) from exc
+                if not math.isfinite(number):
+                    raise RuntimeError(
+                        "observe-only quiescent admission has non-finite %s"
+                        % register)
+                if register != "VX" and not number.is_integer():
+                    raise RuntimeError(
+                        "observe-only quiescent admission requires integer %s"
+                        % register)
+                observed[register] = float(number)
+            sweeps.append(observed)
+        if sweeps[0] != sweeps[1]:
+            raise RuntimeError(
+                "observe-only drive state changed between safety sweeps")
+        state = sweeps[1]
+        if not (
+                state["MO"] == 0.0
+                and state["SO"] == 0.0
+                and state["VX"] == 0.0
+                and state["PS"] in (-2.0, -1.0)
+                and state["MF"] == 0.0):
+            raise RuntimeError(
+                "observe-only quiescent admission requires "
+                "MO=SO=VX=MF=0 and PS=-2/-1; observed %s" % state)
+        return dict(state)
+
+    @classmethod
+    def _required_transport_access_mode(cls, link):
+        """Read explicit transport authority evidence without a fallback."""
+        try:
+            mode = link.access_mode
+        except Exception as exc:
+            raise RuntimeError(
+                "transport access mode evidence is unavailable") from exc
+        if mode not in {
+                cls.OBSERVE_ONLY_ACCESS_MODE, cls.SUPERVISED_ACCESS_MODE}:
+            raise RuntimeError(
+                "transport access mode evidence is invalid: %r" % (mode,))
+        return mode
+
     def run(self):
         shutdown_stop_pending = bool(
             self._motion_stop_requested
@@ -1918,6 +2102,16 @@ class DriveWorker(QtCore.QThread):
             return
         link = ElmoLink(self.port)
         try:
+            if self.query_only:
+                mode = link.enter_observe_only_session()
+                if mode != self.OBSERVE_ONLY_ACCESS_MODE:
+                    raise RuntimeError(
+                        "observe-only transport latch returned an invalid mode")
+            actual_access_mode = self._required_transport_access_mode(link)
+            if actual_access_mode != self.access_mode:
+                raise RuntimeError(
+                    "transport access mode mismatch: requested %s, actual %s"
+                    % (self.access_mode, actual_access_mode))
             link.connect()
         except Exception as e:
             self.failed.emit(str(e))
@@ -1949,6 +2143,14 @@ class DriveWorker(QtCore.QThread):
         # metadata or an unknown MO state.
         info = {}
         try:
+            actual_access_mode = self._required_transport_access_mode(link)
+            if actual_access_mode != self.access_mode:
+                raise RuntimeError(
+                    "transport access mode mismatch: requested %s, actual %s"
+                    % (self.access_mode, actual_access_mode))
+            info["access_mode"] = actual_access_mode
+            if self.query_only:
+                info["quiescent_state"] = self._read_quiescent_admission(link)
             for key, cmd in (("fw", "VR"), ("pal", "VP"), ("boot", "VB")):
                 info[key] = link.command(cmd)
             info["drive_identity"] = link.transaction_identity()
@@ -1974,7 +2176,16 @@ class DriveWorker(QtCore.QThread):
         except Exception as exc:
             self._connection_identity_verified = False
             self._session_coordinate_known = False
-            self.failed.emit("Read-only connection admission failed: %s" % exc)
+            mode_prefix = (
+                "Read-only"
+                if self.access_mode == self.OBSERVE_ONLY_ACCESS_MODE
+                else "Supervised"
+                if self.access_mode == self.SUPERVISED_ACCESS_MODE
+                else "Unknown"
+            )
+            self.failed.emit(
+                "%s connection admission failed: %s"
+                % (mode_prefix, exc))
             try:
                 link.disconnect()
             except Exception:
@@ -2020,6 +2231,32 @@ class DriveWorker(QtCore.QThread):
                     self.failed.emit(
                         "Disconnect outcome UNKNOWN; UI forced OFFLINE: %s" % exc)
                 self.stopped.emit()
+            return
+        try:
+            final_access_mode = self._required_transport_access_mode(link)
+        except Exception as exc:
+            self._connection_identity_verified = False
+            self._session_coordinate_known = False
+            self.failed.emit(
+                "Connection access mode evidence was lost before admission: %s"
+                % exc)
+            try:
+                link.disconnect()
+            except Exception:
+                pass
+            self.stopped.emit()
+            return
+        if (final_access_mode != self.access_mode
+                or final_access_mode != info.get("access_mode")):
+            self._connection_identity_verified = False
+            self._session_coordinate_known = False
+            self.failed.emit(
+                "Connection access mode changed before admission; ONLINE refused")
+            try:
+                link.disconnect()
+            except Exception:
+                pass
+            self.stopped.emit()
             return
         self.connected.emit(info)
         self.persistence_audit_status.emit(dict(persistence_status))
@@ -3045,6 +3282,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker: DriveWorker | None = None
         self._ui_connected = False
         self._connection_admitted = False
+        self._connection_access_mode = None
+        self._requested_connection_access_mode = None
+        self._connection_shutdown_pending = False
         self._telemetry_authoritative = False
         self._telemetry_authority_loss_latched = False
         self._last_telemetry_sequence = 0
@@ -3632,9 +3872,38 @@ class MainWindow(QtWidgets.QMainWindow):
     # ---- connection ------------------------------------------------------------------
     def _build_connection_card(self):
         f = theme.HudCard(); f.setFixedWidth(340)
-        v = QtWidgets.QVBoxLayout(f); v.setContentsMargins(16, 14, 16, 16); v.setSpacing(10)
-        title = QtWidgets.QLabel("CONNECTION"); title.setProperty("role", "celltitle")
-        v.addWidget(title)
+        v = QtWidgets.QVBoxLayout(f)
+        v.setContentsMargins(16, 14, 16, 16); v.setSpacing(8)
+
+        # Access authority is always visible, but it shares the card heading
+        # instead of consuming another full form row.  The previous standalone
+        # row raised the production minimum height beyond 1366×820.
+        title_row = QtWidgets.QHBoxLayout(); title_row.setSpacing(8)
+        title = QtWidgets.QLabel("CONNECTION")
+        title.setProperty("role", "celltitle")
+        title_row.addWidget(title)
+        title_row.addStretch(1)
+        self.cmb_access_mode = QtWidgets.QComboBox()
+        self.cmb_access_mode.addItem(
+            "READ ONLY",
+            OBSERVE_ONLY_ACCESS_MODE)
+        self.cmb_access_mode.addItem(
+            "SUPERVISED",
+            SUPERVISED_ACCESS_MODE)
+        self.cmb_access_mode.setFixedWidth(156)
+        self.cmb_access_mode.setAccessibleName("Connection Access Mode")
+        self.cmb_access_mode.setItemData(
+            0,
+            "Default. Drive writes are blocked; queries and safe shutdown remain available.",
+            QtCore.Qt.ItemDataRole.ToolTipRole)
+        self.cmb_access_mode.setItemData(
+            1,
+            "Explicit supervised authority. Later controls can energize or move the motor.",
+            QtCore.Qt.ItemDataRole.ToolTipRole)
+        self.cmb_access_mode.currentIndexChanged.connect(
+            self._connection_access_mode_selection_changed)
+        title_row.addWidget(self.cmb_access_mode)
+        v.addLayout(title_row)
 
         self.cmb_conn = QtWidgets.QComboBox()
         self.cmb_conn.addItems(["Direct Access USB", "Direct Access RS232",
@@ -3650,7 +3919,8 @@ class MainWindow(QtWidgets.QMainWindow):
         portrow.addWidget(self.btn_port_refresh)
         v.addLayout(self._row("Serial Port", portrow))
 
-        self.btn_conn = QtWidgets.QPushButton("Connect"); self.btn_conn.setObjectName("primary")
+        self.btn_conn = QtWidgets.QPushButton(
+            "Connect · Read Only"); self.btn_conn.setObjectName("primary")
         self.btn_conn.clicked.connect(self.toggle_connect)
         v.addWidget(self.btn_conn)
 
@@ -3841,6 +4111,11 @@ class MainWindow(QtWidgets.QMainWindow):
             connected
             and getattr(self, "_telemetry_authoritative", False)
             and not getattr(self, "_energizing_state", False))
+        mutation_trusted = bool(
+            telemetry_trusted
+            and getattr(self, "_connection_access_mode", None)
+            == SUPERVISED_ACCESS_MODE
+            and getattr(self, "_last_mo", None) == 0)
         checks = all(check.isChecked() for check in (
             self.chk_motion_operator,
             self.chk_motion_estop,
@@ -3848,7 +4123,7 @@ class MainWindow(QtWidgets.QMainWindow):
         ))
         ready = (
             FINITE_PTP_LIVE_ENABLED
-            and telemetry_trusted
+            and mutation_trusted
             and not getattr(self, "_persistence_recovery_unknown", False)
             and self._motion_signature_is_current()
             and self._motion_session_zero_confirmed
@@ -4208,10 +4483,16 @@ class MainWindow(QtWidgets.QMainWindow):
         return candidate
 
     def _nav_to(self, ix):
+        page_changed = self.stack.currentIndex() != ix
         self.stack.setCurrentIndex(ix)
         self.stack.updateGeometry()
         if hasattr(self, "workspace_scroll"):
             self.workspace_scroll.widget().adjustSize()
+            if page_changed:
+                for scroll_bar in (
+                        self.workspace_scroll.horizontalScrollBar(),
+                        self.workspace_scroll.verticalScrollBar()):
+                    scroll_bar.setValue(scroll_bar.minimum())
         for i, b in enumerate(self._nav_btns):
             b.setChecked(i == ix)
         recorder_visible = ix == 5
@@ -6154,6 +6435,11 @@ class MainWindow(QtWidgets.QMainWindow):
             connected
             and getattr(self, "_telemetry_authoritative", False)
             and not getattr(self, "_energizing_state", False))
+        mutation_trusted = bool(
+            telemetry_trusted
+            and getattr(self, "_connection_access_mode", None)
+            == SUPERVISED_ACCESS_MODE
+            and getattr(self, "_last_mo", None) == 0)
         persistence_locked = bool(
             getattr(self, "_persistence_recovery_unknown", False))
         selected = len(self._recorder_checked_signals())
@@ -6162,12 +6448,12 @@ class MainWindow(QtWidgets.QMainWindow):
         target_bound = connected and self._recorder_signals_target is self.worker
         if hasattr(self, "btn_rec_signals"):
             self.btn_rec_signals.setEnabled(
-                telemetry_trusted and not pending and not persistence_locked)
+                mutation_trusted and not pending and not persistence_locked)
             self.btn_rec_immediate.setEnabled(
-                telemetry_trusted and target_bound and selected > 0 and not pending
+                mutation_trusted and target_bound and selected > 0 and not pending
                 and not persistence_locked)
             self.btn_rec_upload.setEnabled(
-                telemetry_trusted and state == "READY_TO_UPLOAD"
+                mutation_trusted and state == "READY_TO_UPLOAD"
                 and not persistence_locked)
             self.btn_rec_stop.setEnabled(
                 connected and self._recorder_state_cancellable())
@@ -6582,24 +6868,80 @@ class MainWindow(QtWidgets.QMainWindow):
         self.tune_status.setProperty("role", "hint"); self.tune_status.setWordWrap(True)
         v.addWidget(self.tune_status)
         v.addWidget(self._hline())
-        # measured plant + computed gains
-        gt = QtWidgets.QLabel("MEASURED PLANT · COMPUTED GAINS"); gt.setProperty("role", "field")
-        v.addWidget(gt)
+        # Candidate results and installed drive readback are deliberately
+        # separate authority classes.  A tuning result is a model candidate;
+        # a later KP/KI query is evidence of what the drive currently reports.
+        self.tune_candidate_title = QtWidgets.QLabel(
+            "CANDIDATE MODEL · MEASURED PLANT + COMPUTED GAINS "
+            "(NOT DRIVE READBACK)")
+        self.tune_candidate_title.setProperty("role", "field")
+        v.addWidget(self.tune_candidate_title)
         self.tune_gain_fields = {}
+        self.tune_candidate_labels = {}
+        self.tune_candidate_gain_labels = {}
         gform = QtWidgets.QGridLayout(); gform.setHorizontalSpacing(14); gform.setVerticalSpacing(7)
-        rows = [("r_pp", "Resistance  R  (phase-to-phase)"), ("l_pp", "Inductance  L  (phase-to-phase)"),
-                ("kp_cur", "Current Loop  KP  (KP[1])"), ("ki_cur", "Current Loop  KI  (KI[1])"),
-                ("pm", "Phase Margin  (설계 안정도)"),
-                ("k_a", "Accel Constant  K_a  (Phase 2 실측)"),
-                ("b_visc", "Viscous Friction  B"), ("i_c", "Coulomb Friction  I_c"),
-                ("kp_vel", "Velocity Loop  KP  (KP[2])"), ("ki_vel", "Velocity Loop  KI  (KI[2])"),
-                ("kp_pos", "Position Loop  KP  (KP[3])"),
-                ("pm_vel", "Velocity Phase Margin"), ("pm_pos", "Position Phase Margin")]
+        rows = [
+            ("r_pp", "Resistance R · CANDIDATE MEASUREMENT "
+                     "[Ω phase-to-phase]"),
+            ("l_pp", "Inductance L · CANDIDATE MEASUREMENT "
+                     "[µH phase-to-phase]"),
+            ("kp_cur", "Current Loop KP · CANDIDATE (KP[1]) [V/A]"),
+            ("ki_cur", "Current Loop KI · CANDIDATE (KI[1]) [Hz]"),
+            ("pm", "Current Phase Margin · CANDIDATE DESIGN [deg]"),
+            ("k_a", "Accel Constant K_a · CANDIDATE IDENTIFICATION "
+                    "[cnt/s²/A]"),
+            ("b_visc", "Viscous Friction B · CANDIDATE IDENTIFICATION "
+                       "[A/(cnt/s)]"),
+            ("i_c", "Coulomb Friction I_c · CANDIDATE IDENTIFICATION [A]"),
+            ("kp_vel", "Velocity Loop KP · CANDIDATE (KP[2]) [A/(cnt/s)]"),
+            ("ki_vel", "Velocity Loop KI · CANDIDATE (KI[2]) [Hz]"),
+            ("kp_pos", "Position Loop KP · CANDIDATE (KP[3]) [1/s]"),
+            ("pm_vel", "Velocity Phase Margin · CANDIDATE DESIGN "
+                       "[deg; GM dB]"),
+            ("pm_pos", "Position Phase Margin · CANDIDATE DESIGN [deg]"),
+        ]
         for i, (k, label) in enumerate(rows):
             l = QtWidgets.QLabel(label); l.setProperty("role", "field")
             e = QtWidgets.QLineEdit(); e.setReadOnly(True); e.setText("—")
-            gform.addWidget(l, i, 0); gform.addWidget(e, i, 1); self.tune_gain_fields[k] = e
+            gform.addWidget(l, i, 0); gform.addWidget(e, i, 1)
+            self.tune_gain_fields[k] = e
+            self.tune_candidate_labels[k] = l
+            if k in ("kp_cur", "ki_cur", "kp_vel", "ki_vel", "kp_pos"):
+                self.tune_candidate_gain_labels[k] = l
         v.addLayout(gform)
+
+        self.tune_installed_title = QtWidgets.QLabel(
+            "INSTALLED GAINS · DRIVE READBACK (NOT CANDIDATES)")
+        self.tune_installed_title.setProperty("role", "field")
+        v.addWidget(self.tune_installed_title)
+        self.tune_installed_gain_fields = {}
+        self.tune_installed_gain_labels = {}
+        installed_form = QtWidgets.QGridLayout()
+        installed_form.setHorizontalSpacing(14)
+        installed_form.setVerticalSpacing(7)
+        installed_rows = [
+            ("kp_cur", "Current Loop KP · INSTALLED / DRIVE READBACK "
+                       "(KP[1]) [V/A]"),
+            ("ki_cur", "Current Loop KI · INSTALLED / DRIVE READBACK "
+                       "(KI[1]) [Hz]"),
+            ("kp_vel", "Velocity Loop KP · INSTALLED / DRIVE READBACK "
+                       "(KP[2]) [A/(cnt/s)]"),
+            ("ki_vel", "Velocity Loop KI · INSTALLED / DRIVE READBACK "
+                       "(KI[2]) [Hz]"),
+            ("kp_pos", "Position Loop KP · INSTALLED / DRIVE READBACK "
+                       "(KP[3]) [1/s]"),
+        ]
+        for i, (key, label) in enumerate(installed_rows):
+            field_label = QtWidgets.QLabel(label)
+            field_label.setProperty("role", "field")
+            value = QtWidgets.QLineEdit()
+            value.setReadOnly(True)
+            value.setText("—")
+            installed_form.addWidget(field_label, i, 0)
+            installed_form.addWidget(value, i, 1)
+            self.tune_installed_gain_labels[key] = field_label
+            self.tune_installed_gain_fields[key] = value
+        v.addLayout(installed_form)
         v.addWidget(self._hline())
         # breakaway cap selector (multi-unit: stiff gearboxes need 0.4*CL —
         # fable-physics: this unit shows NO breakaway at the default 0.2*CL;
@@ -6612,6 +6954,94 @@ class MainWindow(QtWidgets.QMainWindow):
             "EXPERT CONTROLS  ·  CANDIDATES + INSTALLED-GAIN VERIFY")
         expert_title.setProperty("role", "field"); expert_layout.addWidget(expert_title)
 
+        self.expert_lab_frame = QtWidgets.QFrame()
+        self.expert_lab_frame.setObjectName("inset")
+        lab_layout = QtWidgets.QVBoxLayout(self.expert_lab_frame)
+        lab_layout.setContentsMargins(10, 10, 10, 10)
+        lab_layout.setSpacing(7)
+        self.expert_lab_title = QtWidgets.QLabel(
+            "EXPERT CANDIDATE LAB v1 · OFFLINE MODEL · NO DRIVE I/O")
+        self.expert_lab_title.setProperty("role", "celltitle")
+        lab_layout.addWidget(self.expert_lab_title)
+        lab_note = QtWidgets.QLabel(
+            "Explicit phase-to-phase plant inputs produce a MODEL candidate only. "
+            "Calculate does not connect, enqueue, apply, verify, or save anything.")
+        lab_note.setProperty("role", "hint")
+        lab_note.setWordWrap(True)
+        lab_layout.addWidget(lab_note)
+
+        lab_form = QtWidgets.QGridLayout()
+        lab_form.setHorizontalSpacing(10)
+        lab_form.setVerticalSpacing(6)
+        self.expert_lab_r_ohm = QtWidgets.QLineEdit()
+        self.expert_lab_l_uh = QtWidgets.QLineEdit()
+        self.expert_lab_ts_us = QtWidgets.QLineEdit()
+        self.expert_lab_bandwidth_hz = QtWidgets.QLineEdit()
+        self.expert_lab_bandwidth_hz.setPlaceholderText(
+            "blank = calibrated model law")
+        for row, (label, field) in enumerate((
+                ("R phase-to-phase [ohm]", self.expert_lab_r_ohm),
+                ("L phase-to-phase [uH]", self.expert_lab_l_uh),
+                ("TS [us]", self.expert_lab_ts_us),
+                ("Target bandwidth [Hz] (optional)",
+                 self.expert_lab_bandwidth_hz))):
+            name = QtWidgets.QLabel(label)
+            name.setProperty("role", "field")
+            lab_form.addWidget(name, row, 0)
+            lab_form.addWidget(field, row, 1)
+        rule_label = QtWidgets.QLabel("KI rule")
+        rule_label.setProperty("role", "field")
+        self.expert_lab_ki_rule = QtWidgets.QComboBox()
+        self.expert_lab_ki_rule.addItem("EAS ratio", "eas_ratio")
+        self.expert_lab_ki_rule.addItem("Pole-zero", "pole_zero")
+        lab_form.addWidget(rule_label, 4, 0)
+        lab_form.addWidget(self.expert_lab_ki_rule, 4, 1)
+        self.btn_expert_calculate = QtWidgets.QPushButton(
+            "Calculate Candidate · OFFLINE")
+        self.btn_expert_calculate.clicked.connect(
+            self._calculate_expert_candidate)
+        lab_form.addWidget(self.btn_expert_calculate, 5, 0, 1, 2)
+        lab_layout.addLayout(lab_form)
+
+        self.expert_lab_status = QtWidgets.QLabel(
+            "MODEL · waiting for explicit plant inputs · no candidate")
+        self.expert_lab_status.setProperty("role", "hint")
+        self.expert_lab_status.setWordWrap(True)
+        lab_layout.addWidget(self.expert_lab_status)
+        self.expert_lab_response_summary = QtWidgets.QLabel(
+            "Bode-ready response · not calculated")
+        self.expert_lab_response_summary.setProperty("role", "hint")
+        self.expert_lab_response_summary.setWordWrap(True)
+        lab_layout.addWidget(self.expert_lab_response_summary)
+        self.expert_bode_widget = ExpertBodeWidget()
+        lab_layout.addWidget(self.expert_bode_widget)
+        expert_layout.addWidget(self.expert_lab_frame)
+        self._expert_plant = None
+        self._expert_candidate = None
+        self._expert_response = None
+
+        self.tuning_guided_run_frame = QtWidgets.QFrame()
+        self.tuning_guided_run_frame.setObjectName("chip")
+        guided_run_layout = QtWidgets.QVBoxLayout(
+            self.tuning_guided_run_frame)
+        guided_run_layout.setContentsMargins(12, 10, 12, 10)
+        guided_run_layout.setSpacing(8)
+        self.guided_run_title = QtWidgets.QLabel(
+            "GUIDED HARDWARE TUNING CONTROLS · SUPERVISED · "
+            "ENERGIZES / MOTION")
+        # Preserve the existing handle while making the Quick/Expert shared
+        # role explicit for callers and UI contracts.
+        self.expert_hardware_title = self.guided_run_title
+        self.guided_run_title.setProperty("role", "field")
+        guided_run_layout.addWidget(self.guided_run_title)
+        hardware_note = QtWidgets.QLabel(
+            "This section is separate from the offline Candidate Lab. "
+            "Its Run/Verify controls can energize or move hardware and remain "
+            "subject to connection, authority, and field-safety gates.")
+        hardware_note.setProperty("role", "hint")
+        hardware_note.setWordWrap(True)
+        guided_run_layout.addWidget(hardware_note)
+
         caprow = QtWidgets.QHBoxLayout(); caprow.setSpacing(8)
         cap_l = QtWidgets.QLabel("Phase 2 브레이크어웨이 전류 상한"); cap_l.setProperty("role", "field")
         self.cmb_ba_cap = QtWidgets.QComboBox()
@@ -6619,12 +7049,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.cmb_ba_cap.addItem("Extended · 0.40 × CL[1] (별도 실기 승인 필요)", 0.4)
         self.cmb_ba_cap.setCurrentIndex(0)
         caprow.addWidget(cap_l); caprow.addWidget(self.cmb_ba_cap, 1)
-        expert_layout.addLayout(caprow)
+        guided_run_layout.addLayout(caprow)
         cap_hint = QtWidgets.QLabel(
             "ⓘ 이 값은 지령값이 아니라 탐색을 중단할 최대 상한입니다. 선택만으로 모터가 통전되지 않습니다. "
             "Extended는 Standard보다 최대 전류가 2배이며, 실행할 때 별도의 현장 확인과 승인이 필요합니다.")
         cap_hint.setProperty("role", "hint"); cap_hint.setWordWrap(True)
-        expert_layout.addWidget(cap_hint)
+        guided_run_layout.addWidget(cap_hint)
         # Keep measurement/motion actions separate from production-locked gain
         # mutation controls so the available authority remains visually explicit.
         btnrow = QtWidgets.QHBoxLayout(); btnrow.setSpacing(8)
@@ -6641,9 +7071,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_verify.setEnabled(False)
         self.btn_tune_verify.clicked.connect(self._run_verify_clicked)
         for b in (self.btn_tune, self.btn_tune_signature, self.btn_tune_vp,
-                  self.btn_tune_abort):
+                  self.btn_tune_verify, self.btn_tune_abort):
             btnrow.addWidget(b)
-        v.addLayout(btnrow)
+        guided_run_layout.addLayout(btnrow)
 
         p1row = QtWidgets.QHBoxLayout(); p1row.setSpacing(8)
         p1label = QtWidgets.QLabel("P1 CURRENT GAINS"); p1label.setProperty("role", "field")
@@ -6672,8 +7102,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_vp_save.setEnabled(False)
         self.btn_tune_vp_save.clicked.connect(self._save_velpos_clicked)
         p2row.addWidget(p2label)
-        for b in (self.btn_tune_vp_apply, self.btn_tune_verify,
-                  self.btn_tune_vp_restore, self.btn_tune_vp_save):
+        for b in (self.btn_tune_vp_apply, self.btn_tune_vp_restore,
+                  self.btn_tune_vp_save):
             p2row.addWidget(b)
         gain_lock_reason = (
             "Hardware gain Apply/Save is locked until a durable "
@@ -6682,6 +7112,7 @@ class MainWindow(QtWidgets.QMainWindow):
                   self.btn_tune_vp_apply, self.btn_tune_vp_save):
             b.setToolTip(gain_lock_reason)
         expert_layout.addLayout(p2row)
+        v.addWidget(self.tuning_guided_run_frame)
         v.addWidget(self.tuning_expert_frame)
         note = QtWidgets.QLabel("ⓘ 우리 자체 오토튠 — EAS 내부 알고리즘 재현이 아니라, 드라이브 명령으로 "
                                 "R·L을 실측해 표준 PI 설계식으로 게인을 계산합니다. 시뮬 검증 완료(오라클 대비 KP/KI ≤1%), "
@@ -6717,6 +7148,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 (self.btn_tune_vp_restore, "tuning.p2.restore"),
                 (self.btn_tune_vp_save, "tuning.p2.save")):
             self._decorate_operation_control(widget, operation_id)
+        self._decorate_operation_control(
+            self.btn_expert_calculate, "tuning.expert.offline.calculate")
         self._set_tuning_mode("quick")
         return f
 
@@ -6728,6 +7161,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tuning_quick_mode.setChecked(not expert)
         self.btn_tuning_expert_mode.setChecked(expert)
         self.tuning_expert_frame.setVisible(expert)
+        self.expert_lab_frame.setVisible(expert)
         if expert:
             self.tune_title.setText(
                 "EXPERT TUNING  ·  Candidate review (gain Apply/Save locked)")
@@ -6757,6 +7191,76 @@ class MainWindow(QtWidgets.QMainWindow):
                 "활성 RAM trial/저장 작업이 있어 Expert 복원·검증 제어를 숨기지 않습니다.")
             return
         self._set_tuning_mode(mode)
+
+    def _calculate_expert_candidate(self):
+        """Compute and display a pure offline P1 candidate atomically.
+
+        Every parse, design, and response step completes before any candidate
+        field is changed.  Therefore invalid input cannot partially overwrite
+        the last complete MODEL result.
+        """
+        try:
+            resistance_ohm = float(self.expert_lab_r_ohm.text().strip())
+            inductance_h = (
+                float(self.expert_lab_l_uh.text().strip()) * 1e-6)
+            sampling_time_s = (
+                float(self.expert_lab_ts_us.text().strip()) * 1e-6)
+            bandwidth_text = self.expert_lab_bandwidth_hz.text().strip()
+            target_bandwidth_hz = (
+                float(bandwidth_text) if bandwidth_text else None)
+            ki_rule = self.expert_lab_ki_rule.currentData()
+            plant = expert_tuning_offline.CurrentPlant(
+                resistance_ohm=resistance_ohm,
+                inductance_h=inductance_h,
+                sampling_time_s=sampling_time_s,
+            )
+            candidate = expert_tuning_offline.design_current_candidate(
+                plant,
+                target_bandwidth_hz=target_bandwidth_hz,
+                ki_rule=ki_rule,
+            )
+            response = expert_tuning_offline.current_frequency_response(
+                plant, candidate)
+        except (TypeError, ValueError, OverflowError) as exc:
+            self.expert_lab_status.setText(
+                "INVALID · previous candidate preserved · %s" % exc)
+            return
+
+        self._expert_plant = plant
+        self._expert_candidate = candidate
+        self._expert_response = response
+        candidate_fields = self.tune_gain_fields
+        candidate_fields["r_pp"].setText(
+            "%.6g ohm" % resistance_ohm)
+        candidate_fields["l_pp"].setText(
+            "%.6g uH" % (inductance_h * 1e6))
+        candidate_fields["kp_cur"].setText(
+            "%.6g V/A" % candidate.kp_v_per_a)
+        candidate_fields["ki_cur"].setText(
+            "%.6g Hz" % candidate.ki_hz)
+        candidate_fields["pm"].setText(
+            "%.1f deg" % candidate.phase_margin_deg)
+        design_gate = "PASS" if candidate.design_passed else "FAIL"
+        self.expert_lab_status.setText(
+            "%s · crossover %.6g Hz · PM %.2f deg · basis %s · "
+            "design gate %s · %s"
+            % (
+                candidate.model_status,
+                candidate.crossover_hz,
+                candidate.phase_margin_deg,
+                candidate.basis,
+                design_gate,
+                candidate.source,
+            ))
+        self.expert_lab_response_summary.setText(
+            "Bode-ready response · %d points · %.6g..%.6g Hz · "
+            "open/closed magnitude + open-loop phase"
+            % (
+                len(response.frequency_hz),
+                response.frequency_hz[0],
+                response.frequency_hz[-1],
+            ))
+        self.expert_bode_widget.set_response(response)
 
     # ---- auto-tune GUI glue ----------------------------------------------------------
     def _claim_tune_dispatch(self, kind, trial=None):
@@ -7876,6 +8380,55 @@ class MainWindow(QtWidgets.QMainWindow):
         self._flash("전원 재인가 서명 접수 · query-only persistence audit 대기 중…")
 
     # ---- connect / disconnect --------------------------------------------------------
+    def _connection_access_mode_selection_changed(self):
+        """Keep the offline Connect label aligned with the explicit selector."""
+        if not hasattr(self, "btn_conn"):
+            return
+        if self.worker and self.worker.isRunning():
+            return
+        mode = self.cmb_access_mode.currentData()
+        label = _ACCESS_MODE_LABELS.get(mode, "INVALID MODE")
+        self.btn_conn.setText("Connect · %s" % label)
+
+    def _reset_connection_access_mode(self):
+        """Forget one-shot supervised authority and restore the safe default."""
+        self._requested_connection_access_mode = None
+        if not hasattr(self, "cmb_access_mode"):
+            return
+        shutdown_pending = bool(
+            getattr(self, "_connection_shutdown_pending", False))
+        index = self.cmb_access_mode.findData(OBSERVE_ONLY_ACCESS_MODE)
+        self.cmb_access_mode.blockSignals(True)
+        if index >= 0:
+            self.cmb_access_mode.setCurrentIndex(index)
+        self.cmb_access_mode.blockSignals(False)
+        self.cmb_access_mode.setEnabled(not shutdown_pending)
+        if hasattr(self, "btn_conn") and not self._ui_connected:
+            self.btn_conn.setEnabled(not shutdown_pending)
+            self.btn_conn.setText(
+                "Disconnecting" if shutdown_pending
+                else "Connect · Read Only")
+
+    def _confirm_supervised_connection(self):
+        """Request one non-persistent, connection-only supervised authority."""
+        answer = QtWidgets.QMessageBox.warning(
+            self,
+            "Supervised Control 연결 확인",
+            "This opens a write-capable session. Connecting does not enable "
+            "the motor and does not run motion, commutation, tuning, PX=0, "
+            "parameter writes, or SV.\n\n"
+            "After connection, fresh live telemetry, MO=0, and each action's "
+            "separate confirmation are still required before controls can "
+            "energize or move the motor.\n\n"
+            "Software STOP is not independent STO/E-stop. Continue only when "
+            "an operator is present at the machine, the axis area is safe, and "
+            "independent E-stop/STO is immediately available.\n\n"
+            "This approves the connection mode only. It approves no motor action.",
+            QtWidgets.QMessageBox.StandardButton.Yes |
+            QtWidgets.QMessageBox.StandardButton.Cancel,
+            QtWidgets.QMessageBox.StandardButton.Cancel)
+        return answer == QtWidgets.QMessageBox.StandardButton.Yes
+
     def toggle_connect(self):
         if self.worker and self.worker.isRunning():
             self.disconnect_drive()
@@ -7883,12 +8436,23 @@ class MainWindow(QtWidgets.QMainWindow):
             self.connect_drive()
 
     def connect_drive(self):
+        requested_mode = self.cmb_access_mode.currentData()
+        if requested_mode not in {
+                OBSERVE_ONLY_ACCESS_MODE, SUPERVISED_ACCESS_MODE}:
+            self._reset_connection_access_mode()
+            self._flash("알 수 없는 Access Mode — Read Only로 복귀했습니다.")
+            return
         port = self.cmb_port.currentText().strip()
         if not port:
             self._flash("연결할 COM 포트가 없습니다 (⟳로 새로고침).")
             return
         if self.cmb_conn.currentText() != "Direct Access USB":
             self._flash("이번 빌드는 USB만 활성 — 다른 방식은 곧 추가됩니다.")
+            return
+        if (requested_mode == SUPERVISED_ACCESS_MODE
+                and not self._confirm_supervised_connection()):
+            self._reset_connection_access_mode()
+            self._flash("Supervised Control 연결이 취소되었습니다.")
             return
         if self.session_log.connection_active:
             self._session_log_event_changed(self.session_log.end_connection(
@@ -7901,7 +8465,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "New connection attempt awaiting admission")
         self._invalidate_tuning_result_authority()
         self._invalidate_recorder_target_ui("New connection requires Personality rediscovery")
+        self._connection_shutdown_pending = False
         self._connection_admitted = False
+        self._connection_access_mode = None
+        self._requested_connection_access_mode = requested_mode
         self._telemetry_authoritative = False
         self._telemetry_authority_loss_latched = False
         self._last_telemetry_sequence = 0
@@ -7914,13 +8481,24 @@ class MainWindow(QtWidgets.QMainWindow):
         # constructed. A missed stopped signal must not leave the previous
         # target's ONLINE controls usable during identity admission.
         self._set_connected_ui(False)
-        self.btn_conn.setEnabled(False); self.btn_conn.setText("Connecting…")
+        self.btn_conn.setEnabled(False)
+        self.btn_conn.setText(
+            "Connecting · %s" % _ACCESS_MODE_LABELS[requested_mode])
         self.lbl_state.setText("CONNECTING")
         self.lbl_state.setProperty("on", "false")
         self._restyle(self.lbl_state)
         self.cmb_port.setEnabled(False)
         self.cmb_conn.setEnabled(False)
-        self.worker = DriveWorker(port)
+        self.cmb_access_mode.setEnabled(False)
+        self.worker = DriveWorker(
+            port, query_only=(requested_mode == OBSERVE_ONLY_ACCESS_MODE))
+        if getattr(self.worker, "access_mode", None) != requested_mode:
+            self.worker = None
+            self._set_connected_ui(False)
+            self._reset_connection_access_mode()
+            self._flash(
+                "Worker Access Mode 불일치 — 연결을 시작하지 않았습니다.")
+            return
         self.worker.connected.connect(self._on_connected)
         self.worker.failed.connect(self._on_failed)
         self.worker.telemetry.connect(self._on_telemetry)
@@ -7976,7 +8554,36 @@ class MainWindow(QtWidgets.QMainWindow):
                 "%s 영구저장 상태 UNKNOWN — 연결 해제 후 드라이브 리셋·재연결하고 "
                 "identity/durability evidence와 실제 게인 readback을 확인하세요." % phase)
         if self.worker:
+            self._begin_connection_shutdown(
+                "Disconnect requested; telemetry authority revoked")
             self.worker.stop()
+
+    def _begin_connection_shutdown(self, detail):
+        """Synchronously close UI authority before worker shutdown can block.
+
+        A QThread may need time to finish a vendor read or its verified energy
+        closeout. Signals already queued before ``stop()`` remain deliverable
+        during that interval, so terminal authority cannot wait for ``stopped``.
+        """
+        energizing = bool(getattr(self, "_energizing_state", False))
+        self._connection_shutdown_pending = True
+        self._connection_admitted = False
+        self._connection_access_mode = None
+        # Prevent a late ``connected`` signal from admitting a worker after
+        # shutdown was requested while connection setup was still in flight.
+        self._requested_connection_access_mode = None
+        self._revoke_telemetry_authority(
+            str(detail or "Connection shutdown requested"),
+            energizing=energizing)
+        self.btn_conn.setEnabled(False)
+        self.btn_conn.setText("Disconnecting")
+        self.cmb_port.setEnabled(False)
+        self.cmb_conn.setEnabled(False)
+        if hasattr(self, "cmb_access_mode"):
+            self.cmb_access_mode.setEnabled(False)
+        self.lbl_state.setText("DISCONNECTING")
+        self.lbl_state.setProperty("on", "false")
+        self._restyle(self.lbl_state)
 
     def _telemetry_envelope_valid(self, telemetry, *, new_generation=False):
         """Validate one live worker authority envelope without mutating UI state."""
@@ -8031,6 +8638,22 @@ class MainWindow(QtWidgets.QMainWindow):
                  or float(finished) >= float(previous_finished))
         )
 
+    @staticmethod
+    def _quiescent_connection_state_valid(state):
+        """Independently validate the worker's observe-only admission summary."""
+        if not isinstance(state, dict):
+            return False
+        required = ("MO", "SO", "VX", "PS", "MF")
+        if not all(DriveWorker._is_finite_number(state.get(name))
+                   for name in required):
+            return False
+        return bool(
+            float(state["MO"]) == 0.0
+            and float(state["SO"]) == 0.0
+            and float(state["VX"]) == 0.0
+            and float(state["PS"]) in (-2.0, -1.0)
+            and float(state["MF"]) == 0.0)
+
     def _on_connected(self, info: dict):
         source = self.sender()
         if source is not None and source is not self.worker:
@@ -8041,6 +8664,24 @@ class MainWindow(QtWidgets.QMainWindow):
         identity_ok = (
             isinstance(identity, str)
             and _HASHED_DRIVE_ID_RE.fullmatch(identity) is not None)
+        access_mode = info.get("access_mode")
+        requested_mode = getattr(
+            self, "_requested_connection_access_mode", None)
+        worker_mode = getattr(self.worker, "access_mode", None)
+        valid_modes = {
+            OBSERVE_ONLY_ACCESS_MODE, SUPERVISED_ACCESS_MODE}
+        if requested_mode not in valid_modes:
+            requested_mode = None
+        if worker_mode not in valid_modes:
+            worker_mode = None
+        access_mode_ok = bool(
+            requested_mode in valid_modes
+            and worker_mode == requested_mode
+            and access_mode == requested_mode)
+        quiescent_ok = bool(
+            access_mode != OBSERVE_ONLY_ACCESS_MODE
+            or self._quiescent_connection_state_valid(
+                info.get("quiescent_state")))
         try:
             display_metadata = (
                 system_configuration.sanitize_connection_display_metadata(
@@ -8058,8 +8699,9 @@ class MainWindow(QtWidgets.QMainWindow):
         except Exception:
             persistence_ok = False
         worker_running = bool(self.worker and self.worker.isRunning())
-        if not (worker_running and identity_ok and metadata_ok
-                and telemetry_ok and persistence_ok):
+        if not (worker_running and identity_ok and access_mode_ok
+                and quiescent_ok and metadata_ok and telemetry_ok
+                and persistence_ok):
             stop = getattr(self.worker, "stop", None)
             if callable(stop):
                 stop()
@@ -8072,7 +8714,9 @@ class MainWindow(QtWidgets.QMainWindow):
         # prior worker never delivered its stopped signal.
         self._release_tune_dispatch()
         self._advance_tuning_authority_generation()
+        self._connection_shutdown_pending = False
         self._connection_admitted = True
+        self._connection_access_mode = access_mode
         # From this point onward every label, passive observer and export sees
         # the same control-neutralized/privacy-redacted metadata projection.
         # The raw vendor strings are not retained by MainWindow.
@@ -8202,6 +8846,10 @@ class MainWindow(QtWidgets.QMainWindow):
         source = self.sender()
         if source is not None and source is not self.worker:
             return
+        shutdown_pending = bool(
+            getattr(self, "_connection_shutdown_pending", False))
+        shutdown_was_energizing = bool(
+            shutdown_pending and getattr(self, "_energizing_state", False))
         self._session_log_event_changed(self.session_log.append(
             category="connection", name="connection.failed", severity="ERROR",
             payload={"detail": str(msg or "unspecified failure")[:500]}))
@@ -8213,18 +8861,20 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vp_verified_trial = None
         self._vp_verified_generation = None
         self._connection_admitted = False
+        self._connection_access_mode = None
         self._telemetry_authoritative = False
         self._telemetry_authority_loss_latched = False
         self._last_telemetry_sequence = 0
         self._last_telemetry_received_monotonic = None
         self._last_telemetry_sample_finished_monotonic = None
-        self._energizing_state = False
+        self._energizing_state = shutdown_was_energizing
         self._last_mo = None
         if hasattr(self, "system_configuration"):
             self._system_configuration_end("Connection failed")
         if hasattr(self, "status_monitor_model"):
             self._status_monitor_end("Connection failed")
         self._set_connected_ui(False)
+        self._reset_connection_access_mode()
         self._connected_identity = {}
         self._invalidate_recorder_target_ui("Connection failed")
         if recorder_was_pending:
@@ -8322,7 +8972,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vp_trial_verified_green = False
         self._vp_verified_trial = None
         self._vp_verified_generation = None
+        self._connection_shutdown_pending = False
         self._connection_admitted = False
+        self._connection_access_mode = None
         self._telemetry_authoritative = False
         self._telemetry_authority_loss_latched = False
         self._last_telemetry_sequence = 0
@@ -8353,6 +9005,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.tune_status.setText(
                     "⚠ 연결 끊김 — P2 RAM 상태 미확인. 재연결 후 Restore P2를 실행하세요.")
         self._set_connected_ui(False)
+        self._reset_connection_access_mode()
         self._connected_identity = {}
         self._invalidate_recorder_target_ui("Drive disconnected")
         if recorder_was_pending:
@@ -8371,6 +9024,9 @@ class MainWindow(QtWidgets.QMainWindow):
             and getattr(self, "_connection_admitted", False)
             and getattr(self, "_telemetry_authoritative", False)
             and not getattr(self, "_energizing_state", False)
+            and getattr(self, "_connection_access_mode", None)
+            == SUPERVISED_ACCESS_MODE
+            and getattr(self, "_last_mo", None) == 0
             and self.worker and self.worker.isRunning())
         if require_motor_disabled:
             ready = ready and getattr(self, "_last_mo", None) == 0
@@ -8436,12 +9092,12 @@ class MainWindow(QtWidgets.QMainWindow):
         source = self.sender()
         if source is not None and source is not self.worker:
             return
-        self._fb_connected = bool(
-            getattr(self, "_connection_admitted", False)
-            and getattr(self, "_ui_connected", False)
-            and getattr(self, "_telemetry_authoritative", False)
-            and not getattr(self, "_energizing_state", False)
-            and self.worker and self.worker.isRunning())
+        # ``_fb_connected`` controls mutation-capable dynamic widgets, not
+        # merely whether feedback readback is available.  A feedback refresh
+        # must not undo the observe-only or MO=1 locks applied by
+        # ``_set_connected_ui``.
+        self._fb_connected = self._mutation_authority_ready(
+            require_motor_disabled=True)
         self._fb_raws = fb.get("params") or {}
         sid = fb.get("sensor_id")
         if isinstance(sid, (int, float)):
@@ -8639,8 +9295,17 @@ class MainWindow(QtWidgets.QMainWindow):
         source = self.sender()
         if source is not None and source is not self.worker:
             return
-        for k in ("kp_cur", "ki_cur", "kp_vel", "ki_vel", "kp_pos"):
-            self.tune_gain_fields[k].setText(self._fmt(g.get(k), 4))
+        units = {
+            "kp_cur": "V/A",
+            "ki_cur": "Hz",
+            "kp_vel": "A/(cnt/s)",
+            "ki_vel": "Hz",
+            "kp_pos": "1/s",
+        }
+        for key, unit in units.items():
+            value = self._fmt(g.get(key), 4)
+            self.tune_installed_gain_fields[key].setText(
+                value if value == "—" else "%s %s" % (value, unit))
 
     # ---- ui state --------------------------------------------------------------------
     def _invalidate_tuning_result_authority(self):
@@ -8677,7 +9342,10 @@ class MainWindow(QtWidgets.QMainWindow):
             getattr(self, "_tuning_authority_generation", 0))
 
     def _set_connected_ui(self, on: bool):
+        shutdown_pending = bool(
+            getattr(self, "_connection_shutdown_pending", False))
         if not on:
+            self._connection_access_mode = None
             self._invalidate_tuning_result_authority()
             self._motion_session_zero_confirmed = False
             for name in (
@@ -8721,16 +9389,33 @@ class MainWindow(QtWidgets.QMainWindow):
             and getattr(self, "_telemetry_authoritative", False)
             and not getattr(self, "_energizing_state", False)
             and self.worker and self.worker.isRunning())
+        mutation_trusted = bool(
+            telemetry_trusted
+            and getattr(self, "_connection_access_mode", None)
+            == SUPERVISED_ACCESS_MODE
+            and self._last_mo == 0)
         p1_model_ready = bool(self._p1_model_overrides_for_p2())
-        self.btn_conn.setEnabled(True)
-        self.btn_conn.setText("Disconnect" if on else "Connect")
-        self.lbl_state.setText("ONLINE" if on else "OFFLINE")
+        self.btn_conn.setEnabled(not shutdown_pending)
+        observe_only = bool(
+            on and getattr(self, "_connection_access_mode", None)
+            == OBSERVE_ONLY_ACCESS_MODE)
+        if shutdown_pending:
+            self.btn_conn.setText("Disconnecting")
+            self.lbl_state.setText("DISCONNECTING")
+        else:
+            self.btn_conn.setText(
+                "Disconnect · Read Only" if observe_only else
+                ("Disconnect · Supervised Control" if on else
+                 "Connect · %s" % _ACCESS_MODE_LABELS.get(
+                     self.cmb_access_mode.currentData(), "Read Only")))
+            self.lbl_state.setText(
+                "ONLINE · READ ONLY" if observe_only else
+                ("ONLINE · SUPERVISED" if on else "OFFLINE"))
         self.lbl_state.setProperty("on", "true" if on else "false")
         self._restyle(self.lbl_state)
         if hasattr(self, "btn_zero"):
             self.btn_zero.setEnabled(
-                telemetry_trusted and self._last_mo == 0
-                and not trial_active and not persistence_locked)
+                mutation_trusted and not trial_active and not persistence_locked)
         if hasattr(self, "btn_axis_refresh"):
             self.btn_axis_refresh.setEnabled(on)
         if hasattr(self, "btn_motion_stop"):
@@ -8739,24 +9424,24 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_global_stop.setEnabled(on)
         if hasattr(self, "btn_motor_write"):
             self.btn_motor_write.setEnabled(
-                telemetry_trusted and not trial_active and not persistence_locked
+                mutation_trusted and not trial_active and not persistence_locked
                 and not motor_write_inflight and not dispatch_inflight)
         if hasattr(self, "btn_tune"):
             self.btn_tune.setEnabled(
-                telemetry_trusted and not trial_active and not dispatch_inflight
+                mutation_trusted and not trial_active and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_signature"):
             self.btn_tune_signature.setEnabled(
-                telemetry_trusted and not trial_active and not dispatch_inflight
+                mutation_trusted and not trial_active and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_vp"):
             self.btn_tune_vp.setEnabled(
-                telemetry_trusted and not trial_active and not dispatch_inflight
+                mutation_trusted and not trial_active and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked
                 and self._motion_signature_is_current() and p1_model_ready)
         if hasattr(self, "btn_tune_verify"):
             self.btn_tune_verify.setEnabled(
-                telemetry_trusted and not p1_active
+                mutation_trusted and not p1_active
                 and (not vp_active or vp_normal_allowed)
                 and self._motion_signature_is_current()
                 and not dispatch_inflight and not motor_write_inflight
@@ -8769,15 +9454,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_tune_apply.setEnabled(False)
         if hasattr(self, "btn_tune_p1_restore"):
             self.btn_tune_p1_restore.setEnabled(
-                telemetry_trusted and p1_restore_allowed and not dispatch_inflight
+                mutation_trusted and p1_restore_allowed and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_p1_save"):
             self.btn_tune_p1_save.setEnabled(
-                telemetry_trusted and p1_save_allowed and not dispatch_inflight
+                mutation_trusted and p1_save_allowed and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_vp_restore"):
             self.btn_tune_vp_restore.setEnabled(
-                telemetry_trusted and vp_restore_allowed and not dispatch_inflight
+                mutation_trusted and vp_restore_allowed and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_vp_save"):
             self.btn_tune_vp_save.setEnabled(False)
@@ -8802,12 +9487,12 @@ class MainWindow(QtWidgets.QMainWindow):
                     getattr(self, b).setEnabled(False)
         if hasattr(self, "motor_type_combo"):
             self.motor_type_combo.setEnabled(
-                telemetry_trusted and not persistence_locked)
+                mutation_trusted and not persistence_locked)
         if hasattr(self, "motor_fields"):
             for k in ("peak", "cont", "maxspeed", "poles"):
                 if k in self.motor_fields:
                     self.motor_fields[k].setEnabled(
-                        telemetry_trusted and not persistence_locked)
+                        mutation_trusted and not persistence_locked)
         for w in ("cmb_sensor", "cmb_commut"):
             if hasattr(self, w):
                 # Readback selectors must not look write-capable before the
@@ -8817,14 +9502,17 @@ class MainWindow(QtWidgets.QMainWindow):
             # A disabled button is not the safety boundary; _write_feedback is
             # independently fail-closed as well.  Never re-enable on connect.
             self.btn_fb_write.setEnabled(False)
-        self._fb_connected = telemetry_trusted
+        # Dynamic feedback widgets may include Encoder Maintenance actions.
+        # Keep their rebuild authority aligned with the same supervised/MO=0
+        # boundary as every other ordinary mutation control.
+        self._fb_connected = mutation_trusted
         if hasattr(self, "fb_fields"):
             if "counts" in self.fb_fields:
                 self.fb_fields["counts"].setEnabled(False)
         if hasattr(self, "_fb_dyn_fields"):
             for _label, (fld, w) in self._fb_dyn_fields.items():
                 if fld["kind"] == feedback_spec.BTN:
-                    w.setEnabled(telemetry_trusted and not persistence_locked)
+                    w.setEnabled(mutation_trusted and not persistence_locked)
                 elif fld["editable"]:
                     w.setEnabled(False)
         if not on:
@@ -8836,11 +9524,22 @@ class MainWindow(QtWidgets.QMainWindow):
                 if s:
                     s.setText("")
             self._last_mo = None
-            self.lbl_motor.setText("MOTOR STATE UNKNOWN")
+            self.lbl_motor.setText(
+                "SHUTDOWN IN PROGRESS · ENERGY STATE UNKNOWN"
+                if shutdown_pending else "MOTOR STATE UNKNOWN")
+            if shutdown_pending:
+                self.lbl_motor.setToolTip(
+                    "Worker cleanup is still pending; software state is not "
+                    "proof of physical energy isolation")
             self.lbl_motor.setProperty("on", "false"); self._restyle(self.lbl_motor)
-            self.cmb_port.setEnabled(True); self.cmb_conn.setEnabled(True)
+            self.cmb_port.setEnabled(not shutdown_pending)
+            self.cmb_conn.setEnabled(not shutdown_pending)
+            if hasattr(self, "cmb_access_mode"):
+                self.cmb_access_mode.setEnabled(not shutdown_pending)
         else:
             self.cmb_port.setEnabled(False); self.cmb_conn.setEnabled(False)
+            if hasattr(self, "cmb_access_mode"):
+                self.cmb_access_mode.setEnabled(False)
         if hasattr(self, "btn_motion_run"):
             self._update_motion_controls()
         if hasattr(self, "btn_rec_immediate"):
@@ -8946,6 +9645,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ev.ignore()
             return
         if self.worker and self.worker.isRunning():
+            self._begin_connection_shutdown(
+                "Window close requested; telemetry authority revoked")
             self.worker.stop()
             if not self.worker.wait(1500):
                 self._flash(
@@ -9046,6 +9747,8 @@ def _smoke_feedback(app, win):
 class _OfflineSmokeWorker:
     """QThread-shaped, process-local smoke double; it owns no transport."""
 
+    access_mode = SUPERVISED_ACCESS_MODE
+
     @staticmethod
     def isRunning():
         return True
@@ -9073,11 +9776,13 @@ def _smoke_authority_sample(sequence, *, mo=0):
 def _smoke_admit_ui(win, worker=None):
     """Admit a complete synthetic UI envelope without opening a COM port."""
     win.worker = worker or _OfflineSmokeWorker()
+    win._requested_connection_access_mode = SUPERVISED_ACCESS_MODE
     initial = _smoke_authority_sample(1, mo=0)
     win._on_connected({
         "fw": "SmokeFW", "pal": "90", "boot": "SmokeBoot",
         "target_type": "Gold Drive",
         "drive_identity": "elmo-sn4-sha256:" + ("0" * 64),
+        "access_mode": SUPERVISED_ACCESS_MODE,
         "initial_telemetry": initial,
         "persistence_status": {
             "status": "CLEAR", "resolved": True,
@@ -10046,6 +10751,8 @@ def main():
         # Exercise the same fail-closed admission envelope as a live worker,
         # using a process-local stub only.  This smoke path performs no I/O.
         class SmokeWorker:
+            access_mode = OBSERVE_ONLY_ACCESS_MODE
+
             @staticmethod
             def isRunning():
                 return True
@@ -10055,6 +10762,7 @@ def main():
                 return None
 
         win.worker = SmokeWorker()
+        win._requested_connection_access_mode = OBSERVE_ONLY_ACCESS_MODE
         now = time.monotonic()
         initial = {
             "pos": 0, "vel": 0.0, "pos_err": 0, "iq": 0.0, "mo": 0,
@@ -10073,6 +10781,11 @@ def main():
             "boot": "DSP Boot 1.0.1.6",
             "target_type": "Gold Drive",
             "drive_identity": "elmo-sn4-sha256:" + ("0" * 64),
+            "access_mode": OBSERVE_ONLY_ACCESS_MODE,
+            "quiescent_state": {
+                "MO": 0.0, "SO": 0.0, "VX": 0.0,
+                "PS": -2.0, "MF": 0.0,
+            },
             "persistence_status": {
                 "status": "CLEAR", "resolved": True, "detail": "smoke",
                 "lock_active": False, "record_id": None, "phase": None,
@@ -10094,7 +10807,7 @@ def main():
             win._ui_connected and win._connection_admitted
             and win._telemetry_authoritative
             and win._last_telemetry_sequence == 2
-            and win.lbl_state.text() == "ONLINE"
+            and win.lbl_state.text() == "ONLINE · READ ONLY"
             and win.lbl_motor.text() == "MOTOR ENABLED")
         print("SMOKE %s -> %s" % ("GREEN" if accepted else "RED", out))
         return 0 if accepted else 1

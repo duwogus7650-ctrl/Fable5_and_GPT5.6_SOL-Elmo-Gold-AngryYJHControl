@@ -1,8 +1,26 @@
 """Offline regression tests for complete telemetry authority."""
 
 import pytest
+import threading
+import time
 
 from elmo_link import ElmoLink, TelemetrySnapshotError
+import persistence_audit
+import single_axis_motion
+
+
+class _CommandSpy:
+    """Minimal vendor communication double that records crossed I/O."""
+
+    IsConnected = True
+
+    def __init__(self, responses=None):
+        self.commands = []
+        self.responses = dict(responses or {})
+
+    def SendCommandAnalyzeError(self, command, _response, _error, _timeout_ms):
+        self.commands.append(command)
+        return True, str(self.responses.get(command, "0")), None
 
 
 def _link_with_responses(monkeypatch, responses):
@@ -47,3 +65,150 @@ def test_partial_nonfinite_or_unknown_state_never_returns_snapshot(
 
     with pytest.raises(TelemetrySnapshotError):
         link.read_telemetry()
+
+
+def _observe_only_link(monkeypatch):
+    link = ElmoLink("COM_TEST")
+    spy = _CommandSpy()
+    link._comm = spy
+    monkeypatch.setattr(link, "persistence_unknown_latched", lambda: False)
+    link.enter_observe_only_session()
+    return link, spy
+
+
+@pytest.mark.parametrize("query", [
+    "VR", "SN[4]", "CA[18]", "KP[1]", "PX", "MO", "SO", "VX", "PS", "MF",
+])
+def test_observe_only_transport_allows_bare_queries(monkeypatch, query):
+    link, spy = _observe_only_link(monkeypatch)
+
+    assert link.command(query) == "0"
+    assert spy.commands == [query]
+
+
+@pytest.mark.parametrize("command", [
+    "UM=5", "CA[28]=0", "PX=0", "LD", "RS", "XQ", "SV",
+    "MO=1", "BG", "JV=1", "PA=1", "TC=0.1", "TW[80]=1",
+    "BG[1]", "XQ[1]", "ZZ",
+    "BT", "CP", "DF", "DL", "EI", "EO", "HP", "KL", "KR", "PB", "XC",
+])
+def test_observe_only_transport_blocks_mutation_before_vendor_io(
+        monkeypatch, command):
+    link, spy = _observe_only_link(monkeypatch)
+
+    with pytest.raises(PermissionError, match="observe-only"):
+        link.command(command, allow_motion=True)
+
+    assert spy.commands == []
+
+
+@pytest.mark.parametrize("command", ["ST", "MO=0", "TC=0", "TW[80]=0"])
+def test_observe_only_transport_preserves_safe_shutdown_escape(
+        monkeypatch, command):
+    link, spy = _observe_only_link(monkeypatch)
+
+    assert link.command(command, allow_motion=True) == "0"
+    assert spy.commands == [command]
+
+
+def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
+        monkeypatch):
+    link = ElmoLink("COM_TEST")
+    spy = _CommandSpy({
+        "CA[18]": 65536,
+        "CA[41]": 30,
+        "MO": 0,
+        "SO": 0,
+        "VX": 0,
+        "PS": -2,
+        "MF": 0,
+    })
+    link._comm = spy
+    monkeypatch.setattr(link, "persistence_unknown_latched", lambda: False)
+    link.enter_observe_only_session()
+
+    link.read_telemetry()
+    link.read_motor_params()
+    link.read_feedback()
+    link.read_tuning_gains()
+    link.read_platform_clock()
+    summary = single_axis_motion.read_axis_summary(link)
+    for registers in persistence_audit.PHASE_REGISTERS.values():
+        for register in registers:
+            link.command(register)
+
+    assert summary["errors"] == {}
+    assert spy.commands
+
+
+@pytest.mark.parametrize("action", [
+    lambda link: link.write_motor_params({}, persist=True),
+    lambda link: link.recorder_signals(),
+    lambda link: link._upload_personality("unused.xml"),
+    lambda link: link.record_start(
+        ["Position"], 16, time_resolution=1, sampling_time_us=100.0),
+    lambda link: link.record_upload(),
+])
+def test_observe_only_blocks_direct_vendor_api_before_io(monkeypatch, action):
+    link, spy = _observe_only_link(monkeypatch)
+
+    with pytest.raises(PermissionError, match="observe-only"):
+        action(link)
+
+    assert spy.commands == []
+
+
+def test_observe_only_preserves_recorder_safe_stop_without_pending_io(monkeypatch):
+    link, spy = _observe_only_link(monkeypatch)
+
+    assert link.record_stop() is False
+    assert spy.commands == []
+
+
+def test_observe_only_latch_cannot_race_past_direct_vendor_api_guard(monkeypatch):
+    link = ElmoLink("COM_TEST")
+    link._comm = object()
+    entered = threading.Event()
+    release = threading.Event()
+    latch_done = threading.Event()
+    call_errors = []
+
+    monkeypatch.setattr(link, "_rec_ns", lambda: (object(), object()))
+
+    def blocking_signal_lookup(_names):
+        entered.set()
+        assert release.wait(2.0)
+        raise RuntimeError("intentional test stop before vendor I/O")
+
+    monkeypatch.setattr(link, "_signal_setups", blocking_signal_lookup)
+
+    def run_start():
+        try:
+            link.record_start(
+                ["Position"], 16, time_resolution=1,
+                sampling_time_us=100.0)
+        except Exception as exc:
+            call_errors.append(exc)
+
+    start_thread = threading.Thread(target=run_start)
+    start_thread.start()
+    assert entered.wait(2.0)
+
+    def latch_observe_only():
+        link.enter_observe_only_session()
+        latch_done.set()
+
+    latch_thread = threading.Thread(target=latch_observe_only)
+    latch_thread.start()
+    time.sleep(0.05)
+    assert not latch_done.is_set()
+
+    release.set()
+    start_thread.join(2.0)
+    latch_thread.join(2.0)
+
+    assert not start_thread.is_alive()
+    assert not latch_thread.is_alive()
+    assert latch_done.is_set()
+    assert isinstance(call_errors[0], RuntimeError)
+    assert link.access_mode == "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"

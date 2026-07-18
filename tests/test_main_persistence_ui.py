@@ -62,14 +62,26 @@ def _authoritative_telemetry(win, **overrides) -> dict:
     return sample
 
 
+def _freeze_connection_access_mode(
+        win, mode=app_main.SUPERVISED_ACCESS_MODE) -> None:
+    """Freeze the same one-shot access mode on the UI and active worker."""
+    worker = getattr(win, "worker", None)
+    if worker is None:
+        raise AssertionError("connection admission fixture requires a worker")
+    win._requested_connection_access_mode = mode
+    worker.access_mode = mode
+
+
 def _connected_info(win, *, fw="CURRENT_FW", target_type="Gold Drive") -> dict:
     """Build the complete identity/admission payload emitted by DriveWorker."""
+    _freeze_connection_access_mode(win)
     return {
         "fw": fw,
         "pal": "90",
         "boot": "DSP Boot 1.0.1.6",
         "target_type": target_type,
         "drive_identity": "elmo-sn4-sha256:" + "a" * 64,
+        "access_mode": app_main.SUPERVISED_ACCESS_MODE,
         "persistence_status": _audit_payload(locked=False),
         "initial_telemetry": _authoritative_telemetry(win),
     }
@@ -77,7 +89,9 @@ def _connected_info(win, *, fw="CURRENT_FW", target_type="Gold Drive") -> dict:
 
 def _seed_authoritative_connection(win) -> None:
     """Place a UI test at an already-admitted, fresh MO=0 connection."""
+    _freeze_connection_access_mode(win)
     win._connection_admitted = True
+    win._connection_access_mode = app_main.SUPERVISED_ACCESS_MODE
     win._energizing_state = False
     win._on_telemetry(_authoritative_telemetry(win))
     win._set_connected_ui(True)

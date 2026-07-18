@@ -28,6 +28,7 @@ class _SignalWorker(QtCore.QObject):
 
     connected = QtCore.pyqtSignal(dict)
     telemetry = QtCore.pyqtSignal(dict)
+    feedback = QtCore.pyqtSignal(dict)
     persistence_audit_status = QtCore.pyqtSignal(object)
     autotune_started = QtCore.pyqtSignal()
     velpos_started = QtCore.pyqtSignal()
@@ -36,11 +37,14 @@ class _SignalWorker(QtCore.QObject):
     motion_authority = QtCore.pyqtSignal(bool, str)
     motion_result = QtCore.pyqtSignal(str, object)
 
-    def __init__(self, *, running=True, stop_keeps_running=False):
+    def __init__(
+            self, *, running=True, stop_keeps_running=False,
+            access_mode=app_main.DriveWorker.SUPERVISED_ACCESS_MODE):
         super().__init__()
         self.running = bool(running)
         self.stop_keeps_running = bool(stop_keeps_running)
         self.stop_calls = 0
+        self.access_mode = access_mode
 
     def isRunning(self):
         return self.running
@@ -67,10 +71,12 @@ def ui(qapp, monkeypatch):
     win = app_main.MainWindow()
     worker = _SignalWorker()
     win.worker = worker
+    win._requested_connection_access_mode = worker.access_mode
     win.cmb_port.setCurrentText("COM_TEST")
 
     worker.connected.connect(win._on_connected)
     worker.telemetry.connect(win._on_telemetry)
+    worker.feedback.connect(win._on_feedback)
     worker.persistence_audit_status.connect(win._on_persistence_audit_status)
     worker.autotune_started.connect(win._on_autotune_started)
     worker.velpos_started.connect(win._on_velpos_started)
@@ -106,13 +112,16 @@ def _telemetry(*, sequence=1, received=None, mo=0, valid=True):
     }
 
 
-def _connection_info(initial=None):
-    return {
+def _connection_info(initial=None, *, access_mode=None):
+    if access_mode is None:
+        access_mode = app_main.DriveWorker.SUPERVISED_ACCESS_MODE
+    info = {
         "fw": "Twitter 01.01.16.00",
         "pal": "90",
         "boot": "DSP Boot 1.0.1.6",
         "target_type": "Gold Drive",
         "drive_identity": _IDENTITY,
+        "access_mode": access_mode,
         "initial_telemetry": initial or _telemetry(),
         "persistence_status": {
             "status": "CLEAR",
@@ -125,6 +134,11 @@ def _connection_info(initial=None):
             "ledger_error": None,
         },
     }
+    if access_mode == app_main.DriveWorker.OBSERVE_ONLY_ACCESS_MODE:
+        info["quiescent_state"] = {
+            "MO": 0.0, "SO": 0.0, "VX": 0.0, "PS": -2.0, "MF": 0.0,
+        }
+    return info
 
 
 def _admit_disabled(ui, *, sequence=1):
@@ -289,14 +303,318 @@ def test_replayed_sequence_never_renders_disabled_or_keeps_writes(ui):
 
 def test_mo_one_gate_survives_connected_ui_recalculation(ui):
     _admit_disabled(ui, sequence=1)
+    maintenance = _encoder_maintenance_buttons(ui.win)
     ui.win._on_telemetry(_telemetry(sequence=2, mo=1))
     assert ui.win.lbl_motor.text() == "MOTOR ENABLED"
-    assert not ui.win.btn_zero.isEnabled()
+    assert all(not getattr(ui.win, name).isEnabled()
+               for name in _ORDINARY_MUTATION_CONTROLS)
+    assert all(not button.isEnabled() for button in maintenance)
+    assert not ui.win.motor_type_combo.isEnabled()
+    assert all(not ui.win.motor_fields[name].isEnabled()
+               for name in ("peak", "cont", "maxspeed", "poles"))
 
     ui.win._set_connected_ui(True)
 
     assert ui.win.lbl_motor.text() == "MOTOR ENABLED"
-    assert not ui.win.btn_zero.isEnabled()
+    assert all(not getattr(ui.win, name).isEnabled()
+               for name in _ORDINARY_MUTATION_CONTROLS)
+    assert all(not button.isEnabled() for button in maintenance)
+    assert not ui.win.btn_rec_signals.isEnabled()
+    assert ui.win.btn_motion_stop.isEnabled()
+    assert ui.win.btn_global_stop.isEnabled()
+
+
+def test_observe_only_connection_is_visible_and_locks_every_mutation(ui):
+    maintenance = _encoder_maintenance_buttons(ui.win)
+    ui.worker.access_mode = app_main.DriveWorker.OBSERVE_ONLY_ACCESS_MODE
+    ui.win._requested_connection_access_mode = ui.worker.access_mode
+
+    ui.worker.connected.emit(_connection_info(
+        _telemetry(sequence=1, mo=0),
+        access_mode=app_main.DriveWorker.OBSERVE_ONLY_ACCESS_MODE))
+
+    assert ui.win._ui_connected is True
+    assert ui.win.lbl_state.text() == "ONLINE · READ ONLY"
+    assert all(not getattr(ui.win, name).isEnabled()
+               for name in _ORDINARY_MUTATION_CONTROLS)
+    assert all(not button.isEnabled() for button in maintenance)
+    assert not ui.win.motor_type_combo.isEnabled()
+    assert all(not ui.win.motor_fields[name].isEnabled()
+               for name in ("peak", "cont", "maxspeed", "poles"))
+    assert not ui.win.btn_rec_signals.isEnabled()
+    assert ui.win.btn_axis_refresh.isEnabled()
+    assert ui.win.btn_motion_stop.isEnabled()
+    assert ui.win.btn_global_stop.isEnabled()
+
+
+def test_observe_only_feedback_refresh_keeps_encoder_maintenance_locked(ui):
+    ui.worker.access_mode = app_main.DriveWorker.OBSERVE_ONLY_ACCESS_MODE
+    ui.win._requested_connection_access_mode = ui.worker.access_mode
+    ui.worker.connected.emit(_connection_info(
+        _telemetry(sequence=1, mo=0),
+        access_mode=app_main.DriveWorker.OBSERVE_ONLY_ACCESS_MODE))
+
+    ui.worker.feedback.emit({
+        "sensor_id": 30,
+        "commut_method": 5,
+        "counts_rev": 1 << 20,
+        "pos_socket": "A",
+        "vel_socket": "A",
+        "commut_socket": "A",
+        "params": {},
+    })
+
+    maintenance = _encoder_maintenance_buttons(ui.win)
+    assert maintenance, "EnDat maintenance control was not constructed"
+    assert all(not button.isEnabled() for button in maintenance)
+
+
+def test_enabled_motor_feedback_refresh_keeps_encoder_maintenance_locked(ui):
+    _admit_disabled(ui, sequence=1)
+    ui.worker.telemetry.emit(_telemetry(sequence=2, mo=1))
+    assert ui.win.lbl_motor.text() == "MOTOR ENABLED"
+
+    ui.worker.feedback.emit({
+        "sensor_id": 30,
+        "commut_method": 5,
+        "counts_rev": 1 << 20,
+        "pos_socket": "A",
+        "vel_socket": "A",
+        "commut_socket": "A",
+        "params": {},
+    })
+
+    maintenance = _encoder_maintenance_buttons(ui.win)
+    assert maintenance, "EnDat maintenance control was not constructed"
+    assert all(not button.isEnabled() for button in maintenance)
+
+
+def test_connection_admission_rejects_missing_access_mode(ui):
+    info = _connection_info()
+    info.pop("access_mode")
+
+    ui.worker.connected.emit(info)
+
+    assert ui.worker.stop_calls == 1
+    assert ui.win._ui_connected is False
+    assert ui.win.lbl_state.text() == "OFFLINE"
+
+
+def test_main_window_constructs_observe_only_worker_by_default(
+        qapp, monkeypatch):
+    monkeypatch.setattr(app_main, "list_serial_ports", lambda: ["COM_TEST"])
+    captured = {}
+
+    class WorkerConstructed(Exception):
+        pass
+
+    def capture_worker(port, *args, **kwargs):
+        captured.update({"port": port, "args": args, "kwargs": kwargs})
+        raise WorkerConstructed
+
+    original_worker = app_main.DriveWorker
+    monkeypatch.setattr(app_main, "DriveWorker", capture_worker)
+    win = app_main.MainWindow()
+    win.cmb_port.setCurrentText("COM_TEST")
+    try:
+        with pytest.raises(WorkerConstructed):
+            win.connect_drive()
+    finally:
+        monkeypatch.setattr(app_main, "DriveWorker", original_worker)
+        win.close()
+        qapp.processEvents()
+
+    assert captured["port"] == "COM_TEST"
+    assert captured["kwargs"]["query_only"] is True
+
+
+def test_access_mode_selector_defaults_to_read_only(qapp, monkeypatch):
+    monkeypatch.setattr(app_main, "list_serial_ports", lambda: ["COM_TEST"])
+    win = app_main.MainWindow()
+    try:
+        assert win.cmb_access_mode.currentData() == (
+            app_main.DriveWorker.OBSERVE_ONLY_ACCESS_MODE)
+        assert win.btn_conn.text() == "Connect · Read Only"
+    finally:
+        win.close()
+        qapp.processEvents()
+
+
+def test_supervised_cancel_constructs_no_worker_and_resets_read_only(
+        qapp, monkeypatch):
+    monkeypatch.setattr(app_main, "list_serial_ports", lambda: ["COM_TEST"])
+    constructed = []
+    warnings = []
+
+    def reject_worker(*args, **kwargs):
+        constructed.append((args, kwargs))
+        raise AssertionError("cancel must not construct a worker")
+
+    def cancel_warning(_parent, _title, text, buttons, default):
+        warnings.append((text, buttons, default))
+        return QtWidgets.QMessageBox.StandardButton.Cancel
+
+    original_worker = app_main.DriveWorker
+    monkeypatch.setattr(app_main, "DriveWorker", reject_worker)
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", cancel_warning)
+    win = app_main.MainWindow()
+    win.cmb_port.setCurrentText("COM_TEST")
+    win.cmb_access_mode.setCurrentIndex(
+        win.cmb_access_mode.findData(app_main.SUPERVISED_ACCESS_MODE))
+    try:
+        win.connect_drive()
+
+        assert constructed == []
+        assert warnings
+        warning_text, _buttons, default = warnings[0]
+        assert "does not enable the motor" in warning_text
+        assert "energize or move" in warning_text
+        assert default == QtWidgets.QMessageBox.StandardButton.Cancel
+        assert win.worker is None
+        assert win.cmb_access_mode.currentData() == (
+            app_main.OBSERVE_ONLY_ACCESS_MODE)
+        assert win.cmb_access_mode.isEnabled()
+        assert win.btn_conn.text() == "Connect · Read Only"
+    finally:
+        # Restore the class before processing queued Qt events from previously
+        # closed windows; production admission uses it in an isinstance guard.
+        monkeypatch.setattr(app_main, "DriveWorker", original_worker)
+        win.close()
+        qapp.processEvents()
+
+
+def test_supervised_yes_constructs_write_capable_worker_without_hardware_start(
+        qapp, monkeypatch):
+    monkeypatch.setattr(app_main, "list_serial_ports", lambda: ["COM_TEST"])
+    starts = []
+    warnings = []
+    monkeypatch.setattr(
+        app_main.DriveWorker, "start", lambda worker: starts.append(worker))
+
+    def approve_warning(_parent, _title, text, buttons, default):
+        warnings.append((text, buttons, default))
+        return QtWidgets.QMessageBox.StandardButton.Yes
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "warning", approve_warning)
+    win = app_main.MainWindow()
+    win.cmb_port.setCurrentText("COM_TEST")
+    win.cmb_access_mode.setCurrentIndex(
+        win.cmb_access_mode.findData(app_main.SUPERVISED_ACCESS_MODE))
+    try:
+        win.connect_drive()
+
+        assert warnings
+        assert len(starts) == 1
+        assert starts[0] is win.worker
+        assert win.worker.query_only is False
+        assert win.worker.access_mode == app_main.SUPERVISED_ACCESS_MODE
+        assert win._requested_connection_access_mode == (
+            app_main.SUPERVISED_ACCESS_MODE)
+        assert not win.cmb_access_mode.isEnabled()
+        assert win.btn_conn.text() == "Connecting · Supervised Control"
+    finally:
+        win.worker = None
+        win.close()
+        qapp.processEvents()
+
+
+def test_worker_mode_mismatch_restores_all_connection_selectors(
+        qapp, monkeypatch):
+    monkeypatch.setattr(app_main, "list_serial_ports", lambda: ["COM_TEST"])
+
+    class WrongModeWorker:
+        access_mode = app_main.SUPERVISED_ACCESS_MODE
+
+    original_worker = app_main.DriveWorker
+    monkeypatch.setattr(
+        app_main, "DriveWorker", lambda *_args, **_kwargs: WrongModeWorker())
+    win = app_main.MainWindow()
+    win.cmb_port.setCurrentText("COM_TEST")
+    try:
+        win.connect_drive()
+
+        assert win.worker is None
+        assert win.cmb_port.isEnabled()
+        assert win.cmb_conn.isEnabled()
+        assert win.cmb_access_mode.isEnabled()
+        assert win.btn_conn.isEnabled()
+        assert win.btn_conn.text() == "Connect · Read Only"
+        assert win.lbl_state.text() == "OFFLINE"
+    finally:
+        monkeypatch.setattr(app_main, "DriveWorker", original_worker)
+        win.close()
+        qapp.processEvents()
+
+
+def test_signal_double_cannot_self_attest_access_mode(qapp, monkeypatch):
+    monkeypatch.setattr(app_main, "list_serial_ports", lambda: ["COM_TEST"])
+    win = app_main.MainWindow()
+    worker = _SignalWorker()
+    del worker.access_mode
+    win.worker = worker
+    win._requested_connection_access_mode = None
+    worker.connected.connect(win._on_connected)
+    try:
+        worker.connected.emit(_connection_info(
+            _telemetry(sequence=1, mo=0),
+            access_mode=app_main.SUPERVISED_ACCESS_MODE))
+
+        assert worker.stop_calls == 1
+        assert win._connection_admitted is False
+        assert win._ui_connected is False
+        assert win.lbl_state.text() == "OFFLINE"
+    finally:
+        win.worker = None
+        win.close()
+        qapp.processEvents()
+
+
+@pytest.mark.parametrize(
+    "requested,returned",
+    (
+        (app_main.SUPERVISED_ACCESS_MODE,
+         app_main.OBSERVE_ONLY_ACCESS_MODE),
+        (app_main.OBSERVE_ONLY_ACCESS_MODE,
+         app_main.SUPERVISED_ACCESS_MODE),
+    ),
+    ids=("supervised-to-observe", "observe-to-supervised"),
+)
+def test_connection_admission_rejects_returned_mode_mismatch(
+        ui, requested, returned):
+    ui.worker.access_mode = requested
+    ui.win._requested_connection_access_mode = requested
+
+    ui.worker.connected.emit(_connection_info(
+        _telemetry(sequence=1, mo=0),
+        access_mode=returned))
+
+    assert ui.worker.stop_calls == 1
+    assert ui.win._connection_admitted is False
+    assert ui.win._ui_connected is False
+    assert ui.win.cmb_access_mode.currentData() == (
+        app_main.OBSERVE_ONLY_ACCESS_MODE)
+
+
+@pytest.mark.parametrize("terminal", ("failure", "stop"))
+def test_terminal_connection_exit_resets_access_mode_to_read_only(
+        ui, terminal):
+    ui.win.cmb_access_mode.setCurrentIndex(
+        ui.win.cmb_access_mode.findData(app_main.SUPERVISED_ACCESS_MODE))
+    ui.win.cmb_access_mode.setEnabled(False)
+    ui.win._requested_connection_access_mode = app_main.SUPERVISED_ACCESS_MODE
+    ui.win._connection_access_mode = app_main.SUPERVISED_ACCESS_MODE
+
+    if terminal == "failure":
+        ui.win._on_failed("offline negative-control")
+    else:
+        ui.win._on_stopped()
+
+    assert ui.win._requested_connection_access_mode is None
+    assert ui.win._connection_access_mode is None
+    assert ui.win.cmb_access_mode.currentData() == (
+        app_main.OBSERVE_ONLY_ACCESS_MODE)
+    assert ui.win.cmb_access_mode.isEnabled()
+    assert ui.win.btn_conn.text() == "Connect · Read Only"
 
 
 def test_telemetry_before_connection_admission_never_creates_authority(ui):

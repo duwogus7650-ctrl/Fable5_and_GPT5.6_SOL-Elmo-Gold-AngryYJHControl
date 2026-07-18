@@ -62,6 +62,7 @@ def _connection_info(*, sequence=1, identity=HASHED_ID):
         "boot": "DSP Boot",
         "target_type": "Gold Drive",
         "drive_identity": identity,
+        "access_mode": app_main.SUPERVISED_ACCESS_MODE,
         "initial_telemetry": _telemetry(sequence),
         "persistence_status": {
             "status": "CLEAR",
@@ -74,6 +75,15 @@ def _connection_info(*, sequence=1, identity=HASHED_ID):
             "resolved": False,
         },
     }
+
+
+def _admit_connection(window, worker, info=None):
+    info = _connection_info() if info is None else info
+    access_mode = info["access_mode"]
+    worker.access_mode = access_mode
+    window.worker = worker
+    window._requested_connection_access_mode = access_mode
+    window._on_connected(info)
 
 
 @pytest.fixture(scope="module")
@@ -156,10 +166,9 @@ def test_default_rows_are_exact_allowlist_blank_and_read_only(window, qapp):
 def test_accepted_current_generation_telemetry_updates_without_new_worker_call(
         window, qapp):
     poison = _PoisonWorker()
-    window.worker = poison
     dialog = _open_dialog(window, qapp)
 
-    window._on_connected(_connection_info())
+    _admit_connection(window, poison)
     qapp.processEvents()
 
     snapshot = window.status_monitor_model.snapshot()
@@ -179,9 +188,8 @@ def test_accepted_current_generation_telemetry_updates_without_new_worker_call(
 def test_core_revocation_blanks_monitor_without_losing_session_line_order(
         window, qapp):
     poison = _PoisonWorker()
-    window.worker = poison
     dialog = _open_dialog(window, qapp)
-    window._on_connected(_connection_info())
+    _admit_connection(window, poison)
     before_lines = window.status_monitor_model.config.lines
 
     window._revoke_telemetry_authority("watchdog expired")
@@ -197,9 +205,8 @@ def test_core_revocation_blanks_monitor_without_losing_session_line_order(
 def test_monitor_observer_failure_is_local_and_cannot_revoke_core_authority(
         window, qapp, monkeypatch):
     poison = _PoisonWorker()
-    window.worker = poison
     dialog = _open_dialog(window, qapp)
-    window._on_connected(_connection_info())
+    _admit_connection(window, poison)
 
     def explode(*args, **kwargs):
         raise RuntimeError("injected monitor observer failure")

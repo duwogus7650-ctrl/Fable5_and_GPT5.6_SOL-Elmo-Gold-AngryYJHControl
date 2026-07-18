@@ -18,6 +18,9 @@ class _FakeLink:
     """Small query-capable link with a shutdown-forbidden I/O audit trail."""
 
     def __init__(self, *, disconnect_error: bool = False):
+        # These shutdown races queue mutation-capable jobs deliberately, so
+        # their fake transport must attest the supervised mode explicitly.
+        self.access_mode = app_main.DriveWorker.SUPERVISED_ACCESS_MODE
         self.disconnect_error = bool(disconnect_error)
         self.forbidden_after_stop_io: list[tuple[str, object]] = []
         self.disconnect_attempted = False

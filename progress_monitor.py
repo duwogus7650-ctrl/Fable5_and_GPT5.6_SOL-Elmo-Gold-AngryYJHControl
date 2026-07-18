@@ -113,7 +113,7 @@ class ProgressMonitor(QtWidgets.QMainWindow):
         super().__init__()
         self.status_path = Path(status_path).resolve()
         self.feed_valid = False
-        self.setWindowTitle("AngryYJH · Quick + Single Axis Monitor")
+        self.setWindowTitle("AngryYJH · Tuning + Single Axis Monitor")
         self.resize(900, 720)
         self.setMinimumSize(720, 520)
 
@@ -125,10 +125,11 @@ class ProgressMonitor(QtWidgets.QMainWindow):
 
         header = QtWidgets.QHBoxLayout()
         title_col = QtWidgets.QVBoxLayout()
-        title = QtWidgets.QLabel("GOLD TWITTER QUICK + SINGLE AXIS")
+        title = QtWidgets.QLabel(
+            "GOLD TWITTER · QUICK / EXPERT / SINGLE AXIS")
         title.setObjectName("title")
         subtitle = QtWidgets.QLabel(
-            "OFFLINE HARDEN → FIELD GATES → SUPERVISED VALIDATION")
+            "READ-ONLY SAFETY → EAS MAPPING → OFFLINE IMPLEMENTATION")
         subtitle.setObjectName("subtitle")
         title_col.addWidget(title)
         title_col.addWidget(subtitle)
@@ -144,13 +145,13 @@ class ProgressMonitor(QtWidgets.QMainWindow):
         progress_grid.setHorizontalSpacing(12)
         progress_grid.setVerticalSpacing(8)
         self.scope_label = QtWidgets.QLabel(
-            "SCOPED PLAN · QUICK TUNING + FINITE PTP")
+            "PLAN COVERAGE · QUICK TUNING + SINGLE AXIS + EXPERT TUNING")
         progress_grid.addWidget(self.scope_label, 0, 0)
         self.scope_bar = QtWidgets.QProgressBar()
         self.scope_bar.setRange(0, 100)
         progress_grid.addWidget(self.scope_bar, 0, 1)
         self.offline_label = QtWidgets.QLabel(
-            "SOFTWARE / OFFLINE READINESS · PROVISIONAL")
+            "OFFLINE IMPLEMENTATION · IN PROGRESS · PROVISIONAL")
         progress_grid.addWidget(self.offline_label, 1, 0)
         self.offline_bar = QtWidgets.QProgressBar()
         self.offline_bar.setRange(0, 100)
@@ -173,7 +174,7 @@ class ProgressMonitor(QtWidgets.QMainWindow):
         self.updated.setObjectName("footer")
         footer.addWidget(self.updated)
         footer.addStretch(1)
-        scope = QtWidgets.QLabel("PROJECT-LOCAL · NO DRIVE I/O")
+        scope = QtWidgets.QLabel("PROJECT-LOCAL · NO MOTOR DRIVE")
         scope.setObjectName("safe")
         footer.addWidget(scope)
         root.addLayout(footer)
@@ -238,7 +239,7 @@ class ProgressMonitor(QtWidgets.QMainWindow):
         assert parsed.values is not None
         self.feed_valid = True
         self.scope_bar.setValue(parsed.values["scope_progress"])
-        self.scope_bar.setFormat("%p% · SCOPE FROZEN")
+        self.scope_bar.setFormat("%p% · PLAN MAPPED")
         self.offline_bar.setValue(parsed.values["offline_progress"])
         self.offline_bar.setFormat("%p% · PROVISIONAL")
         field_progress = parsed.values["field_progress"]
@@ -280,7 +281,7 @@ class ProgressMonitor(QtWidgets.QMainWindow):
 
 def main() -> int:
     app = QtWidgets.QApplication(sys.argv)
-    app.setApplicationName("Quick + Single Axis Monitor")
+    app.setApplicationName("Tuning + Single Axis Monitor")
     window = ProgressMonitor()
     window.show()
     if "--smoke" in sys.argv:
@@ -295,7 +296,7 @@ def main() -> int:
         assert window.state.text() == "STATUS FEED ACTIVE"
         assert (window.scope_bar.value(), window.offline_bar.value(),
                 window.field_bar.value()) == expected_values
-        assert window.scope_bar.format() == "%p% · SCOPE FROZEN"
+        assert window.scope_bar.format() == "%p% · PLAN MAPPED"
         assert window.offline_bar.format() == "%p% · PROVISIONAL"
         if expected_values[2] == 0:
             assert window.field_bar.format() == "NEED-DATA · LIVE NOT RUN"

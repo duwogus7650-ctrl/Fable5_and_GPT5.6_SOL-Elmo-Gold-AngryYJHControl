@@ -1,102 +1,114 @@
-<!-- scope_progress: 100 -->
-<!-- offline_progress: 95 -->
-<!-- field_progress: 0 -->
-<!-- progress_basis: scope=frozen; offline=full-suite and independent review green for the current dirty tree, with commit/runtime/hardware admission separate; field=NEED-DATA because this revision has no supervised hardware run; percentages are not safety scores -->
+<!-- scope_progress: 85 -->
+<!-- offline_progress: 79 -->
+<!-- field_progress: 5 -->
+<!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter Quick Tuning + 제한형 단일축 모니터
+# Gold Twitter · Quick + Single Axis + Expert Candidate Lab v1
 
-상세 인계: [`../docs/current-scope-handoff.md`](../docs/current-scope-handoff.md)<br>
-상태: **OFFLINE HARDENED CANDIDATE · HARDWARE USE BLOCKED · PRIVATE DRAFT**<br>
-업데이트: 2026-07-17 KST
+상태: **IN PROGRESS · CONTROL APP OFFLINE · EAS UI MAPPED / UNCONNECTED · READ-ONLY FIELD SESSION CLOSED**<br>
+업데이트: **2026-07-18 15:09 KST**
 
-## 현재 기준점
+## 현재 기준
 
 - 브랜치: `codex/quick-single-axis-handoff`
-- 기준 HEAD: `d572e4b964f61c7ba2a9f951cd7acbac81e61a5d`
-- 상태: 소스·테스트·문서가 수정된 **uncommitted working tree**. commit/push는 하지 않았다.
-- 이번 작업에서 DLL, drive 연결, 통전, 모션, `SV`, visible main GUI smoke를 실행하지 않았다.
-- 읽기 전용 진행 모니터 PID 16324는 한글 Markdown 표시 수정 코드를 로드한 별도 프로세스로 유지한다.
-  PID는 재실행 때 달라질 수 있다.
-- 제어창은 사용자가 넘겨주면 화면/상태부터 읽는다. 명시적 승인 전에는 연결 변경이나 motor command를
-  보내지 않는다.
+- 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
+- 작업 대상: 위 기준에서 누적한 Quick/Single Axis/Expert·안전 경계 변경
+- 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
+  1366×820, page-scroll reset, Quick/Expert 공통 제어와 Expert offline/locked 표시를
+  실제 실행창에서 재확인
+- EAS: 설치본을 실행해 **drive 미연결** 상태에서 Quick Automatic Tuning,
+  Expert Tuning tree, Motion - Single Axis 화면 구조를 직접 관찰. Connect/Enable/Run/Apply/Save는
+  누르지 않았고 직접 장비 식별자는 문서에서 제외
+- 사용자 현장 복귀: 실기 준비는 가능하지만, 현재 working tree로 모터 동작은 아직 실행하지 않음
+- Read Only 입장: 펌웨어/PAL/boot/target-class 표시와 `MO=0`, `SO=0`, `MF=0`,
+  `VX=0`, active current `0 A`, position error `0`을 현재 세션에서 관찰
 
-## 현재 production 권한
+## 검증 상태
 
-- P1 전류 식별·설계 후보와 P2 속도/위치 식별·설계 후보를 계산하는 코드가 있다. 이 경로는
-  통전/회전을 포함하므로 최신 리비전의 감독 실기 전에는 실행하지 않는다.
-- `Verify Installed P2 on Motor`는 현재 설치 게인만 판정한다. current-generation commutation
-  signature와 durable `P2_LIMITS` transaction을 요구하며 Apply/Save 권한을 만들지 않는다.
-- Motor profile은 first-assignment WAL → RAM apply/readback → rollback 또는 단일 `SV`의 bounded
-  transaction을 가진다. 최신 흐름은 아직 감독 실기 전이다.
-- `FINITE_PTP_LIVE_ENABLED=False`: 제한형 finite PTP는 backend/test만 있고 production live 실행은 잠겨 있다.
+- `OBSERVED` 최신 전체 오프라인 suite: **1335 passed, 0 failed in 177.92s**
+- `OBSERVED` 집중 연결·텔레메트리·모니터·테마 회귀: **204 passed**
+- `OBSERVED` 1366×820 세 테마 레이아웃 회귀: **33 passed**
+- `OBSERVED` 독립 리뷰의 access-mode 증거 누락·복구 잠금·자기서명 경로 3건:
+  RED 재현 후 수정, 음성 대조 **3 passed**
+- `OBSERVED` 실패 이력: 강화된 access-mode 계약 직후 **1285 passed / 44 failed**였고,
+  생산 경계를 완화하지 않은 채 기존 test double에 의도 모드를 명시하여 위 전체 GREEN으로 복구
+- `OBSERVED` `git diff --check`: exit 0. 출력은 기존 LF→CRLF 변환 경고뿐
+- `OBSERVED` 현재 working tree Read Only 최종 세션 로그: **12 events · 0 dropped**,
+  마지막 이벤트 `connection.closed · worker stopped`,
+  `evidence_class=HOST_OBSERVED_NOT_DRIVE_HISTORY`,
+  SHA-256 `C8E818BBF8690A14DC88503E3A2838EE448D3B336A18FE57E7C8E3BC8025CF7A`
+- `OBSERVED` 위 세션에서 telemetry authority가 비활성 상태로 잠시 해제된 뒤 복구됨.
+  당시 `energizing=false`; 복구 후 `motor_enabled=false`
+- `OBSERVED/DERIVED` sequence 690–694는 host-source age가
+  `1514.2 / 1295.3 / 1077.4 / 859.9 / 639.8 ms`로 모두 0.5 s source-age gate를
+  초과해 fail-closed 거부됨. 약 1.5 s UI queue backlog의 직접 유발 동작은 `UNVERIFIED`
+- `OBSERVED` 페이지 전환 뒤 공용 스크롤 값 `923` 잔류를 RED로 재현하고,
+  실제 페이지가 바뀔 때만 새 페이지 원점으로 초기화. 집중 회귀 **67 passed**
+- `OBSERVED` Disconnect/창 닫기 즉시 authority를 폐기하고 late
+  telemetry/connected/failed에도 `DISCONNECTING`과 선택기 잠금을 유지하도록 수정.
+  직접 영향 **169 passed**, 추가 UI/safety **182 passed**, 독립 재검토 **102 passed**
+- `OBSERVED` 최신 runtime smoke: System 하단에서 Status로 전환했을 때
+  `FAULT / STATUS / SESSION LOG` 상단이 즉시 보였고, Expert Candidate Lab은
+  `OFFLINE MODEL · NO DRIVE I/O`, Apply/Save `LOCKED`; hardware Run/Verify는 OFFLINE disabled
+- `OBSERVED` EAS 미연결 UI baseline:
+  Quick 6단계, Expert의 Limits/Protections·Current·Commutation·Velocity/Position·Scheduling,
+  Single Axis의 I/O·STO·UM·Current/Stepper/Sine·PTP·Terminal·Recorder 구조를 직접 매핑
 
-## 명시적으로 잠긴 기능
+## 구현된 범위
 
-- **P1/P2 gain Apply/Save:** durable pre-assignment gain-trial WAL이 없어 UI/domain/worker 경계에서
-  drive I/O 전에 거부한다. trial state machine은 exact `SYNTHETIC_NO_HARDWARE` 회귀 전용이다.
-- **P1 Save:** 위 WAL 외에도 real session-bound on-motor verifier가 없다.
-- **Feedback direct save:** versioned write/type/range/side-effect/rollback registry 전까지 잠긴다.
-- **finite PTP live:** site motion envelope, limit, 정지거리, 독립 E-stop/STO evidence 전까지 잠긴다.
+- **Read Only 기본 연결**
+  - link 생명주기 단방향 observe-only latch
+  - allowlisted query + software safe-shutdown만 허용
+  - `MO=SO=VX=MF=0`, `PS=-2/-1` 정지상태 2회 일치 입장
+  - requested / transport / returned access mode 3방향 일치
+- **Supervised Control 연결**
+  - 연결별 1회 확인, 기본값 Cancel
+  - 연결 자체는 Enable·모션·커뮤테이션·튜닝·`PX=0`·쓰기·`SV` 승인이 아님
+  - mutation UI는 fresh telemetry + supervised mode + `MO=0` 필요
+- **Quick Tuning**
+  - P1 / commutation signature / P2 / Verify / Abort가 Quick과 Expert에서 공통 표시
+  - Apply/Save는 계속 `NEED-DATA` 잠금
+- **Single Axis**
+  - finite-PTP 오프라인 backend는 MODEL 검증
+  - live PTP는 기계 envelope·limit·정지거리·독립 E-stop/STO 근거 전까지 `NEED-DATA`
+- **Expert Candidate Lab v1**
+  - 전류루프 후보 계산과 read-only Bode 미리보기는 LOCAL MODEL
+  - EAS Expert 전체 패리티, P2·필터·스케줄링은 미구현/잔여
+- **UI lifecycle 안전 보완**
+  - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
+  - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
+  - 현재 worker의 `stopped` 뒤에만 `OFFLINE`과 연결 선택기 복구
+- **EAS 미연결 UI inventory**
+  - Quick 6단계 명칭/순서가 현재 guided flow와 일치
+  - Expert의 User Units·limits/protection·I/O·settling·scheduling·time verification·Summary는 잔여
+  - Single Axis의 I/O/STO·mode별 수동 구동·Terminal·docked Recorder parity는 잔여
+- **Elmo 자료 인벤토리**
+  - 신규 폴더 59개 파일과 SHA-256 기록
+  - `Version 1.1.16.0 B01 for customers.zip` 안의 `NGDrive 01.01.16.00 08Mar2020B01G.gabs` 파일명 일치 확인
+  - B01/B01G 의미와 flashing 적합성은 `NEED-DATA`; flashing 승인 아님
 
-## 닫은 소프트웨어 finding
+## 남은 예상 시간
 
-1. P2 Verify는 current-generation commutation signature token을 UI/worker/algorithm payload까지 결속한다.
-2. P1 임시 구성은 첫 assignment 전에 durable `P1_CONFIG` WAL을 만들고, bounds/type/exact restore를
-   검증한다. forward와 원본 rollback 권한은 `MO/SO/VX=0` link proof 뒤의 단방향 transition으로
-   분리되며, restore 불확실성은 `UNKNOWN`으로 남긴다. 원시 snapshot은 `Decimal`로 먼저 판정해
-   sub-ULP 반올림값이 WAL 원본이 되는 것을 막는다.
-3. P2 `SD/HL[2]/LL[2]/ER[2]`는 첫 assignment 전 durable `P2_LIMITS` WAL, full-set exact readback,
-   enable 전 proof, proof 뒤 limit 동결, safe-state 뒤 단방향 original rollback, full restore 또는
-   `UNKNOWN` 계약을 가진다. limit 명령·snapshot·되읽기는 binary float 변환 전에 exact
-   integer/signed-32 계약을 검증한다.
-4. P1 Save는 UI/worker/domain/transport에서 잠겼고, P1/P2 새 hardware gain trial 자체도 pre-I/O 잠겼다.
-5. STOP/Abort cancellation token이 queue pop 뒤에도 telemetry·handler·algorithm까지 유지되어 stale 작업이
-   새 세대를 오염시키지 않는다.
-6. Motor `UNKNOWN`의 `phase=MOTOR`, `record_id`, ledger 상태가 worker 시작 시 보존되어 query-only audit가
-   영구적으로 막히지 않는다.
+| 작업 | 남은 예상 |
+|---|---:|
+| 최신 앱 OFFLINE smoke 후 문서 closeout | **0.25–0.5시간** |
+| EAS 미연결 매핑 정리 + 무구동 상태/세부 페이지 비교 | **2–4시간** |
+| Expert vNext P2·필터·스케줄링 오프라인 구현 | **7–12시간** |
+| 통합 문서·독립 재검토 | **2–3시간** |
 
-독립 안전 검토는 위 변경 뒤 **Critical/Important 잔여 안전 finding 없음**으로 판정했다. 최신 문서와
-전체 suite를 대상으로 한 독립 integration review도 **blocking finding 없음**으로 종료됐다.
+**실기 검증 제외 잔여:** 약 **12–21 집중시간 / 2–3 작업일**.<br>
+전체 EAS 패리티나 vendor 비공개 알고리즘의 동일 복제는 별도 범위이며 현재 신뢰 가능한 ETA를 제시하지 않음.
 
-## 최신 오프라인 증거
+## 다음 자동 진행
 
-- 전체 최신 suite: **1206 passed, 1 skipped in 79.24s**
-- 독립 reviewer 전체 재실행: **1185 passed, 1 skipped in 83.09s**
-- 핵심 8-file 회귀: **629 passed, 1 skipped in 45.79s**
-  - P1/P2 domain, persistence audit/lifecycle, worker/UI, energy shutdown/cancellation, operation catalog
-- progress monitor 한글 Markdown 회귀: 수정 전 **1 failed** 재현 → 수정 뒤 **26 passed**,
-  actual-status smoke **100/95/0 · Korean text preserved**
-- P1_CONFIG/P2_LIMITS forward/rollback 권한 분리와 exact audit 회귀: **536 passed, 1 skipped**
-- sub-ULP/underflow 명령·snapshot·readback 경계 회귀: **23 passed**
-- skip 1건은 CLR/vendor DLL이 없는 오프라인 환경의 명시적 분기다.
-- Motor startup recovery 재현은 수정 전 worker/UI 모두 실패했고, 수정 뒤 **2 passed**다.
-- gain catalog 계약은 수정 전 `IMPLEMENTED`로 실패했고, `NEED_DATA` + installed-signature gate 수정 뒤
-  **3 passed**다.
-- 내장 P1 smoke는 수정 전 stale Apply 기대에서 exit 1을 재현했고, media-free 회귀 추가 뒤 **1 passed**다.
-- 변경 Python compile/AST와 `git diff --check`는 성공했다. diff check 출력은 기존 LF→CRLF 경고뿐이다.
-- 이 결과는 mock/simulation/offscreen 경로만 증명한다. hardware safety·성능·실제 정지거리를 증명하지 않는다.
+1. EAS UI inventory를 operation catalog의 구현/잠금 상태와 항목별 대조
+2. Single Axis read-only I/O/STO 상태 모델과 Expert vNext P2·scheduling을 OFFLINE 우선 설계
+3. 현장 gate가 충족된 개별 동작만 별도 확인 후 제한 실기
 
-## 오프라인 closeout
+## 현장 안전 규칙
 
-- 문서/UI 계약, compile/AST, diff integrity, 전체 suite, 독립 안전·통합 review를 최신 dirty tree에서
-  완료했다.
-- commit/push/PR은 하지 않았다. 사용자가 명시적으로 요청할 때만 수행한다.
-- 제어 프로그램 runtime 통합과 hardware admission은 아래 현장 gate에 속하며 offline GREEN에 포함하지 않는다.
-
-## 현장 검증 게이트 — `NEED-DATA`
-
-- exact model/part number, firmware/PAL, target identity와 connection generation
-- 물리 이동 범위, 출력축 환산, 안전한 +/− 방향
-- FLS/RLS/STOP 배선·극성·drive mapping과 양방향 작동 증거
-- 최악 통신/샘플 지연을 포함한 정지거리와 여유거리
-- 독립 E-stop/STO, 부하 낙하/브레이크/구속 조건
-- 저에너지 감독 P1/commutation/P2 transcript와 abort/comms-loss/reconnect/냉간 audit
-
-위 항목 전에는 `field_progress`를 올리지 않고 hardware use/live motion 잠금을 해제하지 않는다.
-
-## 지표 해석
-
-- **범위 100:** 이번 목표가 Quick Tuning + 제한형 Single Axis로 고정됐다는 뜻이다.
-- **오프라인 95:** 현재 dirty tree의 fail-closed 변경, 전체 suite와 독립 검토가 끝났다는 표시다.
-  commit 여부, hardware 안전 확률이나 전체 EAS 구현률이 아니다.
-- **실기 0 / NEED-DATA:** 최신 dirty tree를 hardware에서 실행하지 않았다는 뜻이다.
+1. 우리 앱과 EAS를 동시에 같은 드라이브에 연결하지 않음
+2. 연결은 모터 동작 승인이 아님
+3. 실제 Enable·커뮤테이션·튜닝·영점·PTP·쓰기·저장은 해당 단계 직전의 별도 확인 필요
+4. software STOP은 독립 STO/E-stop이 아니며 현장 E-stop/STO가 즉시 사용 가능해야 함
+5. field 결과는 exact revision·identity·조건·raw transcript가 있을 때만 계산

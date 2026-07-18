@@ -13,6 +13,7 @@ from __future__ import annotations
 import os
 import sys
 import glob
+import functools
 import hashlib
 import json
 import math
@@ -258,6 +259,22 @@ def _load_assembly():
 _MOTION_PREFIXES = ("MO=1", "BG", "JV", "PA", "PR", "PT", "PVT", "TC", "MI")
 _NON_MO_MOTION_PREFIXES = tuple(
     prefix for prefix in _MOTION_PREFIXES if prefix != "MO=1")
+_OBSERVE_ONLY_SCALAR_QUERIES = frozenset((
+    # Connection identity and the exact telemetry/safety/axis-summary reads
+    # used by the observe-only worker.  Unknown two-letter tokens fail closed.
+    "AC", "DC", "FS", "ID", "IQ", "MC", "MF", "MO", "MS", "PE",
+    "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TS", "UM", "VB",
+    "VP", "VR", "VX",
+))
+_OBSERVE_ONLY_INDEXED_QUERY_BASES = frozenset((
+    # Finite register families used by Motor/Feedback/Tuning/Axis summaries
+    # and identity-bound persistence audits.  An assignment still fails the
+    # parser before this allowlist is considered.
+    "AD", "AG", "AR", "AS", "BP", "CA", "CL", "DV", "ER", "FC",
+    "HL", "KI", "KP", "LL", "OV", "PL", "SC", "SE", "SF", "SN",
+    "TW", "VH", "VL", "WS", "XM", "XP",
+))
+_OBSERVE_ONLY_INDEXED_QUERY = re.compile(r"^([A-Z]{2})\[(\d+)\]$")
 
 
 def _command_guard_core(cmd: str) -> str:
@@ -312,6 +329,28 @@ def _is_safe_deenergizing_command(core: str) -> bool:
             value = _finite_decimal(core[len(prefix):])
             return value is not None and value == Decimal(0)
     return False
+
+
+def _is_observe_only_query(core: str) -> bool:
+    """Recognize only the finite register families this app reads."""
+    if core in _OBSERVE_ONLY_SCALAR_QUERIES:
+        return True
+    match = _OBSERVE_ONLY_INDEXED_QUERY.fullmatch(core)
+    return bool(
+        match
+        and match.group(1) in _OBSERVE_ONLY_INDEXED_QUERY_BASES)
+
+
+def _supervised_vendor_api(operation: str):
+    """Serialize a direct vendor call with its access-mode adjudication."""
+    def decorate(method):
+        @functools.wraps(method)
+        def guarded(self, *args, **kwargs):
+            with self._persistence_command_lock:
+                self._require_supervised_vendor_api(operation)
+                return method(self, *args, **kwargs)
+        return guarded
+    return decorate
 
 
 def _to_num(s: str):
@@ -495,8 +534,43 @@ class ElmoLink:
         self._personality_provenance = {}
         self._connected_drive_identity = None
         self._recorder_recovery_record = None
+        # One-way, object-lifetime latch.  Once selected, no caller can recover
+        # write authority by reconnecting or by passing allow_motion=True.
+        self._observe_only_session = False
         self._refresh_persistence_state()
         self._refresh_recorder_recovery_state()
+
+    def enter_observe_only_session(self):
+        """Irreversibly restrict this link object to queries and safe shutdown.
+
+        The latch is intentionally settable before ``connect()`` and survives
+        disconnect/reconnect on the same object.  A write-capable session
+        requires constructing a different link through a separately supervised
+        workflow.
+        """
+        with self._persistence_command_lock:
+            self._observe_only_session = True
+        return "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"
+
+    @property
+    def access_mode(self) -> str:
+        return (
+            "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"
+            if self._observe_only_session else "SUPERVISED_CONTROL")
+
+    def _require_supervised_vendor_api(self, operation: str) -> None:
+        """Reject non-textual vendor APIs in an observe-only session.
+
+        ``command()`` has its own conservative query parser, but Recorder and
+        Personality operations call the vendor library directly.  Keep the
+        object-lifetime access-mode latch authoritative at that boundary too;
+        safe shutdown remains available through ``record_stop()``,
+        ``disconnect()``, and the textual de-energizing escape commands.
+        """
+        if self._observe_only_session:
+            raise PermissionError(
+                "observe-only session blocked direct vendor API before "
+                "vendor I/O: %s" % operation)
 
     def _ns(self):
         _load_assembly()
@@ -1318,6 +1392,12 @@ class ElmoLink:
         is_sv = core == "SV"
         is_motion = _is_motion_command(core)
         safe_deenergizing = _is_safe_deenergizing_command(core)
+        if (self._observe_only_session
+                and not safe_deenergizing
+                and not _is_observe_only_query(core)):
+            raise PermissionError(
+                "observe-only session blocked command before vendor I/O: %r"
+                % cmd)
         persistence_unknown = self.persistence_unknown_latched()
         prepared = self._persistence_record
         authorized_sv = bool(
@@ -1677,6 +1757,7 @@ class ElmoLink:
             out["fs_counts"] = None
         return out
 
+    @_supervised_vendor_api("write_motor_params")
     def write_motor_params(self, writes: dict, persist: bool = True,
                            expected_ca18=None):
         """Serialize one complete Motor transaction on this communication link."""
@@ -2083,6 +2164,7 @@ class ElmoLink:
         except Exception:
             return str(err)
 
+    @_supervised_vendor_api("CreatePersonalityModel")
     def _try_create_personality(self, path):
         """CreatePersonalityModel(path): PARSES an existing XML (live-confirmed;
         LibEC=8 if missing).  Returns the populated model or None (+ error)."""
@@ -2102,6 +2184,7 @@ class ElmoLink:
             self._last_recorder_error = "CreatePersonalityModel: %r" % (e,)
             return None
 
+    @_supervised_vendor_api("UploadPersonality")
     def _upload_personality(self, path, timeout_s: float = 60.0,
                             poll_s: float = 0.1) -> bool:
         """Upload the personality XML FROM the drive to `path` (live-confirmed
@@ -2302,6 +2385,7 @@ class ElmoLink:
             self._dump_recorder_signals(model)
         return model
 
+    @_supervised_vendor_api("recorder_signals")
     def recorder_signals(self):
         """list[str] of recordable signal names from the personality, or None.
         (None => autotune P4 RED '레코더 신호목록 확보 실패' — honest, pre-power.)"""
@@ -2333,6 +2417,7 @@ class ElmoLink:
             raise KeyError("signals not in personality: %s" % missing)
         return [lookup[n] for n in names]
 
+    @_supervised_vendor_api("record_start")
     def record_start(
             self, signals, length, time_resolution: int = 1,
             *, sampling_time_us=None):
@@ -2436,6 +2521,7 @@ class ElmoLink:
             return "OFF"
         return "UNKNOWN:%s" % status
 
+    @_supervised_vendor_api("record_upload")
     def record_upload(self) -> dict:
         """Upload one completed capture without waiting and clear it on success."""
         import numpy as np
@@ -2563,6 +2649,7 @@ class ElmoLink:
         personality SignalIndex (LIVE-CONFIRMED on run #4).
         dt: TimeResolution × configured/read-back SamplingTime(=TS µs) × 1e-6,
         per the official DriveDotNetRecording example."""
+        self._require_supervised_vendor_api("record_fetch")
         import time as _time
         import numpy as np
         if not getattr(self, "_rec_pending", None):

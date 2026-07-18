@@ -60,11 +60,13 @@ class _HandshakeLink:
     """Offline link double for the worker's initial identity handshake."""
 
     def __init__(self, *, fw="firmware", pal="90", boot="boot",
-                 identity="elmo-sn4-sha256:" + "a" * 64):
+                 identity="elmo-sn4-sha256:" + "a" * 64,
+                 access_mode=DriveWorker.SUPERVISED_ACCESS_MODE):
         self.values = {"VR": fw, "VP": pal, "VB": boot}
         self.identity = identity
         self.commands = []
         self.disconnected = False
+        self.access_mode = access_mode
 
     def connect(self):
         return True
@@ -108,6 +110,192 @@ class _HandshakeLink:
 
     def disconnect(self):
         self.disconnected = True
+
+
+class _ObserveOnlyHandshakeLink(_HandshakeLink):
+    """Command-spy fixture for unattended, query-only connection admission."""
+
+    def __init__(self, **state):
+        super().__init__(
+            access_mode=DriveWorker.OBSERVE_ONLY_ACCESS_MODE)
+        self.values.update({
+            "MO": 0, "SO": 0, "VX": 0, "PS": -2, "MF": 0,
+        })
+        self.values.update(state)
+        self.events = []
+
+    def enter_observe_only_session(self):
+        self.events.append("observe-only")
+        return "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"
+
+    def connect(self):
+        self.events.append("connect")
+        return True
+
+    def read_telemetry(self):
+        return _full_disabled_telemetry()
+
+
+def test_query_only_worker_latches_transport_before_connect_and_requires_two_sweeps(
+        monkeypatch):
+    link = _ObserveOnlyHandshakeLink()
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    worker = DriveWorker("COM_TEST", query_only=True)
+    connected, failed = [], []
+
+    def stop_after_admission(info):
+        connected.append(info)
+        worker.stop()
+
+    worker.connected.connect(stop_after_admission)
+    worker.failed.connect(failed.append)
+    worker.run()
+
+    assert failed == []
+    assert len(connected) == 1
+    assert link.events[:2] == ["observe-only", "connect"]
+    safety_sweep = ["MO", "SO", "VX", "PS", "MF"]
+    assert link.commands[:10] == safety_sweep * 2
+    assert connected[0]["access_mode"] == "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"
+    assert connected[0]["quiescent_state"] == {
+        "MO": 0.0, "SO": 0.0, "VX": 0.0, "PS": -2.0, "MF": 0.0,
+    }
+
+
+def test_worker_rejects_transport_access_mode_mismatch_before_connect(
+        monkeypatch):
+    link = _ObserveOnlyHandshakeLink()
+    link.access_mode = DriveWorker.SUPERVISED_ACCESS_MODE
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    worker = DriveWorker("COM_TEST", query_only=True)
+    connected, failed = [], []
+    def stop_if_bad_mode_was_missed(info):
+        connected.append(info)
+        worker.stop()
+
+    worker.connected.connect(stop_if_bad_mode_was_missed)
+    worker.failed.connect(failed.append)
+
+    worker.run()
+
+    assert connected == []
+    assert failed
+    assert "access mode" in failed[0].lower()
+    assert link.events == ["observe-only"]
+
+
+def test_worker_rejects_missing_transport_access_mode_before_connect(
+        monkeypatch):
+    link = _ObserveOnlyHandshakeLink()
+    del link.access_mode
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    worker = DriveWorker("COM_TEST", query_only=True)
+    connected, failed = [], []
+
+    def stop_if_missing_mode_was_accepted(info):
+        connected.append(info)
+        worker.stop()
+
+    worker.connected.connect(stop_if_missing_mode_was_accepted)
+    worker.failed.connect(failed.append)
+
+    worker.run()
+
+    assert connected == []
+    assert failed
+    assert "access mode" in failed[0].lower()
+    assert link.events == ["observe-only"]
+
+
+def test_supervised_worker_failure_message_is_mode_accurate(monkeypatch):
+    link = _HandshakeLink(fw=None)
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    worker = DriveWorker("COM_TEST", query_only=False)
+    failed = []
+    worker.failed.connect(failed.append)
+
+    worker.run()
+
+    assert failed
+    assert failed[0].startswith("Supervised connection admission failed:")
+
+
+@pytest.mark.parametrize("unsafe", [
+    {"MO": 1},
+    {"SO": 1},
+    {"VX": 1},
+    {"PS": 0},
+    {"MF": 1},
+])
+def test_query_only_worker_rejects_non_quiescent_drive_before_identity_queries(
+        monkeypatch, unsafe):
+    link = _ObserveOnlyHandshakeLink(**unsafe)
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    worker = DriveWorker("COM_TEST", query_only=True)
+    connected, failed = [], []
+    worker.connected.connect(connected.append)
+    worker.failed.connect(failed.append)
+
+    worker.run()
+
+    assert connected == []
+    assert failed and "quiescent" in failed[0].lower()
+    assert link.disconnected is True
+    assert "VR" not in link.commands
+
+
+def test_query_only_worker_rejects_changed_second_safety_sweep(monkeypatch):
+    class ChangedSweepLink(_ObserveOnlyHandshakeLink):
+        def __init__(self):
+            super().__init__()
+            self._ps_reads = 0
+
+        def command(self, command, **kwargs):
+            if command == "PS":
+                self._ps_reads += 1
+                self.values["PS"] = -2 if self._ps_reads == 1 else -1
+            return super().command(command, **kwargs)
+
+    link = ChangedSweepLink()
+    monkeypatch.setattr(app_main, "ElmoLink", lambda _port: link)
+    worker = DriveWorker("COM_TEST", query_only=True)
+    connected, failed = [], []
+    worker.connected.connect(connected.append)
+    worker.failed.connect(failed.append)
+
+    worker.run()
+
+    assert connected == []
+    assert failed and "changed between safety sweeps" in failed[0]
+    assert link.disconnected is True
+    assert "VR" not in link.commands
+
+
+@pytest.mark.parametrize("kind", [
+    "motor_write", "feedback_write", "motion_move", "recorder_start",
+    "recorder_discover", "recorder_upload", "autotune", "velpos",
+    "verify_vp", "soft_zero", "encoder_maint", "p1_trial_begin",
+    "p1_trial_restore", "p1_trial_commit", "vp_trial_begin",
+    "vp_trial_restore", "vp_trial_commit",
+])
+def test_query_only_worker_job_guard_rejects_every_non_observer_job(kind):
+    worker = DriveWorker("COM_TEST", query_only=True)
+    worker._connection_identity_verified = True
+    worker._record_fresh_telemetry(_full_disabled_telemetry())
+
+    allowed, detail = worker._trial_job_guard(kind, {})
+
+    assert not allowed
+    assert "observe-only" in detail
+
+
+@pytest.mark.parametrize("kind", [
+    "axis_read", "persistence_audit", "motion_stop", "recorder_stop",
+])
+def test_query_only_worker_job_guard_keeps_observer_and_shutdown_jobs(kind):
+    worker = DriveWorker("COM_TEST", query_only=True)
+
+    assert worker._trial_job_guard(kind, None) == (True, "")
 
 
 @pytest.mark.parametrize("missing", ["fw", "pal", "boot", "drive_identity"])

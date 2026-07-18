@@ -1,165 +1,296 @@
-# Quick Tuning + 제한형 단일축 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v1 작업 인계서
 
-상태: **OFFLINE HARDENED CANDIDATE · HARDWARE USE BLOCKED · PRIVATE DRAFT**<br>
-기준 시각: 2026-07-17 KST<br>
+상태: **READ ONLY FIELD ADMISSION OBSERVED · MOTOR ACTION NOT RUN · PRIVATE DRAFT**<br>
+기준 시각: **2026-07-18 15:09 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
 ## 1. 저장소와 runtime 기준점
 
 - 작업 브랜치: `codex/quick-single-axis-handoff`
-- 기준 HEAD: `d572e4b964f61c7ba2a9f951cd7acbac81e61a5d`
-- 원격: `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
-- 현재 인계 대상은 위 HEAD 위의 **uncommitted dirty working tree**다. commit/push/PR 변경은 하지 않았다.
-- 기존 사용자 변경과 로컬 산출물을 임의로 정리하거나 삭제하지 않았다.
-- 이번 작업은 DLL과 drive를 열지 않았고, 통전·모션·영점 변경·`SV`·visible main GUI smoke를 실행하지 않았다.
-- 읽기 전용 progress monitor PID 16324가 한글 Markdown 표시 수정 코드를 로드한 채 응답 중이다.
-  PID는 일회성 정보다.
-- 제어 프로그램은 새 코드를 로드했다고 가정하지 않는다. 사용자가 제어창을 넘기면 우선 화면과 상태만
-  관찰하고, 명시적 승인 전에는 연결 변경 또는 motor command를 보내지 않는다.
+- 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
+- 새 저장소 `origin`:
+  `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
+- 원본 저장소 `source`:
+  `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
+- 현재 인계 대상은 위 기준에서 누적한 Quick/Single Axis/Expert·안전 경계 변경이다.
+  commit/push/PR은 수행하지 않았다.
+- 기존 사용자 media 변경과 신규 smoke 이미지는 보존했다.
+- 최신 working tree의 앱으로 Read Only field admission을 수행했고,
+  host-observed 세션 증거를 보존했다.
+- 후속 source 변경 뒤 Python 3.14로 다시 실행해 1366×820 OFFLINE/READ ONLY,
+  page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked 표시를 재확인했다.
+- 이 admission에서는 motor enable, commutation, tuning, PTP 또는 setting write를
+  실행했다는 증거가 없으며, 그런 동작을 검증한 것으로 간주하지 않는다.
+- progress monitor는 `tasks/status.md`를 읽어 갱신 중이다.
+- 세션 증거는 EAS 또는 다른 master의 동시 연결 여부를 기록하지 않는다.
+- Read Only 세션을 정상 종료한 뒤 EAS 설치본을 실행했고, drive에 연결하지 않은 상태에서
+  Quick Automatic Tuning, Expert Tuning tree, Motion - Single Axis UI를 직접 매핑했다.
+  Connect/Enable/Run/Apply/Save는 누르지 않았고 직접 장비 식별자는 기록하지 않았다.
 
-## 2. 현재 활성 범위
+## 2. 현재 범위와 경계
 
-이번 목표는 다음 두 축으로 한정한다.
+### 2.1 Quick Tuning guided flow
 
-1. 현재 Gold Twitter + EnDat 2.2 한 축의 Quick Tuning 기반 기능
-   - P1 제한 에너지 R/L 식별과 전류 PI 후보 설계
-   - 별도 제한 전류 commutation signature
-   - P2 속도/위치 plant 식별과 게인 후보 설계
-   - 현재 설치 P2 게인의 bounded on-motor Verify
-2. `UM=5` finite PTP만 허용하는 제한형 Single Axis Motion backend
+- P1 제한 에너지 R/L 식별과 전류 PI 후보 설계
+- 별도 제한 전류 commutation signature
+- P2 속도/위치 plant 식별과 게인 후보 설계
+- 현재 설치 P2 게인의 bounded on-motor Verify
+- P1 / commutation / P2 / Verify / Abort는 Quick과 Expert 화면에서 공통 표시
 
-현재 범위에 EAS 전체 패리티, vendor 비공개 알고리즘의 동일 복제, 다축, CAN/EtherCAT, firmware
-update, 일반 Jog/Homing/Current/Sine, Gold 계열 전체 자동 호환은 포함하지 않는다.
+실제 P1/P2/commutation/Verify는 모터 통전 또는 회전을 포함한다.
+오프라인 구현 완료가 현장 실행 승인이나 안전성 판정을 뜻하지 않는다.
 
-## 3. production 권한과 잠금
+### 2.2 Single Axis
 
-### 3.1 열려 있는 소프트웨어 경로
+- `UM=5` finite-PTP 오프라인 backend와 제한·판정 kernel은 MODEL 검증됨
+- `FINITE_PTP_LIVE_ENABLED=False`
+- live PTP catalog 상태는 `NEED-DATA`
+- 기계 travel, 방향, output ratio, limit 입력, 정지거리, 독립 E-stop/STO 근거 전에는
+  live gate를 열지 않는다.
 
-- P1/P2 식별·설계는 후보를 산출한다. 실제 실행은 통전/회전을 포함하므로 현 리비전의 감독 실기와
-  fresh 현장 승인이 없으면 사용하지 않는다.
-- `Verify Installed P2 on Motor`는 현재 설치 게인을 대상으로 한다. current-generation commutation
-  signature, fresh telemetry, identity/session gate와 durable `P2_LIMITS` transaction을 요구한다.
-  GREEN/RED는 verdict일 뿐 새 gain Apply/Save capability가 아니다.
-- Motor profile 저장은 first-assignment durable WAL, exact readback, rollback/full readback 또는
-  `UNKNOWN`, request-bound 단일 `SV` authority 순서를 가진다.
+### 2.3 Expert Candidate Lab v1
 
-### 3.2 fail-closed 잠금
+- 전류루프 후보 계산은 pure no-I/O LOCAL MODEL
+- R/L, sampling period, target bandwidth, KI rule을 명시 입력
+- candidate KP/KI와 bounded read-only Bode preview 제공
+- candidate와 설치 drive readback을 별도 authority로 표시
+- EAS Expert 전체 패리티, P2, 필터, scheduling, vendor 비공개 알고리즘 복제는
+  아직 구현 완료가 아니다.
 
-- `Apply P1 → RAM`, `Apply P2 → RAM`, `Save P1 → SV`, `Save P2 → SV`는 production에서 잠겨 있다.
-  이유는 새 gain assignment 전에 살아남는 durable pre-assignment gain-trial WAL이 없고, 현재 단일
-  active-record ledger가 P2 Verify의 `P2_LIMITS` WAL과 중첩 trial을 안전하게 표현하지 못하기 때문이다.
-- hardware-capable link의 P1/P2 begin과 legacy P1 `apply_gains()`는 persistence query·snapshot·assignment
-  전 typed failure를 반환한다. exact `SYNTHETIC_NO_HARDWARE` marker만 trial 회귀를 연다.
-- P1은 별도로 real session-bound on-motor verifier도 없으므로 Save가 transport까지 잠겨 있다.
-- Feedback direct save는 versioned registry 전까지 잠겨 있다.
-- `FINITE_PTP_LIVE_ENABLED=False`이며 환경변수 우회가 없다.
+현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
+Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
 
-## 4. 이번 working tree의 핵심 보강
+## 3. 연결 access-mode 계약
 
-### 4.1 P1_CONFIG durable rollback
+### 3.1 Read Only — 기본값
 
-- P1의 모든 fallible admission을 첫 write 앞으로 옮겼다.
-- 임시 `KP[1]/KI[1]/UM/SC[8]/CA[42..44]/CA[70]/SE[1..7]` 변경은 첫 assignment 전에 durable
-  `P1_CONFIG` WAL을 만든다.
-- WAL 원본은 drive의 원시 응답을 `Decimal`로 먼저 판정한다. discrete register는 exact integer,
-  연속 register는 float 변환이 값을 바꾸지 않는 경우만 동결하며, sub-ULP 소수는 WAL/write 전에 RED다.
-- prepared applied values는 register별 mutation bounds와 type/range를 만족해야 한다. frozen profile과
-  같다는 이유로 bounds를 우회할 수 없다.
-- forward authority는 bounded/applied 값만 허용한다. link가 `MO/SO/VX=0`을 직접 확인한 뒤의 단방향
-  rollback transition만 frozen original 값을 허용하며, 전환 뒤 forward authority는 되살아나지 않는다.
-- same-session closeout은 원 profile을 되읽고, post-reset audit은 original profile exact match에서만
-  temporary-config lock을 해제한다. drift/mixed/불안정 read는 `UNKNOWN`을 유지한다.
-- P1 Save는 verifier와 gain-trial WAL이 없어 잠긴다.
+- UI 기본 선택은 `READ ONLY`
+- `ElmoLink` 생명주기에서 observe-only latch는 단방향이며 되돌릴 수 없음
+- bare query allowlist와 software safe-shutdown만 허용
+- admission 전에 `MO/SO/VX/PS/MF`를 두 번 읽어 완전히 일치해야 함
+- 입장 조건은 `MO=0`, `SO=0`, `VX=0`, `MF=0`, `PS=-2/-1`
+- requested mode, transport의 명시적 `access_mode`, worker가 반환한 mode가 모두 일치해야 함
+- transport mode 속성 누락·예외·중간 변경은 요청값으로 대체하지 않고 연결을 거부
 
-### 4.2 P2_LIMITS와 installed-gain Verify
+### 3.2 Supervised Control — 연결별 1회 권한
 
-- standalone Verify도 current-generation commutation signature token을 UI → worker → algorithm까지
-  전달하고, stale/foreign token은 drive I/O 전에 거부한다.
-- `SD/HL[2]/LL[2]/ER[2]`는 첫 assignment 전 durable `P2_LIMITS` WAL을 만들고 전 항목 exact
-  apply/readback proof 뒤에만 enable을 허용한다.
-- 네 limit의 원시 응답은 binary float 변환 전에 finite·integral·signed-32를 검사한다. 반올림되어
-  정수처럼 보이는 소수 literal/readback은 profile authority나 applied proof를 만들지 못한다.
-- applied proof 뒤에는 limit assignment를 동결한다. link가 `MO/SO/VX=0`을 직접 확인한 단방향
-  rollback transition 뒤에만 signed-32-bit exact original profile 복원을 허용한다.
-- register 거부, silent mismatch, timeout, partial restore, session change는 성공으로 승격되지 않는다.
-  full original readback을 증명하지 못하면 durable `UNKNOWN`으로 잠긴다.
-- installed-gain Verify는 gain을 바꾸지 않고 verdict만 반환한다.
+- 선택 후 기본 Cancel인 확인창을 통과해야 worker를 구성
+- 연결 종료·실패 후 자동으로 Read Only로 복귀
+- 연결 자체는 Enable, 모션, commutation, tuning, `PX=0`, 파라미터 쓰기,
+  `SV`를 승인하거나 자동 실행하지 않음
+- ordinary mutation UI는 admitted connection + fresh telemetry +
+  `SUPERVISED_CONTROL` + `MO=0`을 모두 요구
+- worker mode 불일치나 구성 실패 뒤 Port/Connection Type/Access Mode 선택기를 복구
 
-### 4.3 STOP/Abort generation 결속
+software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면 즉시성이 보장되지 않는다.
 
-- tuning token이 worker queue pop 뒤에도 fresh telemetry 전후, handler, algorithm `cancel_fn`과
-  `_EnergyAwareLink`까지 유지된다.
-- Abort는 해당 generation을 취소하고, 이미 취소된 queued 작업이 새 generation을 오염시키지 않는다.
-- STOP은 계속 sticky safety request이며, closeout은 전류/enable 제거를 확인하지만 기계적 정지나 독립
-  STO를 증명한다고 주장하지 않는다.
+## 4. production 잠금과 recovery
 
-### 4.4 persistence와 Motor recovery
+- `Apply P1 → RAM`, `Apply P2 → RAM`, `Save P1 → SV`, `Save P2 → SV`는
+  현재 production에서 `NEED-DATA` 잠금
+- P1 임시 설정은 첫 assignment 전에 durable `P1_CONFIG` WAL을 요구
+- installed P2 Verify의 limit 변경은 첫 assignment 전에 durable `P2_LIMITS` WAL을 요구
+- 원시 수치 판정, exact readback, 단방향 rollback, full original-profile closeout을
+  증명하지 못하면 `UNKNOWN`을 유지
+- current-generation commutation signature token을 UI → worker → algorithm까지 결속
+- STOP/Abort는 monotonic generation에 결속되어 stale queued tuning을 실행하지 않음
+- query-only persistence audit은 `SV`, `LD`, `RS`, assignment, enable, motion을 보내지 않음
+- Feedback direct save는 versioned registry가 완성될 때까지 잠금
 
-- active production 원장 scope는 P1_CONFIG, P2_LIMITS, Motor다. legacy/offline P2 gain record 판정
-  엔진은 기존 ambiguous-SV incident를 위해 호환 유지하지만 새 production gain trial을 만들지 않는다.
-- Motor `UNKNOWN` status의 `phase=MOTOR`, `record_id`, `ledger_error`가 worker startup/status publisher/UI
-  validator를 통과한다. 따라서 안전 잠금은 유지하면서 유일한 query-only post-reset audit 버튼도 남는다.
-- query-only audit은 `SV`, `LD`, `RS`, assignment, enable, motion을 보내지 않는다.
+## 5. 2026-07-18 UI와 독립 안전 리뷰
 
-### 4.5 operation catalog와 UI
+### 5.1 1366×820 레이아웃
 
-- P1/P2 Apply/Save는 위험 분류를 유지한 채 `OperationStatus.NEED_DATA`로 표시한다.
-- installed P2 Verify는 `trial_capability`가 아니라 `commutation_signature` + `P2_LIMITS` gate로 설명한다.
-- Quick/Expert 모두 gain Apply/Save가 잠겼음을 표시하며 결과 수신으로 버튼이 다시 열리지 않는다.
+별도 Access Mode form row가 테마별 최소 높이를 43–62px 올리는 회귀를 만들었다.
+모드 선택기를 `CONNECTION` 제목 행에 항상 보이는 compact selector로 옮기고,
+긴 설명은 tooltip과 Connect 버튼 상태에 유지했다.
 
-## 5. 오프라인 검증 증거
+### 5.2 독립 리뷰에서 발견·수정한 경계
 
-최신 핵심 회귀:
+1. transport `access_mode`가 없을 때 requested mode로 대체하던 fallback 제거
+2. worker mode 불일치 뒤 Port/Connection Type 선택기가 잠기는 복구 결함 수정
+3. 비-DriveWorker test double이 emitted info만으로 mode를 자기서명하던 분기 제거
 
-| 집합 | 결과 | 의미 |
+생산 경계를 느슨하게 하지 않고 기존 test double이 의도한 모드를 명시하도록 정비했다.
+
+### 5.3 현장 관찰 뒤 추가한 UI lifecycle 경계
+
+- 공용 `workspace_scroll`이 이전 페이지의 scroll value `923`을 유지해
+  Status가 흰 화면처럼 보이는 현상을 RED로 재현했다.
+- 실제 페이지가 바뀔 때만 수평·수직 스크롤을 새 페이지 원점으로 초기화하고,
+  같은 페이지 재선택은 현재 위치를 보존한다.
+- Disconnect/창 닫기 요청 직후 fresh queued telemetry가 도착하면 worker의
+  `stopped` 전에도 authority가 다시 보일 수 있던 종료 경계를 RED로 재현했다.
+- `shutdown-pending` latch에서 connection admission, telemetry, access-mode authority를
+  즉시 폐기하고, late telemetry/connected/failed에도 `DISCONNECTING`,
+  energy `UNKNOWN`, Connect/port/type/access-mode 잠금을 유지한다.
+- 현재 worker의 sender-bound `stopped` 뒤에만 latch를 해제하고 `OFFLINE`과
+  연결 선택기를 복구한다.
+
+### 5.4 EAS 미연결 Quick/Expert/Single Axis 기준선
+
+- Quick Automatic Tuning의
+  `Initialization → Current Identification → Current Design → Commutation →
+  Velocity & Position Identification → Velocity & Position Design` 6단계를 확인했다.
+- Expert tree에서 User Units, Limits/Protections, Application Settings,
+  Current Identification/Design/Verification-Time, Commutation,
+  Velocity/Position Identification/Design/Scheduling/Verification-Time, Summary를 확인했다.
+- Single Axis에서 motion status, digital I/O, `STO1/STO2/ERR`, UM mode,
+  Enable, Current/Stepper/Sine Reference, PTP absolute/relative, Terminal과
+  2-chart Recorder 구성을 확인했다.
+- target는 EAS에서 `Disconnected`였고 모든 실행·다운로드·저장 동작은 수행하지 않았다.
+- 세부 표와 현재 구현 차이는
+  [`eas-feature-matrix.md`](eas-feature-matrix.md)의
+  `2026-07-18 EAS 미연결 UI 관찰 기준선`에 기록했다.
+
+## 6. Elmo 로컬 자료 증분 감사
+
+- 로컬 Elmo root: **59 files / 5,691,086,215 bytes**
+- 전체 파일 SHA-256과 ZIP/RAR member 목록을 추출 없이 기록
+- `Version 1.1.16.0 B01 for customers.zip`
+  - SHA-256:
+    `6A79E0C2956EA643916FFF5526450BEB66D47BAE6C8DB1C7E92A993CF8B4C74F`
+  - member:
+    `NGDrive 01.01.16.00 08Mar2020B01G.gabs`
+- 위 member 이름은 현재 personality 문자열과 파일명 수준에서 일치하지만,
+  B01/B01G 의미·board 적합성·flashing 안전성을 증명하지 않는다.
+- firmware flashing은 이번 작업의 승인 범위가 아니다.
+
+세부 목록은 [`local-elmo-artifact-audit.md`](local-elmo-artifact-audit.md)에 있다.
+
+## 7. 최신 오프라인 증거
+
+| 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1206 passed, 1 skipped in 79.24s** | 최신 dirty tree의 root 재실행 |
-| 독립 reviewer 전체 재실행 | **1185 passed, 1 skipped in 83.09s** | 구현자와 분리된 재검증 |
-| P1/P2 domain + persistence audit/lifecycle + worker/UI + energy shutdown + catalog | **629 passed, 1 skipped in 45.79s** | mock/simulation/offscreen, no hardware I/O |
-| progress monitor 한글 Markdown 회귀 | 수정 전 **1 failed** → 수정 뒤 **26 passed**, actual smoke **100/95/0** | Qt raw `<br>` 정규화, 한글 887자 보존 |
-| P1_CONFIG/P2_LIMITS 권한 분리와 exact audit | **536 passed, 1 skipped in 41.82s** | Decimal 원시 판정, forward/rollback 단방향 전환, no hardware I/O |
-| Motor startup `MOTOR` record propagation | 수정 전 2 failed → 수정 뒤 **2 passed** | record ID와 audit availability 보존 |
-| gain operation catalog 계약 | 수정 전 1 failed → 수정 뒤 **3 passed** | Apply/Save NEED_DATA, installed Verify signature gate |
-| built-in P1 smoke 계약 | stale Apply 기대에서 exit 1 → media-free 회귀 **1 passed** | production Apply lock과 smoke 일치 |
-| 독립 안전 검토 | Critical/Important 잔여 없음 | production gain lock 전 drive mutation 0 확인 |
-| 독립 integration review | blocking finding 없음 | worker bypass, UI/catalog/docs, full suite 재검토 |
+| 전체 repository suite | **1335 passed, 0 failed in 177.92s** | 최신 dirty tree의 Python/mock/offscreen 경로 |
+| 연결·텔레메트리·모니터·테마 집중 회귀 | **204 passed** | access-mode와 UI lifecycle |
+| 1366×820 세 테마 회귀 | **33 passed** | qdd/amber/angrybirds geometry |
+| 독립 리뷰 3개 음성 대조 | RED 재현 후 **3 passed** | mode 누락·복구·자기서명 |
+| 페이지 전환 스크롤 집중 회귀 | RED `923 != 0`, 수정 후 **67 passed** | 새 페이지 원점·같은 페이지 위치 보존 |
+| 종료 중 authority 집중 회귀 | **169 passed** | fresh/stale queued signal과 shutdown latch |
+| 추가 UI/motor-safety 회귀 | **182 passed** | persistence/status/system 포함 |
+| 종료 경계 독립 재검토 | **102 passed** | prior P1 해소, 잔여 finding 없음 |
+| `git diff --check` | **exit 0** | whitespace error 없음; LF→CRLF 경고만 존재 |
 
-skip 1건은 CLR/vendor DLL unavailable 오프라인 분기다. 변경 Python compile/AST와
-`git diff --check`도 성공했으며 diff 출력은 기존 LF→CRLF 경고뿐이다. 위 수치는 hardware safety,
-실제 응답, 성능, 정지거리 또는 whole-drive durability를 증명하지 않는다.
+유용한 실패 이력:
 
-## 6. 오프라인 closeout
+- 강화된 access-mode 계약 직후 전체 suite는 **1285 passed / 44 failed**였다.
+- 원인은 정상 admission을 흉내 내던 기존 fake link/worker가 transport 또는 requested mode를
+  명시하지 않은 것이었다.
+- production fallback을 복원하지 않고 fixture 계약을 명시해 전체 GREEN으로 회복했다.
 
-1. 최신 문서/UI 문자열, compile/AST, diff integrity, 전체 suite와 독립 review를 완료했다.
-2. exact base HEAD와 dirty-tree 수치를 이 문서와 상태판에 기록했다.
-3. commit/push/PR은 사용자 지시가 있을 때만 수행한다.
-4. 제어창/runtime 확인과 hardware admission은 아래 현장 `NEED-DATA`의 별도 단계다.
+이 증거는 실제 드라이브 응답, 전류 인가, commutation, 성능, 정지거리,
+whole-drive durability 또는 field safety를 증명하지 않는다.
 
-## 7. 현장 `NEED-DATA`
+### 7.1 Read Only field admission 증거
 
-- exact drive model/part number, firmware/PAL, hashed identity와 connection generation
+증거 파일:
+[`field-read-only-admission-20260718-1418-closed.aysession.json`](field-read-only-admission-20260718-1418-closed.aysession.json)
+
+- SHA-256:
+  `C8E818BBF8690A14DC88503E3A2838EE448D3B336A18FE57E7C8E3BC8025CF7A`
+- `schema_version=1`, `evidence_class=HOST_OBSERVED_NOT_DRIVE_HISTORY`
+- export 시각: `2026-07-18T05:25:04.794496Z`
+  = **2026-07-18 14:25:04.794496 KST**
+- 선언/실제 이벤트 수: **12 / 12**, `dropped_count=0`, `capacity=512`
+- connection event 시각:
+  `2026-07-18T05:16:58.435305Z`
+  = **2026-07-18 14:16:58.435305 KST**
+- host가 기록한 firmware:
+  `Twitter 01.01.16.00 08Mar2020B01G`
+- host가 기록한 boot:
+  `DSP Boot 1.0.1.6 12Feb2014G`
+- host가 기록한 PAL: `90`
+- `Gold Drive`는 **application classification이며 board readback이 아니다**.
+- 최초 fresh telemetry는 `MO=0`, `vel=0`, `iq=0`이었다.
+- 이어진 raw-axis status는 `MO=0`, `SO=0`, `MF=0`이었다.
+- 마지막 event는 `connection.closed`, reason은 `worker stopped`이며,
+  `2026-07-18T05:24:27.882689Z`
+  = **2026-07-18 14:24:27.882689 KST**에 기록됐다.
+- 이 close event는 host worker/connection lifecycle의 정상 종결을 증명하지만,
+  종료 직전 drive-state readback이나 물리적 energy isolation을 증명하지 않는다.
+- 직접 serial/port/device identity는 기록하지 않고 익명 target label만 유지한다.
+
+선행 파일
+[`field-read-only-admission-20260718-1418.aysession.json`](field-read-only-admission-20260718-1418.aysession.json)은
+close 전의 **pre-close snapshot**이며 주 증거가 아니다.
+
+- SHA-256:
+  `145534764C3E521FAA808D34E0E95A24E96619A374E9031ED3D60938447223B1`
+- **11 / 11 events**, `dropped_count=0`
+- final closed log의 event 1–11은 payload와 event identity가 같고,
+  lifecycle 종결에 따라 scope만 `CURRENT`/`REJECTED`에서 `HISTORICAL`로 재분류됐다.
+- final closed log가 완결된 주 증거이고, pre-close snapshot은 시간순 계보를 보존하는 보조 증거다.
+
+텔레메트리 authority에는 짧은 이탈이 있었다.
+
+- **2026-07-18 14:19:32.364886–14:19:32.378222 KST**에
+  sequence `690`–`694`의 5개 sample이 `UI_REJECTED`로 기록됐다.
+- authority-lost event는
+  **2026-07-18 14:19:32.368249 KST**에 발생했고,
+  `energizing=false`였다.
+- sequence `695`에서
+  **2026-07-18 14:19:32.383226 KST**에 authority가 복구됐다.
+  lost→restored host-event 간격은 약 **14.98 ms**다.
+- rejected sample 자체의 payload는 `telemetry_valid=true`, `MO=0`, `vel=0`, `iq=0`이지만,
+  freshness가 `UI_REJECTED`이므로 current-state authority로 사용하지 않는다.
+- `OBSERVED`: sequence `690`–`694`의 host-source age는 각각
+  **1514.2 / 1295.3 / 1077.4 / 859.9 / 639.8 ms**였다.
+- `DERIVED`: 다섯 sample 모두 **0.5 s source-age gate**를 초과했고,
+  sequence `690`은 **1.5 s UI-age gate**도 약 14 ms 초과했으므로
+  현재-state authority에서 제외된 경로가 재현된다.
+- `INFERRED`: 약 220–223 ms 간격으로 생성된 sample이 UI에서 약 3 ms 간격으로
+  몰려 처리된 패턴은 약 1.5 s UI event-loop backlog와 일치한다.
+  어떤 UI/OS 동작이 직접 backlog를 유발했는지는 **UNVERIFIED**다.
+- 이 event 묶음은 transport 또는 motor fault의 증거가 아니며,
+  `MO=0`, `energizing=false`, 복구 시 `motor_enabled=false`였다.
+
+이 자료가 증명하는 범위는 **host가 해당 시각에 연결·정지/비활성 telemetry·raw status를
+관찰했고, stale/replayed 의심 sample을 current state에서 제외한 사실**이다.
+`HOST_OBSERVED_NOT_DRIVE_HISTORY`이므로 다음을 증명하지 않는다.
+
+- transport가 실제로 query만 보냈다는 원시 명령 이력
+- Read Only access-mode의 end-to-end enforcement 또는 쓰기 명령 부재
+- admission의 두 번 일치 sweep 전체와 `VX/PS` 값
+- 독립 E-stop/STO, 다른 master 부재, setting 불변, motor safety
+- enable, commutation, tuning, PTP, 정지거리 또는 field performance
+
+따라서 좁은 host-observed admission은 **OBSERVED**지만,
+telemetry integrity는 원인 미확정 blip 때문에 **YELLOW**,
+motor action과 hardware-safety 판정은 계속 **NEED-DATA**다.
+
+## 8. 현장 상태와 `NEED-DATA`
+
+사용자가 현장에 복귀했고 Read Only admission까지는 수행했다. 상태판의 field 5%는
+이 host-observed admission/close 증거만 가리키는 계획 지표다. 현재 working tree로
+motor action은 아직 실행하지 않았으므로 **motor-action field validation은 0%**다.
+
+다음 자료는 live PTP와 넓은 실기 판정 전에 필요하다.
+
+- exact drive model/part number, firmware/PAL, hashed identity, connection generation
+- motor/encoder 구성과 pole-pair, current convention, counts/rev
 - 물리 travel, output ratio, 안전한 +/− 방향
 - FLS/RLS/STOP 배선·극성·drive mapping과 양방향 작동 증거
 - 최악 통신/샘플 지연을 포함한 정지거리·여유거리
 - 독립 E-stop/STO, 부하 낙하/브레이크/구속 조건
 - 다른 master의 배타적 제어권
-- 저에너지 P1/commutation/P2, abort/comms loss/reconnect/cold audit의 supervised transcript
+- 저에너지 P1/commutation/P2, abort/comms loss/reconnect/cold audit의 raw transcript
 
-이 자료 전에는 hardware 사용, production gain mutation, finite PTP live gate를 열지 않는다.
+## 9. 안전한 재개 순서
 
-## 8. 안전한 재개 순서
+1. 최신 source로 제어창을 OFFLINE 재시작해 page-scroll과 shutdown UI를 smoke
+2. EAS를 **미연결 상태**에서 캡처하고 Quick/Single/Expert 화면·상태부터 매핑
+3. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
+4. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
+   admission sweep의 `MO/SO/VX/PS/MF` 원시 transcript를 보존
+5. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
+6. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
+7. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
 
-1. 오프라인 전체 suite와 최종 review를 마친다.
-2. 사용자가 명시적으로 넘긴 제어창은 화면과 runtime identity부터 read-only로 확인한다.
-3. 드라이브가 disabled·정지·무전류이고 현장 gate가 갖춰졌을 때만 통제된 앱 재시작을 별도 승인받는다.
-4. query-only identity/firmware/PAL/active persistence status를 확인한다.
-5. hardware 단계는 각 단계마다 새 승인을 받아 P1 식별 → commutation signature → P2 식별 →
-   installed-gain Verify 순으로 진행한다. Production gain Apply/Save는 계속 제외한다.
-6. finite PTP는 site envelope와 독립 stop evidence가 완성된 별도 승인 작업으로 남긴다.
+## 10. 완료 의미
 
-## 9. 완료 의미
-
-오프라인 GREEN은 exercised code path와 fail-closed 음성 대조군이 통과했다는 뜻이다. 최신 리비전의
-supervised hardware transcript, closeout, recovery, cold audit와 motion envelope가 없으면 `hardware
-safe`, `field complete`, `Gold-compatible`을 선언하지 않는다.
+현재 `READ ONLY FIELD ADMISSION OBSERVED`는 host-observed 연결과 정지/비활성 readback을
+보존했다는 뜻이다. 최신 리비전의 supervised hardware transcript, closeout, recovery,
+cold audit와 motion envelope가 없으면 `hardware safe`, `field complete`, `EAS parity`,
+`Gold-compatible`을 선언하지 않는다.

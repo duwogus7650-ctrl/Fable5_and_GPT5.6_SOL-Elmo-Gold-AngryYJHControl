@@ -155,6 +155,7 @@ class _ConnectionWorker:
 
     def __init__(self):
         self.stop_calls = 0
+        self.access_mode = app_main.SUPERVISED_ACCESS_MODE
 
     @staticmethod
     def isRunning():
@@ -199,6 +200,7 @@ def _connection_info(*, sequence=1, identity=HASH_A):
         "boot": "DSP Boot",
         "target_type": "Gold Drive",
         "drive_identity": identity,
+        "access_mode": app_main.SUPERVISED_ACCESS_MODE,
         "initial_telemetry": _telemetry(sequence),
         "persistence_status": {
             "status": "CLEAR",
@@ -252,6 +254,7 @@ def _display_values(dialog):
 def _connect(window, *, identity=HASH_A, sequence=1):
     worker = _ConnectionWorker()
     window.worker = worker
+    window._requested_connection_access_mode = worker.access_mode
     window._on_connected(_connection_info(
         sequence=sequence, identity=identity))
     assert window._connection_admitted is True
