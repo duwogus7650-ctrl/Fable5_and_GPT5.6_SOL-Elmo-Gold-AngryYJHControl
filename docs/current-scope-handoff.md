@@ -1,7 +1,7 @@
 # Quick Tuning + Single Axis + Expert Candidate Lab v2 작업 인계서
 
-상태: **EXPERT v2 OFFLINE VERIFIED · CONTROL APP OPEN · MOTOR ACTION NOT RUN · PRIVATE DRAFT**<br>
-기준 시각: **2026-07-18 17:03 KST**<br>
+상태: **EXPERT v2 OFFLINE VERIFIED · CONTROL APP OPEN · MOTOR ACTION NOT RUN · PRIVATE DRAFT UPDATED**<br>
+기준 시각: **2026-07-18 17:14 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -11,8 +11,8 @@
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
 - Single Axis 구현 HEAD:
   `6f1250ffbdd558e65499e4193d69a1872269c729`
-- 현재 게시 기준 HEAD:
-  `52d47ca9448e4e8006b2c1829769f2864ff319f9`
+- Expert v2 검증·게시 HEAD:
+  `91ff7306808354cf8648e0bbbaef6e7778667665`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -193,8 +193,8 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1410 passed, 0 failed in 254.76s** | Expert v2 독립 리뷰 수정까지 포함한 최신 dirty tree의 Python/mock/offscreen 경로 |
-| Expert v2 수치·UI·catalog 집중 회귀 | **75 passed, 0 failed in 24.59s** | P1→P2 MODEL, provenance·mutation/음성 대조, zero-I/O, stale authority, 세 스킨 1366×820와 palette 격리 |
+| 전체 repository suite | **1410 passed, 0 failed in 260.15s** | Expert v2 독립 리뷰·peak-current 단위 정합성 수정까지 포함한 `91ff730`의 Python/mock/offscreen 경로 |
+| Expert v2 수치·UI·catalog 집중 회귀 | **74 passed, 0 failed in 44.40s** | P1→P2 MODEL, provenance·mutation/음성 대조, zero-I/O, stale authority, 세 스킨 1366×820와 palette 격리 |
 | Expert v2 독립 리뷰 | HIGH 1 + MEDIUM 1 RED 재현 후 **5 passed** | 다른 plant의 P1 자기서명·모순 delegate PASS·입력 편집 뒤 stale PASS 차단 |
 | Expert v2 최신 runtime smoke | **P1 PASS · P2 PASS · edit→STALE→recalculate PASS** | Python 3.14, 1366×820, OFFLINE/READ ONLY; drive/worker/command I/O 없음 |
 | Single Axis snapshot 집중 회귀 | **346 passed, 0 failed in 127.18s** | decoder·UI·catalog·generation·telemetry·shutdown·session log·motion |
