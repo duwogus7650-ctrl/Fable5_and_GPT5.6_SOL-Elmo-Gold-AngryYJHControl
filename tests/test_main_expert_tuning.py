@@ -316,7 +316,7 @@ def test_offline_expert_p2_populates_model_only_and_preserves_all_authority(
     assert "SINGLE-POINT" in window.expert_vp_status.text()
     assert "FILTER NEED-DATA" in window.expert_vp_status.text()
     assert "GS[2]=0 ONLY" in window.expert_vp_status.text()
-    assert "A/(cnt/s)" in window.expert_vp_result_fields["kp_vel"].text()
+    assert "A_peak/(cnt/s)" in window.expert_vp_result_fields["kp_vel"].text()
     assert "Hz" in window.expert_vp_result_fields["ki_vel"].text()
     assert "1/s" in window.expert_vp_result_fields["kp_pos"].text()
     assert "dB" in window.expert_vp_result_fields["pm_vel"].text()

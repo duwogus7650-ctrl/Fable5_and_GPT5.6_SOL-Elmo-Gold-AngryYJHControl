@@ -7264,7 +7264,7 @@ class MainWindow(QtWidgets.QMainWindow):
         vp_results.setVerticalSpacing(6)
         self.expert_vp_result_fields = {}
         for row, (key, label) in enumerate((
-                ("kp_vel", "Velocity KP[2] [A/(cnt/s)]"),
+                ("kp_vel", "Velocity KP[2] [A_peak/(cnt/s)]"),
                 ("ki_vel", "Velocity KI[2] [Hz]"),
                 ("kp_pos",
                  "Position KP[3] [rad/s command ref; count MODEL 1/s]"),
@@ -7651,7 +7651,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._expert_vp_inputs_stale = False
         results = self.expert_vp_result_fields
         results["kp_vel"].setText(
-            "%.7g A/(cnt/s)" % candidate.kp_vel_a_per_cnt_s)
+            "%.7g A_peak/(cnt/s)" % candidate.kp_vel_a_per_cnt_s)
         results["ki_vel"].setText(
             "%.7g Hz" % candidate.ki_vel_hz)
         results["kp_pos"].setText(
