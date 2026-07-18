@@ -41,6 +41,7 @@ import feedback_spec
 import autotune_current
 import autotune_velpos
 import expert_tuning_offline
+import expert_filter_scheduling_evidence
 import single_axis_motion
 import single_axis_status
 import recorder_control
@@ -7120,6 +7121,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_title = QtWidgets.QLabel(
             "EXPERT CANDIDATE LAB v2 · OFFLINE MODEL · NO DRIVE I/O")
         self.expert_lab_title.setProperty("role", "celltitle")
+        self.expert_lab_title.setWordWrap(True)
+        self.expert_lab_title.setMinimumWidth(0)
+        self.expert_lab_title.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        self._expert_model_title = self.expert_lab_title.text()
         lab_layout.addWidget(self.expert_lab_title)
         self.expert_lab_note = QtWidgets.QLabel(
             "Two-step local model: first design Current P1 from explicit "
@@ -7134,6 +7141,7 @@ class MainWindow(QtWidgets.QMainWindow):
             QtWidgets.QSizePolicy.Policy.Preferred)
         self.expert_lab_note.setMinimumHeight(max(
             48, self.expert_lab_note.sizeHint().height()))
+        self._expert_model_note = self.expert_lab_note.text()
         lab_layout.addWidget(self.expert_lab_note)
 
         expert_step_row = QtWidgets.QHBoxLayout()
@@ -7142,18 +7150,33 @@ class MainWindow(QtWidgets.QMainWindow):
             "1 · CURRENT P1 MODEL")
         self.btn_expert_step_vp = QtWidgets.QPushButton(
             "2 · VELOCITY / POSITION P2 MODEL")
+        self.btn_expert_step_evidence = QtWidgets.QPushButton(
+            "3 · FILTER / SCHED EVIDENCE")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
+        self.btn_expert_step_evidence.setCheckable(True)
+        for button in (
+                self.btn_expert_step_current,
+                self.btn_expert_step_vp,
+                self.btn_expert_step_evidence):
+            button.setMinimumWidth(0)
+            button.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Fixed)
         self.expert_lab_step_group = QtWidgets.QButtonGroup(self)
         self.expert_lab_step_group.setExclusive(True)
         self.expert_lab_step_group.addButton(self.btn_expert_step_current)
         self.expert_lab_step_group.addButton(self.btn_expert_step_vp)
+        self.expert_lab_step_group.addButton(self.btn_expert_step_evidence)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
             lambda: self._set_expert_lab_step("vp"))
+        self.btn_expert_step_evidence.clicked.connect(
+            lambda: self._set_expert_lab_step("evidence"))
         expert_step_row.addWidget(self.btn_expert_step_current)
         expert_step_row.addWidget(self.btn_expert_step_vp)
+        expert_step_row.addWidget(self.btn_expert_step_evidence)
         lab_layout.addLayout(expert_step_row)
 
         self.expert_lab_stack = QtWidgets.QStackedWidget()
@@ -7286,6 +7309,85 @@ class MainWindow(QtWidgets.QMainWindow):
         vp_page_layout.addWidget(expert_vp_boundary)
         vp_page_layout.addStretch(1)
         self.expert_lab_stack.addWidget(vp_page)
+
+        self.expert_evidence_page = QtWidgets.QWidget()
+        evidence_layout = QtWidgets.QVBoxLayout(self.expert_evidence_page)
+        evidence_layout.setContentsMargins(0, 0, 0, 0)
+        evidence_layout.setSpacing(7)
+        self._expert_evidence = (
+            expert_filter_scheduling_evidence.build_evidence_snapshot())
+        self.expert_evidence_status = QtWidgets.QLabel(
+            "DOCUMENTED TOPOLOGY ONLY · LOCAL INSPECTOR · "
+            "NO MODEL · NO EMULATION · NO WRITE · NO DRIVE I/O")
+        self.expert_evidence_status.setProperty("role", "hint")
+        self.expert_evidence_status.setWordWrap(True)
+        evidence_layout.addWidget(self.expert_evidence_status)
+
+        evidence_form = QtWidgets.QGridLayout()
+        evidence_form.setHorizontalSpacing(10)
+        evidence_form.setVerticalSpacing(6)
+        filter_type_label = QtWidgets.QLabel("Documented filter type")
+        filter_type_label.setProperty("role", "field")
+        self.expert_filter_type = QtWidgets.QComboBox()
+        for item in self._expert_evidence.filter_types:
+            self.expert_filter_type.addItem(
+                "%d · %s" % (item.code, item.name), item.code)
+        filter_location_label = QtWidgets.QLabel(
+            "Controller filter location")
+        filter_location_label.setProperty("role", "field")
+        self.expert_filter_location = QtWidgets.QComboBox()
+        for item in self._expert_evidence.filter_locations:
+            self.expert_filter_location.addItem(item.label, item.key)
+        schedule_mode_label = QtWidgets.QLabel("GS[2] mode inspector")
+        schedule_mode_label.setProperty("role", "field")
+        self.expert_schedule_mode = QtWidgets.QSpinBox()
+        self.expert_schedule_mode.setRange(0, 66)
+        self.expert_schedule_mode.setPrefix("GS[2] = ")
+        evidence_form.addWidget(filter_type_label, 0, 0)
+        evidence_form.addWidget(self.expert_filter_type, 0, 1)
+        evidence_form.addWidget(filter_location_label, 1, 0)
+        evidence_form.addWidget(self.expert_filter_location, 1, 1)
+        evidence_form.addWidget(schedule_mode_label, 2, 0)
+        evidence_form.addWidget(self.expert_schedule_mode, 2, 1)
+        evidence_layout.addLayout(evidence_form)
+
+        self.expert_filter_type_detail = QtWidgets.QLabel()
+        self.expert_filter_location_detail = QtWidgets.QLabel()
+        self.expert_schedule_mode_detail = QtWidgets.QLabel()
+        self.expert_evidence_documented_facts = QtWidgets.QLabel()
+        self.expert_evidence_conflicts = QtWidgets.QLabel()
+        self.expert_evidence_missing = QtWidgets.QLabel()
+        for detail in (
+                self.expert_filter_type_detail,
+                self.expert_filter_location_detail,
+                self.expert_schedule_mode_detail,
+                self.expert_evidence_documented_facts,
+                self.expert_evidence_conflicts,
+                self.expert_evidence_missing):
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            evidence_layout.addWidget(detail)
+        evidence_source = QtWidgets.QLabel(
+            "SOURCE · %s · SHA-256 %s" % (
+                self._expert_evidence.source,
+                self._expert_evidence.source_sha256))
+        evidence_source.setProperty("role", "hint")
+        evidence_source.setWordWrap(True)
+        evidence_layout.addWidget(evidence_source)
+        evidence_layout.addStretch(1)
+        self.expert_lab_stack.addWidget(self.expert_evidence_page)
+
+        self.expert_filter_type.currentIndexChanged.connect(
+            self._refresh_expert_evidence_panel)
+        self.expert_filter_location.currentIndexChanged.connect(
+            self._refresh_expert_evidence_panel)
+        self.expert_schedule_mode.valueChanged.connect(
+            self._refresh_expert_evidence_panel)
+        self._refresh_expert_evidence_panel()
         lab_layout.addWidget(self.expert_lab_stack)
         expert_layout.addWidget(self.expert_lab_frame)
         self._expert_plant = None
@@ -7450,6 +7552,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self._decorate_operation_control(
             self.btn_expert_vp_calculate,
             "tuning.expert.offline.calculate_p2")
+        for widget in (
+                self.expert_filter_type,
+                self.expert_filter_location):
+            self._decorate_operation_control(
+                widget, "tuning.expert.filter.evidence.inspect")
+        self._decorate_operation_control(
+            self.expert_schedule_mode,
+            "tuning.expert.scheduling.evidence.inspect")
         self._set_tuning_mode("quick")
         return f
 
@@ -7482,12 +7592,103 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_expert_lab_step(self, step):
         """Select one zero-I/O Expert model page without changing authority."""
-        if step not in ("current", "vp"):
+        if step not in ("current", "vp", "evidence"):
             raise ValueError("unknown Expert Lab step %r" % step)
+        if step == "evidence":
+            self.expert_lab_title.setText(
+                "EXPERT EVIDENCE LAB v0.1 · DOCUMENTED TOPOLOGY · "
+                "NO MODEL · NO DRIVE I/O")
+            self.expert_lab_note.setText(
+                "Public-document topology inspector only: no model, transfer "
+                "evaluation, controller selection, emulation, KV/KG/GS write, "
+                "worker, command, or drive I/O. Unresolved document conflicts "
+                "remain fail-closed as NEED-DATA.")
+        else:
+            self.expert_lab_title.setText(self._expert_model_title)
+            self.expert_lab_note.setText(self._expert_model_note)
         current = step == "current"
+        vp = step == "vp"
         self.btn_expert_step_current.setChecked(current)
-        self.btn_expert_step_vp.setChecked(not current)
-        self.expert_lab_stack.setCurrentIndex(0 if current else 1)
+        self.btn_expert_step_vp.setChecked(vp)
+        self.btn_expert_step_evidence.setChecked(step == "evidence")
+        self.expert_lab_stack.setCurrentIndex(
+            {"current": 0, "vp": 1, "evidence": 2}[step])
+
+    def _refresh_expert_evidence_panel(self, *_args):
+        """Render only immutable public-document topology and blockers."""
+        if not hasattr(self, "_expert_evidence"):
+            return
+        filter_code = self.expert_filter_type.currentData()
+        location_key = self.expert_filter_location.currentData()
+        gs2_value = self.expert_schedule_mode.value()
+        filter_type = (
+            expert_filter_scheduling_evidence.filter_type_evidence(
+                filter_code))
+        location = (
+            expert_filter_scheduling_evidence.filter_location_evidence(
+                location_key))
+        schedule = (
+            expert_filter_scheduling_evidence.classify_gs2_mode(gs2_value))
+
+        parameters = (
+            "none" if not filter_type.parameters
+            else " · ".join(filter_type.parameters))
+        self.expert_filter_type_detail.setText(
+            "FILTER TYPE %d · %s · parameters: %s · "
+            "EXACT TRANSFER %s" % (
+                filter_type.code,
+                filter_type.name,
+                parameters,
+                filter_type.exact_transfer_status))
+
+        kv_text = (
+            "none selected" if not location.kv_indices
+            else ",".join("KV[%d]" % index
+                         for index in location.kv_indices))
+        type_text = " / ".join(
+            "KV[%d]" % index
+            for index in location.type_index_candidates)
+        kg_text = (
+            "none" if not location.kg_index_ranges
+            else " · ".join(
+                "KG[%d..%d]" % bounds
+                for bounds in location.kg_index_ranges))
+        gs_text = (
+            "none" if location.gs_index is None
+            else "GS[%d]" % location.gs_index)
+        self.expert_filter_location_detail.setText(
+            "%s · %s · KV slots: %s · type index candidate(s): %s · "
+            "schedule: %s · table: %s%s" % (
+                location.status.replace("_", " "),
+                location.label,
+                kv_text,
+                type_text,
+                gs_text,
+                kg_text,
+                (" · " + location.detail) if location.detail else ""))
+
+        dependencies = (
+            "none" if not schedule.dependencies
+            else " · ".join(schedule.dependencies))
+        self.expert_schedule_mode_detail.setText(
+            "GS[2]=%d · %s · %s · dependencies: %s · "
+            "SELECTION / INTERPOLATION %s" % (
+                gs2_value,
+                schedule.category,
+                schedule.description,
+                dependencies,
+                schedule.selection_algorithm_status))
+        self.expert_evidence_documented_facts.setText(
+            "DOCUMENTED FACTS · DC GAIN = one at zero frequency · "
+            "the fifth parameter selects/enables a non-scheduled filter · "
+            "MOTOR OFF required to change KV filter type · inspector never "
+            "issues that change")
+        self.expert_evidence_conflicts.setText(
+            "DOCUMENT CONFLICTS · " + " · ".join(
+                self._expert_evidence.conflicts))
+        self.expert_evidence_missing.setText(
+            "MISSING / NEED-DATA · " + " · ".join(
+                self._expert_evidence.missing_evidence))
 
     def _mark_expert_current_input_stale(self, *_args):
         """Prevent a prior P1 PASS from appearing bound to edited inputs."""

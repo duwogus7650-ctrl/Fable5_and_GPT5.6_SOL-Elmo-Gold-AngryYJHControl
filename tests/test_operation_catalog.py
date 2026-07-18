@@ -43,6 +43,19 @@ def test_expert_filter_and_scheduling_are_visible_need_data_boundaries():
         assert not spec.menu_enabled
 
 
+def test_expert_filter_and_scheduling_evidence_inspection_is_local_only():
+    for operation_id in (
+            "tuning.expert.filter.evidence.inspect",
+            "tuning.expert.scheduling.evidence.inspect"):
+        spec = catalog.operation_spec(operation_id)
+        assert spec.risk is catalog.OperationRisk.LOCAL_UI
+        assert spec.status is catalog.OperationStatus.PARTIAL
+        assert spec.gates == frozenset()
+        assert not spec.menu_enabled
+        assert "no drive" in spec.summary.lower()
+        assert "documented" in spec.summary.lower()
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 

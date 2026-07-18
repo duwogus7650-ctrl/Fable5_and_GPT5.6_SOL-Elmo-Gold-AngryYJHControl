@@ -97,6 +97,19 @@ _SPECS = (
           "Project a velocity/position MODEL candidate from the complete "
           "Current P1 MODEL plus explicit K_a and B with no drive, worker, "
           "command, gain-write, or motion I/O."),
+    _spec("tuning.expert.filter.evidence.inspect",
+          "Expert Filter Contract · Documented Topology",
+          OperationRisk.LOCAL_UI,
+          "Inspect documented filter types, physical parameter names and "
+          "controller slots locally with no drive, worker, command, model, "
+          "emulation, or write I/O.",
+          status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.scheduling.evidence.inspect",
+          "Expert Gain Scheduling Contract · Documented Topology",
+          OperationRisk.LOCAL_UI,
+          "Inspect documented GS[2] modes and KG table topology locally with "
+          "no drive, worker, command, gain selection, emulation, or write I/O.",
+          status=OperationStatus.PARTIAL),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,

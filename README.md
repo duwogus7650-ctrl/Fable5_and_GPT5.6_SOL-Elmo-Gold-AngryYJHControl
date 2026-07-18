@@ -72,6 +72,12 @@ firmware 해시 주의사항은 [`docs/local-elmo-artifact-audit.md`](docs/local
   feedback, firmware, Gold 제품 일반화나 EAS 내부 알고리즘 동등성을 주장하지 않는다.
 - 상세 단위·수치·음성 대조:
   [`docs/expert-tuning-offline-v2.md`](docs/expert-tuning-offline-v2.md).
+- 세 번째 `FILTER / SCHED EVIDENCE` 단계는 MAN-G-CR 1.406에서 확인된 filter type,
+  KV controller slot, `GS[2]` mode와 KG table topology만 순수 로컬로 탐색한다.
+  KV/KG/GS 절 사이의 다섯 가지 문서 충돌과 누락된 SimplIQ §15.4를 그대로
+  `NEED-DATA`로 보여주며 filter 계산·controller 선택·KV/GS/KG write는 제공하지 않는다.
+  상세 계약:
+  [`docs/expert-filter-scheduling-evidence-v0.1.md`](docs/expert-filter-scheduling-evidence-v0.1.md).
 
 ### Fault / Status / Session Log v0.1
 

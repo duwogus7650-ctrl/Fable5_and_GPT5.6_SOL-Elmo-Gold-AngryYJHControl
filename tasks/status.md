@@ -1,12 +1,12 @@
-<!-- scope_progress: 90 -->
-<!-- offline_progress: 86 -->
+<!-- scope_progress: 91 -->
+<!-- offline_progress: 87 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert Candidate Lab v2
+# Gold Twitter · Quick + Single Axis + Expert v2 + Filter/Scheduling Evidence
 
-상태: **EXPERT v2 OFFLINE VERIFIED · PRIVATE DRAFT UPDATED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 17:14 KST**
+상태: **FILTER/SCHEDULING INSPECTOR OFFLINE VERIFIED · CONTROL APP OPEN · PUBLISH NEXT · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 18:22 KST**
 
 ## 현재 기준
 
@@ -14,9 +14,10 @@
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
 - Single Axis 구현 HEAD: `6f1250ffbdd558e65499e4193d69a1872269c729`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert v2 검증·게시 HEAD: `91ff7306808354cf8648e0bbbaef6e7778667665`
+- Expert v2 검증·게시 HEAD: `dfda7fef1a63ab05a26691c5b793a6bf62cb3cd2`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- 현재 작업 대상: EAS 미연결 잔여 화면 대조와 Expert filter/scheduling 근거 경계
+- 현재 작업 대상: Expert filter/scheduling 읽기 전용 evidence inspector의
+  private Draft PR 게시
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
   1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
   Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
@@ -34,7 +35,21 @@
 ## 검증 상태
 
 - `OBSERVED` 최신 전체 오프라인 suite:
-  **1410 passed, 0 failed in 260.15s**
+  **1434 passed, 0 failed in 249.01s**
+- `OBSERVED` filter/scheduling evidence·Expert UI·operation catalog 집중 회귀:
+  **98 passed, 0 failed in 53.01s**
+- `OBSERVED` MAN-G-CR 1.406에서 filter type `0..6`, KV controller slots,
+  KG table blocks와 `GS[2]=0..66` category만 immutable topology evidence로 고정
+- `OBSERVED` KG `1..504/1..945`, scheduled position `KV[45]/KV[50]`,
+  KV `1..90/KV[91..95]`, position boundary `GS[18,20]/GS[19],GS[20]`,
+  speed scheduling `GS[1,6,8,10]`/`GS[6],GS[7],GS[8] Reserved`
+  문서 충돌 5건을 정규화하지 않는 음성 대조가 GREEN
+- `OBSERVED` inspector는 DriveWorker/ElmoLink/job/command를 만들지 않고,
+  P1/P2 candidate·installed readback·Verify/Apply/Save·dispatch authority를 바꾸지 않음
+- `OBSERVED` 최신 source runtime smoke:
+  `OFFLINE · READ ONLY`, filter type `4 · Notch`, `Scheduled position filter`,
+  `GS[2]=64 · SPEED`, 다섯 문서 충돌과 `NO MODEL · NO EMULATION · NO WRITE ·
+  NO DRIVE I/O`; Apply/Save는 계속 `LOCKED`
 - `OBSERVED` Expert v2 수치 모델·UI·operation catalog·palette 격리 집중 회귀:
   **74 passed, 0 failed in 44.40s**
 - `OBSERVED` P2 동결 기준점, 대수 관계, malformed delegate mutation,
@@ -107,6 +122,15 @@
   - candidate/installed readback/`_vp_result` 권한 분리, drive/worker/command I/O 0
   - `MODEL GATE`, `SINGLE-POINT`, `GS[2]=0 ONLY`, `FILTER NEED-DATA`를 UI에 고정
   - EAS 전체 패리티·filter·gain scheduling·vendor 비공개 알고리즘 복제는 잔여
+- **Expert Filter / Scheduling Evidence v0.1**
+  - Expert 세 번째 단계에서 공개 문서의 filter type·KV location·KG block·
+    `GS[2]` mode category를 읽기 전용으로 탐색
+  - `DOCUMENTED TOPOLOGY ONLY · LOCAL INSPECTOR · NO MODEL · NO EMULATION ·
+    NO WRITE · NO DRIVE I/O`
+  - 공개 command reference의 충돌 5건과 누락 근거를 그대로 표시
+  - exact transfer/discretization/range/cascade/quantization/saturation/
+    anti-windup/interpolation/boundary는 `NEED-DATA`
+  - filter response·coefficient synthesis·KV/KG/GS write는 구현하지 않음
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -126,19 +150,21 @@
 | 작업 | 남은 예상 |
 |---|---:|
 | Expert v2 로컬 구현·전체 회귀·독립 재검토·runtime smoke | **완료** |
-| Expert v2 private Draft PR 게시 | **완료 · `91ff730`** |
+| Expert v2 private Draft PR 게시 | **완료 · `dfda7fe`** |
+| Filter/Scheduling 문서 topology inspector | **구현·집중/전체 회귀·독립 게이트·runtime smoke 완료 · 게시 진행 중** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1.5–3시간** |
-| Expert filter·gain scheduling 근거 확보/오프라인 모델 | **5–9시간 · 현재 NEED-DATA** |
+| Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-**실기 검증 제외 잔여:** 약 **6.5–12 집중시간 / 1–2 작업일**.<br>
-전체 EAS 패리티나 vendor 비공개 알고리즘의 동일 복제는 별도 범위이며 현재 신뢰 가능한 ETA를 제시하지 않음.
+문서 topology inspector 게시 뒤 확정된 무구동 잔여는 EAS 세부 화면 비교
+**1.5–3시간**이다. Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
+동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
 
-1. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
-2. Expert filter/scheduling은 exact 식·단위·range·interpolation 근거 전까지 `NEED-DATA`
-3. 공개 근거로 고정 가능한 filter/scheduling의 입력·단위·범위만 오프라인 모델로 분리
-4. 현장 gate가 충족된 개별 동작만 별도 확인 후 제한 실기
+1. Filter/scheduling inspector 전체 suite·독립 검토·runtime smoke 완료
+2. 최신 제어창/모니터창을 OFFLINE으로 재실행하고 private Draft PR 갱신
+3. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
+4. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
 
 ## 현장 안전 규칙
 

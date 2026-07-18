@@ -443,6 +443,80 @@ def test_expert_offline_lab_precedes_hardware_controls(window):
         layout.indexOf(window.tuning_guided_run_frame))
 
 
+def test_filter_scheduling_evidence_step_is_local_and_fail_closed(
+        window, qapp, monkeypatch):
+    created = []
+
+    def forbidden_constructor(*args, **kwargs):
+        created.append((args, kwargs))
+        raise AssertionError("evidence inspector must not construct transport")
+
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden_constructor)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden_constructor)
+    authority_before = {
+        "p1": window._expert_candidate,
+        "p2": window._expert_vp_candidate,
+        "installed": {
+            key: field.text()
+            for key, field in window.tune_installed_gain_fields.items()
+        },
+        "vp_result": window._vp_result,
+        "dispatch": window._tune_dispatch_inflight,
+        "verify_enabled": window.btn_tune_verify.isEnabled(),
+    }
+    window._show_tuning_mode("expert")
+    window._set_expert_lab_step("evidence")
+    qapp.processEvents()
+
+    assert window.worker is None
+    assert created == []
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_evidence_page)
+    assert "DOCUMENTED TOPOLOGY" in window.expert_lab_title.text()
+    assert "NO MODEL" in window.expert_lab_title.text()
+    assert "OFFLINE MODEL" not in window.expert_lab_title.text()
+    assert "no model" in window.expert_lab_note.text().lower()
+    assert "P1" not in window.expert_lab_note.text()
+    assert "P2" not in window.expert_lab_note.text()
+    assert "DOCUMENTED TOPOLOGY" in window.expert_evidence_status.text()
+    assert "NO MODEL" in window.expert_evidence_status.text()
+    assert "NO EMULATION" in window.expert_evidence_status.text()
+    assert "NO WRITE" in window.expert_evidence_status.text()
+
+    window.expert_filter_type.setCurrentIndex(
+        window.expert_filter_type.findData(4))
+    window.expert_filter_location.setCurrentIndex(
+        window.expert_filter_location.findData("scheduled_position"))
+    window.expert_schedule_mode.setValue(64)
+    qapp.processEvents()
+
+    assert "Notch" in window.expert_filter_type_detail.text()
+    assert "Attenuation [dB]" in window.expert_filter_type_detail.text()
+    assert "DOCUMENT CONFLICT" in window.expert_filter_location_detail.text()
+    assert "KV[45]" in window.expert_filter_location_detail.text()
+    assert "KV[50]" in window.expert_filter_location_detail.text()
+    assert "SPEED" in window.expert_schedule_mode_detail.text()
+    assert "NEED-DATA" in window.expert_schedule_mode_detail.text()
+    assert "1..504" in window.expert_evidence_conflicts.text()
+    assert "1..945" in window.expert_evidence_conflicts.text()
+    assert "DC GAIN" in window.expert_evidence_documented_facts.text()
+    assert "MOTOR OFF" in window.expert_evidence_documented_facts.text()
+    assert not window.btn_tune_vp_apply.isEnabled()
+    assert not window.btn_tune_vp_save.isEnabled()
+    assert window._expert_candidate is authority_before["p1"]
+    assert window._expert_vp_candidate is authority_before["p2"]
+    assert window._vp_result is authority_before["vp_result"]
+    assert window._tune_dispatch_inflight is authority_before["dispatch"]
+    assert window.btn_tune_verify.isEnabled() == (
+        authority_before["verify_enabled"])
+    assert {
+        key: field.text()
+        for key, field in window.tune_installed_gain_fields.items()
+    } == authority_before["installed"]
+    assert window.worker is None
+    assert created == []
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
     previous_style_sheet = qapp.styleSheet()
@@ -453,7 +527,7 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
     try:
         for themed in (theme_qdd, amber_theme, theme_angrybirds):
             qapp.setStyleSheet(themed.STYLE)
-            for step in ("current", "vp"):
+            for step in ("current", "vp", "evidence"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):

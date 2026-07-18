@@ -1,7 +1,7 @@
 # Quick Tuning + Single Axis + Expert Candidate Lab v2 작업 인계서
 
-상태: **EXPERT v2 OFFLINE VERIFIED · CONTROL APP OPEN · MOTOR ACTION NOT RUN · PRIVATE DRAFT UPDATED**<br>
-기준 시각: **2026-07-18 17:14 KST**<br>
+상태: **FILTER/SCHEDULING INSPECTOR OFFLINE VERIFIED · CONTROL APP OPEN · MOTOR ACTION NOT RUN · PRIVATE DRAFT UPDATE PENDING**<br>
+기준 시각: **2026-07-18 18:22 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -12,7 +12,7 @@
 - Single Axis 구현 HEAD:
   `6f1250ffbdd558e65499e4193d69a1872269c729`
 - Expert v2 검증·게시 HEAD:
-  `91ff7306808354cf8648e0bbbaef6e7778667665`
+  `dfda7fef1a63ab05a26691c5b793a6bf62cb3cd2`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -29,6 +29,11 @@
   P2 `K_a=5.794e6 cnt/s²/A_peak · B=1e-7 A_peak/(cnt/s)`의
   `MODEL GATE PASS · D=0.5794 1/s · bandwidth=457.500 rad/s`를 관찰했다.
   K_a 편집 뒤 `STALE` 전환과 기준값 복원·재계산 PASS도 관찰했다.
+- filter/scheduling inspector를 포함한 최신 source를 다시 실행해
+  `OFFLINE · READ ONLY`, filter type `4 · Notch`,
+  `Scheduled position filter`, `GS[2]=64 · SPEED`를 관찰했다.
+  다섯 문서 충돌과 `NO MODEL · NO EMULATION · NO WRITE · NO DRIVE I/O`가
+  동시에 표시되고 Apply/Save가 계속 잠긴 상태를 확인했다.
 - 이 admission에서는 motor enable, commutation, tuning, PTP 또는 setting write를
   실행했다는 증거가 없으며, 그런 동작을 검증한 것으로 간주하지 않는다.
 - progress monitor는 `tasks/status.md`를 읽어 갱신 중이다.
@@ -87,6 +92,22 @@
   firmware/Gold 제품 일반화 또는 EAS 내부 알고리즘 동등성을 주장하지 않음
 - filter는 `NEED-DATA`, gain scheduling은 `GS[2]=0 ONLY`; KV/GS/KG emulation/write 없음
 - 상세 계약: [`expert-tuning-offline-v2.md`](expert-tuning-offline-v2.md)
+
+### 2.4 Expert Filter / Scheduling Contract Inspector v0.1
+
+- 세 번째 Expert 단계에서 MAN-G-CR 1.406의 filter type, controller KV slot,
+  `GS[2]` mode category와 KG table topology를 순수 로컬로 탐색
+- `DOCUMENTED TOPOLOGY ONLY · NO MODEL · NO EMULATION · NO WRITE`
+- KG `1..504/1..945`, scheduled position `KV[45]/KV[50]`, KV
+  `1..90/KV[91..95]`, position boundary `GS[18,20]/GS[19],GS[20]`,
+  speed scheduling `GS[1,6,8,10]`/`GS[6],GS[7],GS[8] Reserved`
+  문서 충돌을 어느 한쪽으로 정규화하지 않고 그대로 표시
+- 누락된 SimplIQ §15.4, B01G parity, exact filter 식·discretization·range와
+  scheduling interpolation/boundary는 `NEED-DATA`
+- inspector 조작은 worker/link/command를 만들지 않고 P1/P2 candidate, installed
+  readback, Verify/Apply/Save, dispatch authority를 바꾸지 않음
+- 상세 계약:
+  [`expert-filter-scheduling-evidence-v0.1.md`](expert-filter-scheduling-evidence-v0.1.md)
 
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
@@ -193,7 +214,9 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1410 passed, 0 failed in 260.15s** | Expert v2 독립 리뷰·peak-current 단위 정합성 수정까지 포함한 `91ff730`의 Python/mock/offscreen 경로 |
+| 전체 repository suite | **1434 passed, 0 failed in 249.01s** | Expert v2와 filter/scheduling evidence inspector를 포함한 최신 working tree의 Python/mock/offscreen 경로 |
+| Filter/scheduling evidence·UI·catalog 집중 회귀 | **98 passed, 0 failed in 53.01s** | immutable public-document topology, strict inputs, five unresolved document conflicts, zero-I/O·authority isolation, 세 스킨 1366×820 |
+| Filter/scheduling 최신 runtime smoke | **Notch · Scheduled position · GS[2]=64 SPEED** | Python 3.14, 1366×820, OFFLINE/READ ONLY; 다섯 문서 충돌, NO MODEL/EMULATION/WRITE/DRIVE I/O와 Apply/Save LOCKED 확인 |
 | Expert v2 수치·UI·catalog 집중 회귀 | **74 passed, 0 failed in 44.40s** | P1→P2 MODEL, provenance·mutation/음성 대조, zero-I/O, stale authority, 세 스킨 1366×820와 palette 격리 |
 | Expert v2 독립 리뷰 | HIGH 1 + MEDIUM 1 RED 재현 후 **5 passed** | 다른 plant의 P1 자기서명·모순 delegate PASS·입력 편집 뒤 stale PASS 차단 |
 | Expert v2 최신 runtime smoke | **P1 PASS · P2 PASS · edit→STALE→recalculate PASS** | Python 3.14, 1366×820, OFFLINE/READ ONLY; drive/worker/command I/O 없음 |
