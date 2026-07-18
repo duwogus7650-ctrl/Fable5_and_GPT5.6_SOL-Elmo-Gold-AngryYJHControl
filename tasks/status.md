@@ -1,18 +1,20 @@
-<!-- scope_progress: 85 -->
-<!-- offline_progress: 79 -->
+<!-- scope_progress: 87 -->
+<!-- offline_progress: 82 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
 # Gold Twitter · Quick + Single Axis + Expert Candidate Lab v1
 
 상태: **IN PROGRESS · CONTROL APP OFFLINE · EAS UI MAPPED / UNCONNECTED · READ-ONLY FIELD SESSION CLOSED**<br>
-업데이트: **2026-07-18 15:09 KST**
+업데이트: **2026-07-18 15:53 KST**
 
 ## 현재 기준
 
 - 브랜치: `codex/quick-single-axis-handoff`
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
-- 작업 대상: 위 기준에서 누적한 Quick/Single Axis/Expert·안전 경계 변경
+- GitHub 게시 HEAD: `9a596265afb31044d43d24015914f35de28d5706`
+  (`origin/codex/quick-single-axis-handoff`, Draft PR #2)
+- 현재 작업 대상: 게시 HEAD 위의 Single Axis Safety Snapshot v1
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
   1366×820, page-scroll reset, Quick/Expert 공통 제어와 Expert offline/locked 표시를
   실제 실행창에서 재확인
@@ -25,7 +27,9 @@
 
 ## 검증 상태
 
-- `OBSERVED` 최신 전체 오프라인 suite: **1335 passed, 0 failed in 177.92s**
+- `OBSERVED` 최신 전체 오프라인 suite: **1371 passed, 0 failed in 303.22s**
+- `OBSERVED` Single Axis snapshot·connection generation·session log·motion 집중 회귀:
+  **346 passed, 0 failed in 127.18s**
 - `OBSERVED` 집중 연결·텔레메트리·모니터·테마 회귀: **204 passed**
 - `OBSERVED` 1366×820 세 테마 레이아웃 회귀: **33 passed**
 - `OBSERVED` 독립 리뷰의 access-mode 증거 누락·복구 잠금·자기서명 경로 3건:
@@ -70,6 +74,14 @@
   - Apply/Save는 계속 `NEED-DATA` 잠금
 - **Single Axis**
   - finite-PTP 오프라인 backend는 MODEL 검증
+  - 기존 Axis Summary의 `MO/SO/MF/PS/SR/MS`만 소비하는
+    `DRIVE-REPORTED · MODEL · NOT STO TEST EVIDENCE` safety snapshot 구현
+  - 누락·NaN/Inf·bool·비정수·초대형 정수·reserved SR bit·문서 밖 amplifier/profiler code는
+    전체 model authority `UNKNOWN`
+  - SO/SR4 또는 PS/SR12 불일치는 `INCONSISTENT · AUTHORITY UNKNOWN`
+  - 신규 query/job/link 호출 없이 current worker generation만 처리하고 disconnect 즉시 blank
+  - telemetry authority 상실·energizing 중에는 snapshot만 blank하되 current-worker
+    `motion_config_unknown` fail-safe latch는 계속 수용
   - live PTP는 기계 envelope·limit·정지거리·독립 E-stop/STO 근거 전까지 `NEED-DATA`
 - **Expert Candidate Lab v1**
   - 전류루프 후보 계산과 read-only Bode 미리보기는 LOCAL MODEL
@@ -81,7 +93,8 @@
 - **EAS 미연결 UI inventory**
   - Quick 6단계 명칭/순서가 현재 guided flow와 일치
   - Expert의 User Units·limits/protection·I/O·settling·scheduling·time verification·Summary는 잔여
-  - Single Axis의 I/O/STO·mode별 수동 구동·Terminal·docked Recorder parity는 잔여
+  - Single Axis의 STO drive-reported snapshot은 부분 구현
+  - Digital I/O·mode별 수동 구동·Terminal·docked Recorder parity는 잔여 `NEED-DATA`
 - **Elmo 자료 인벤토리**
   - 신규 폴더 59개 파일과 SHA-256 기록
   - `Version 1.1.16.0 B01 for customers.zip` 안의 `NGDrive 01.01.16.00 08Mar2020B01G.gabs` 파일명 일치 확인
@@ -92,17 +105,17 @@
 | 작업 | 남은 예상 |
 |---|---:|
 | 최신 앱 OFFLINE smoke 후 문서 closeout | **0.25–0.5시간** |
-| EAS 미연결 매핑 정리 + 무구동 상태/세부 페이지 비교 | **2–4시간** |
+| EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1.5–3시간** |
 | Expert vNext P2·필터·스케줄링 오프라인 구현 | **7–12시간** |
 | 통합 문서·독립 재검토 | **2–3시간** |
 
-**실기 검증 제외 잔여:** 약 **12–21 집중시간 / 2–3 작업일**.<br>
+**실기 검증 제외 잔여:** 약 **11–19 집중시간 / 2–3 작업일**.<br>
 전체 EAS 패리티나 vendor 비공개 알고리즘의 동일 복제는 별도 범위이며 현재 신뢰 가능한 ETA를 제시하지 않음.
 
 ## 다음 자동 진행
 
-1. EAS UI inventory를 operation catalog의 구현/잠금 상태와 항목별 대조
-2. Single Axis read-only I/O/STO 상태 모델과 Expert vNext P2·scheduling을 OFFLINE 우선 설계
+1. Expert vNext P2·filter·scheduling을 순수 OFFLINE candidate 단계부터 구현
+2. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
 3. 현장 gate가 충족된 개별 동작만 별도 확인 후 제한 실기
 
 ## 현장 안전 규칙

@@ -1,7 +1,7 @@
 # Quick Tuning + Single Axis + Expert Candidate Lab v1 작업 인계서
 
 상태: **READ ONLY FIELD ADMISSION OBSERVED · MOTOR ACTION NOT RUN · PRIVATE DRAFT**<br>
-기준 시각: **2026-07-18 15:09 KST**<br>
+기준 시각: **2026-07-18 15:53 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -9,6 +9,8 @@
 
 - 작업 브랜치: `codex/quick-single-axis-handoff`
 - 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
+- GitHub 게시 HEAD:
+  `9a596265afb31044d43d24015914f35de28d5706`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -44,6 +46,20 @@
 ### 2.2 Single Axis
 
 - `UM=5` finite-PTP 오프라인 backend와 제한·판정 kernel은 MODEL 검증됨
+- `Single Axis Safety Snapshot v1`은 기존 Axis Summary가 이미 읽은
+  `MO/SO/MF/PS/SR/MS`만 소비하는 pure zero-new-I/O projection
+- UI에는 `DRIVE-REPORTED · MODEL DECODE · NOT STO TEST EVIDENCE`를 고정 표시
+- `SR[3:0]`, `SR4`, `SR12`, `SR13`, `SR14`, `SR15`, `SR[11:8]`을
+  2013 Gold command reference 기반 MODEL로만 해석
+- 누락·NaN/Inf·bool·비정수·초대형 정수·범위 위반은 전체 semantic projection `UNKNOWN`
+- 2013 reference에서 reserved인 SR bit, amplifier code와 profiler code 11–15도
+  `UNKNOWN`; 현재 firmware에서 의미를 추정하지 않음
+- `SO↔SR4`, `PS↔SR12` 불일치는 raw 값은 보존하되 authority를
+  `INCONSISTENT · AUTHORITY UNKNOWN`으로 폐기
+- current worker가 아닌 signal과 shutdown-pending/disconnect 뒤 signal은 표시를 복구하지 못함
+- telemetry authority 상실·energizing 중에는 safety projection만 blank하고,
+  current worker가 보내는 `motion_config_unknown`/energy-closeout latch는 계속 수용
+- 이 projection은 STO 배선·반응시간·torque isolation·독립 E-stop 시험의 증거가 아님
 - `FINITE_PTP_LIVE_ENABLED=False`
 - live PTP catalog 상태는 `NEED-DATA`
 - 기계 travel, 방향, output ratio, limit 입력, 정지거리, 독립 E-stop/STO 근거 전에는
@@ -163,7 +179,8 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
-| 전체 repository suite | **1335 passed, 0 failed in 177.92s** | 최신 dirty tree의 Python/mock/offscreen 경로 |
+| 전체 repository suite | **1371 passed, 0 failed in 303.22s** | 최신 dirty tree의 Python/mock/offscreen 경로 |
+| Single Axis snapshot 집중 회귀 | **346 passed, 0 failed in 127.18s** | decoder·UI·catalog·generation·telemetry·shutdown·session log·motion |
 | 연결·텔레메트리·모니터·테마 집중 회귀 | **204 passed** | access-mode와 UI lifecycle |
 | 1366×820 세 테마 회귀 | **33 passed** | qdd/amber/angrybirds geometry |
 | 독립 리뷰 3개 음성 대조 | RED 재현 후 **3 passed** | mode 누락·복구·자기서명 |

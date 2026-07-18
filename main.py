@@ -42,6 +42,7 @@ import autotune_current
 import autotune_velpos
 import expert_tuning_offline
 import single_axis_motion
+import single_axis_status
 import recorder_control
 import recorder_view
 import operation_catalog
@@ -4208,14 +4209,89 @@ class MainWindow(QtWidgets.QMainWindow):
     def _axis_join(raw, names):
         return " / ".join("%s=%s" % (name, raw.get(name, "—")) for name in names)
 
+    def _reset_axis_safety_snapshot(self, reason):
+        """Blank the safety projection without changing any drive authority."""
+        self._axis_safety_snapshot = (
+            single_axis_status.decode_axis_safety_snapshot(None))
+        if not hasattr(self, "lbl_axis_safety_state"):
+            return
+        self.lbl_axis_safety_state.setText("UNKNOWN")
+        self.lbl_axis_safety_state.setProperty("on", "false")
+        self.lbl_axis_safety_state.setProperty("status", "neutral")
+        self._restyle(self.lbl_axis_safety_state)
+        for widget in self.axis_safety_fields.values():
+            widget.setText("—")
+        self.lbl_axis_safety_detail.setText(
+            str(reason or "No current admitted connection snapshot"))
+        if hasattr(self, "axis_fields") and "safety" in self.axis_fields:
+            self.axis_fields["safety"].setText("—")
+
+    def _render_axis_safety_snapshot(self, snapshot):
+        """Render a pure MODEL projection; never grant motion/STO authority."""
+        self._axis_safety_snapshot = snapshot
+        if not hasattr(self, "lbl_axis_safety_state"):
+            return
+        if snapshot.state == single_axis_status.UNKNOWN:
+            self._reset_axis_safety_snapshot(snapshot.reason)
+            return
+
+        raw = snapshot.raw
+        values = {
+            "mo_so": "MO=%d · SO=%d" % (raw["MO"], raw["SO"]),
+            "fault_amp": "MF=%d · SR[3:0]=0x%X" % (
+                raw["MF"], snapshot.amplifier_code),
+            "servo": "SR4=%d" % int(snapshot.servo_enabled_reported),
+            "sto": "SR14=%d · SR15=%d" % (
+                int(snapshot.sto1_permission_reported),
+                int(snapshot.sto2_permission_reported)),
+            "program_limit": "PS=%d · SR12=%d · SR13=%d" % (
+                raw["PS"], int(snapshot.user_program_reported),
+                int(snapshot.current_limit_reported)),
+            "profiler": "MS=%d · SR[11:8]=%d" % (
+                raw["MS"], snapshot.profiler_code),
+        }
+        for key, widget in self.axis_safety_fields.items():
+            widget.setText(values[key])
+
+        if snapshot.state == single_axis_status.INCONSISTENT:
+            state_text = "INCONSISTENT · AUTHORITY UNKNOWN"
+            state_style = "error"
+            detail = snapshot.reason
+        else:
+            state_text = "CURRENT · MODEL"
+            state_style = "neutral"
+            detail = " · ".join(snapshot.conditions)
+        self.lbl_axis_safety_state.setText(state_text)
+        self.lbl_axis_safety_state.setProperty("on", "false")
+        self.lbl_axis_safety_state.setProperty("status", state_style)
+        self._restyle(self.lbl_axis_safety_state)
+        self.lbl_axis_safety_detail.setText(detail)
+
     def _on_axis_summary(self, summary):
         source = self.sender()
         if source is not None and source is not self.worker:
+            return
+        current_source = bool(
+            not getattr(self, "_connection_shutdown_pending", False)
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and self.worker
+            and self.worker.isRunning())
+        if not current_source:
+            self._reset_axis_safety_snapshot(
+                "No current admitted connection snapshot")
             return
         self._session_log_event_changed(
             self.session_log.record_axis_summary(summary or {}))
         self._axis_summary_data = dict(summary or {})
         raw = self._axis_summary_data.get("raw", {}) or {}
+        if (getattr(self, "_telemetry_authoritative", False)
+                and not getattr(self, "_energizing_state", False)):
+            self._render_axis_safety_snapshot(
+                single_axis_status.decode_axis_safety_snapshot(raw))
+        else:
+            self._reset_axis_safety_snapshot(
+                "Telemetry authority unavailable for safety projection")
         values = {
             "scope": self._axis_summary_data.get("scope", "—"),
             "mode": self._axis_summary_data.get("mode", "—"),
@@ -4563,9 +4639,86 @@ class MainWindow(QtWidgets.QMainWindow):
             "현재 드라이브의 raw UM/feedback routing/FC/BP/SC/limit/profile을 읽어 보여주며, "
             "Axis 설정 쓰기는 Preview → RAM → exact readback → rollback → 별도 SV 계약 이후 추가합니다.")
         note.setProperty("role", "hint"); note.setWordWrap(True); outer.addWidget(note)
+
+        safety_frame = QtWidgets.QFrame()
+        safety_frame.setObjectName("chip")
+        safety_outer = QtWidgets.QVBoxLayout(safety_frame)
+        safety_outer.setContentsMargins(10, 8, 10, 8)
+        safety_outer.setSpacing(6)
+        safety_head = QtWidgets.QHBoxLayout()
+        safety_title = QtWidgets.QLabel(
+            "SINGLE AXIS SAFETY SNAPSHOT v1  ·  ZERO-NEW-I/O")
+        safety_title.setProperty("role", "field")
+        safety_head.addWidget(safety_title)
+        safety_head.addStretch(1)
+        self.lbl_axis_safety_state = QtWidgets.QLabel("UNKNOWN")
+        self.lbl_axis_safety_state.setObjectName("pill")
+        self.lbl_axis_safety_state.setProperty("on", "false")
+        self.lbl_axis_safety_state.setProperty("status", "neutral")
+        safety_head.addWidget(self.lbl_axis_safety_state)
+        safety_outer.addLayout(safety_head)
+
+        self.lbl_axis_safety_contract = QtWidgets.QLabel(
+            single_axis_status.EVIDENCE_LABEL
+            + " · existing MO/SO/MF/PS/SR/MS snapshot only · "
+              "independent E-stop/STO response and torque isolation remain NEED-DATA")
+        self.lbl_axis_safety_contract.setProperty("role", "hint")
+        self.lbl_axis_safety_contract.setWordWrap(True)
+        self.lbl_axis_safety_contract.setMinimumHeight(max(
+            58, self.lbl_axis_safety_contract.sizeHint().height()))
+        safety_outer.addWidget(self.lbl_axis_safety_contract)
+
+        safety_grid = QtWidgets.QGridLayout()
+        safety_grid.setContentsMargins(0, 0, 0, 0)
+        safety_grid.setHorizontalSpacing(10)
+        safety_grid.setVerticalSpacing(5)
+        self.axis_safety_fields = {}
+        safety_rows = (
+            ("mo_so", "Motor command / feedback"),
+            ("fault_amp", "Fault / amplifier code"),
+            ("servo", "Servo feedback"),
+            ("sto", "STO channels · drive report"),
+            ("program_limit", "User program / current limit"),
+            ("profiler", "Profiler"),
+        )
+        for index, (key, label) in enumerate(safety_rows):
+            cell = QtWidgets.QWidget()
+            cell_layout = QtWidgets.QVBoxLayout(cell)
+            cell_layout.setContentsMargins(0, 0, 0, 0)
+            cell_layout.setSpacing(2)
+            field_label = QtWidgets.QLabel(label)
+            field_label.setProperty("role", "field")
+            value = QtWidgets.QLineEdit("—")
+            value.setReadOnly(True)
+            cell_layout.addWidget(field_label)
+            cell_layout.addWidget(value)
+            safety_grid.addWidget(cell, index // 3, index % 3)
+            self.axis_safety_fields[key] = value
+        safety_outer.addLayout(safety_grid)
+
+        self.lbl_axis_safety_detail = QtWidgets.QLabel(
+            "OFFLINE · no current drive snapshot")
+        self.lbl_axis_safety_detail.setProperty("role", "hint")
+        self.lbl_axis_safety_detail.setWordWrap(True)
+        self.lbl_axis_safety_detail.setMinimumHeight(max(
+            58, self.lbl_axis_safety_detail.sizeHint().height()))
+        safety_outer.addWidget(self.lbl_axis_safety_detail)
+        outer.addWidget(safety_frame)
+
         scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True)
+        self.axis_summary_scroll = scroll
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
-        body = QtWidgets.QWidget(); grid = QtWidgets.QGridLayout(body)
+        body = QtWidgets.QWidget()
+        self.axis_summary_body = body
+        for surface in (scroll.viewport(), body):
+            palette = surface.palette()
+            palette.setColor(
+                QtGui.QPalette.ColorRole.Window, QtGui.QColor(theme.CARD))
+            palette.setColor(
+                QtGui.QPalette.ColorRole.Base, QtGui.QColor(theme.CARD))
+            surface.setPalette(palette)
+            surface.setAutoFillBackground(True)
+        grid = QtWidgets.QGridLayout(body)
         grid.setContentsMargins(0, 0, 6, 0); grid.setHorizontalSpacing(12); grid.setVerticalSpacing(7)
         self.axis_fields = {}
         rows = (
@@ -4601,6 +4754,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.axis_status = QtWidgets.QLabel("OFFLINE")
         self.axis_status.setProperty("role", "hint"); self.axis_status.setWordWrap(True)
         outer.addWidget(self.axis_status)
+        self._reset_axis_safety_snapshot("OFFLINE · no current drive snapshot")
         return f
 
     def _build_system_configuration_page(self):
@@ -8790,6 +8944,11 @@ class MainWindow(QtWidgets.QMainWindow):
         """Fail closed without hiding that a live worker may still own energy."""
         was_authoritative = bool(self._telemetry_authoritative)
         self._telemetry_authoritative = False
+        reset_snapshot = getattr(
+            self, "_reset_axis_safety_snapshot", None)
+        if callable(reset_snapshot):
+            reset_snapshot(
+                str(detail or "Telemetry authority unavailable"))
         if hasattr(self, "status_monitor_model"):
             self._status_monitor_revoke(
                 str(detail or "Telemetry authority unavailable"))
@@ -9348,6 +9507,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._connection_access_mode = None
             self._invalidate_tuning_result_authority()
             self._motion_session_zero_confirmed = False
+            self._reset_axis_safety_snapshot(
+                "No current admitted connection snapshot")
             for name in (
                     "chk_motion_operator", "chk_motion_estop",
                     "chk_motion_limits"):

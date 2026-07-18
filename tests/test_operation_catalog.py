@@ -30,6 +30,28 @@ def test_expert_offline_candidate_calculation_is_local_only():
     assert "no drive" in spec.summary.lower()
 
 
+def test_single_axis_safety_snapshot_is_zero_io_model_projection():
+    spec = catalog.operation_spec("axis.safety_snapshot")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.IMPLEMENTED
+    assert spec.gates == frozenset()
+    assert "MO/SO/MF/PS/SR/MS" in spec.summary
+    assert "no new drive" in spec.summary.lower()
+    assert "not STO test evidence" in spec.summary
+
+
+def test_unmapped_single_axis_eas_controls_remain_separate_need_data_gaps():
+    for operation_id in (
+            "eas.single_axis.digital_io",
+            "eas.single_axis.manual_references",
+            "eas.single_axis.terminal"):
+        spec = catalog.operation_spec(operation_id)
+        assert spec.risk is catalog.OperationRisk.NEED_DATA
+        assert spec.status is catalog.OperationStatus.NEED_DATA
+        assert not spec.menu_enabled
+
+
 def test_live_ptp_catalog_matches_the_production_field_gate():
     spec = catalog.operation_spec("motion.ptp.run")
 
