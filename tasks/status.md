@@ -5,8 +5,8 @@
 
 # Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units
 
-상태: **USER UNITS DOCUMENTED PREVIEW OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 20:06 KST**
+상태: **USER UNITS DOCUMENTED PREVIEW OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · CONTROL APP OPEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 20:10 KST**
 
 ## 현재 기준
 
@@ -22,10 +22,10 @@
 - Expert Local Page Status / Errors v0.1 검증·구현 HEAD:
   `a20e19a0d28bc66b91572ad93d4cd2da4f032672`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert User Units · Documented Formula Preview v0.1:
-  **working tree 검증 완료 · private 게시 전**
-- 현재 작업 대상: 검증된 User Units 변경을 private Draft PR #2에 게시한 뒤
-  다음 EAS 미연결 LOCAL/READ-ONLY 세부 화면의 최소 계약 확정
+- Expert User Units · Documented Formula Preview v0.1 검증·구현 HEAD:
+  `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
+  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
+- 현재 작업 대상: 다음 EAS 미연결 LOCAL/READ-ONLY 세부 화면의 최소 계약 확정
 - 제어창: 최신 source를 Python 3.14로 다시 실행했고 **OFFLINE · READ ONLY 기본값**.
   1366×820, page-scroll reset, Quick/Expert 공통 제어, Expert offline/locked와
   Single Axis Snapshot `UNKNOWN`/zero-new-I/O 고지를 실제 실행창에서 재확인
@@ -204,7 +204,7 @@
 | Expert v2 private Draft PR 게시 | **완료 · `dfda7fe`** |
 | Filter/Scheduling 문서 topology inspector | **완료 · `540877e` · private Draft PR #2** |
 | Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
-| Expert User Units · Documented Formula Preview v0.1 | **검증 완료 · private 게시 전** |
+| Expert User Units · Documented Formula Preview v0.1 | **완료 · `0472ee5` · private Draft PR #2** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1–2.5시간** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
@@ -215,10 +215,9 @@ Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 
 ## 다음 자동 진행
 
-1. User Units 변경을 사용자 파일 제외 상태로 private origin/Draft PR #2에 게시
-2. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
-3. 근거가 충분한 다음 LOCAL/READ-ONLY 기능의 최소 범위와 음성 대조를 확정
-4. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
+1. EAS 미연결 세부 화면과 operation catalog의 구현/잠금 상태를 항목별 대조
+2. 근거가 충분한 다음 LOCAL/READ-ONLY 기능의 최소 범위와 음성 대조를 확정
+3. Exact 식·단위·range·interpolation 근거 전까지 evaluator/emulator/write는 `NEED-DATA`
 
 ## 현장 안전 규칙
 
