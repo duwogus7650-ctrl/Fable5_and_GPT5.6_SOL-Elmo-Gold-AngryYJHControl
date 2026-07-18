@@ -5,8 +5,8 @@
 
 # Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings
 
-상태: **APPLICATION SETTINGS CLOSEOUT COMPLETE · PRIVATE PUBLISH PENDING · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 21:50 KST**
+상태: **APPLICATION SETTINGS PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 22:02 KST**
 
 ## 현재 기준
 
@@ -28,9 +28,12 @@
 - Expert Limits / Protections · Documented Parameter Map v0.1 검증·구현 HEAD:
   `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
   (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
+- Expert Application Settings · Documented Map v0.1 검증·구현 HEAD:
+  `e577f790f6b15c418f1cd6a8fd9bd55da9a46d1f`
+  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
 - 현재 작업 대상:
-  Expert Application Settings source/docs의 private Draft PR 반영
-- Expert Application Settings 구현은 아직 working tree이며 게시 HEAD가 아니다.
+  게시 closeout 기록과 다음 no-I/O EAS bounded slice 선정
+- Expert Application Settings 구현은 private `origin`의 게시 HEAD다.
   일곱 번째 `APP SETTINGS` page에 Brake 4 / Settling Window 4 / Inputs and
   Outputs 5개 immutable documentation row, 24 frozen source identity,
   9 conflicts, 16 warnings, 6 missing-evidence를 고정했다.
@@ -261,7 +264,7 @@
     evaluation/command/write/Apply/Revert/SV/output actuation/motion/safety는
     `NEED-DATA / NO-GO`
   - focused 85 passed, 전체 1529 passed, 독립 closeout과 runtime GUI smoke 완료
-  - private Draft PR 게시 전
+  - private Draft PR #2에 구현 commit `e577f79`로 게시
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -292,18 +295,18 @@
 | Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
 | Expert User Units · Documented Formula Preview v0.1 | **완료 · `0472ee5` · private Draft PR #2** |
 | Expert Limits / Protections · Documented Parameter Map v0.1 | **완료 · focused 69 / 전체 1513 passed + runtime/독립 closeout · `baa2841` · private Draft PR #2** |
-| Expert Application Settings · Documented Map v0.1 | **closeout 완료 · focused 85 / 전체 1529 passed + runtime/독립 검토 · private 게시 대기** |
-| Application Settings private Draft PR 게시 | **진행 중** |
+| Expert Application Settings · Documented Map v0.1 | **완료 · focused 85 / 전체 1529 passed + runtime/독립 검토 · `e577f79` · private Draft PR #2** |
+| Application Settings private Draft PR 게시 | **완료 · `e577f79`** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-Application Settings 로컬 closeout은 완료됐고 private 게시만 남았다.
+Application Settings 로컬 closeout과 private 게시는 완료됐다.
 이는 근거가 있는 LOCAL/READ-ONLY 계약의 완료이며 모든 EAS 페이지 구현 완료를 뜻하지 않는다.
 Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
 
-1. private `origin` Draft PR에 source/docs를 명시적으로 게시하고 사용자 media 변경 제외
+1. 잔여 무구동 EAS 세부 페이지를 evidence-first로 비교해 다음 bounded slice를 선정
 2. exact current config·EAS transaction·output electrical/brake capability 근거 전까지
    evaluator/recommendation/read/write/Apply/SV/actuation은 `NEED-DATA / NO-GO`
 
