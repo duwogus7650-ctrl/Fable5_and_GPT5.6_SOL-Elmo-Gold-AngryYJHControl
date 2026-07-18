@@ -1,12 +1,12 @@
-<!-- scope_progress: 94 -->
-<!-- offline_progress: 92 -->
+<!-- scope_progress: 95 -->
+<!-- offline_progress: 93 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings
 
-상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 21:06 KST**
+상태: **APPLICATION SETTINGS CLOSEOUT COMPLETE · PRIVATE PUBLISH PENDING · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 21:50 KST**
 
 ## 현재 기준
 
@@ -29,13 +29,21 @@
   `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
   (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
 - 현재 작업 대상:
-  Expert Application Settings의 근거 기반 LOCAL/no-I/O 최소 범위 확정
+  Expert Application Settings source/docs의 private Draft PR 반영
+- Expert Application Settings 구현은 아직 working tree이며 게시 HEAD가 아니다.
+  일곱 번째 `APP SETTINGS` page에 Brake 4 / Settling Window 4 / Inputs and
+  Outputs 5개 immutable documentation row, 24 frozen source identity,
+  9 conflicts, 16 warnings, 6 missing-evidence를 고정했다.
+- `IP + IB[N]`, `GO[N] + OP` 두 status-semantics row는
+  **`unavailable · not sampled`**이며 현재 drive/I/O state가 아니다.
+- authority는 `DOCUMENTED_APPLICATION_SETTINGS_MAP_ONLY`, status는
+  `PARTIAL_NEED_DATA`; local catalog/UI inspect만 GREEN이다. drive read/worker/
+  command/write/Apply/Revert/SV/output actuation/motion은 없다.
 - 제어창: 최신 source를 Python 3.14로 실행해 **OFFLINE · READ ONLY**에서
-  여섯 번째 `LIMITS / PROTECT`, `Current 7 / Motion 9 / Protections 11` row,
-  20개 frozen source identity와 `document: R/W · app: inspect-only` 표기를 확인했다.
-  초기 흰 표/밝은 글자 결함은 전용 QDD/amber/angrybirds 스타일로 수정했고,
-  최신 실행창에서 어두운 고대비 표를 재확인했다. 연결·읽기·쓰기·Apply/SV·구동은
-  실행하지 않았다.
+  일곱 번째 `APP SETTINGS`, Brake 4 / Settling Window 4 /
+  Inputs and Outputs 5개 row, 24개 frozen source identity,
+  `COMMAND`, `ROLE / REF`, `UNIT / ACCESS`, `STATUS / NOTE`의 네 표 헤더를 확인했다.
+  Connect·읽기·쓰기·Apply/Revert/SV·output actuation·구동은 실행하지 않았다.
 - Page Status runtime smoke: 네 번째 `STATUS / ERRORS` 단계에서
   `OVERALL PARTIAL · LOCAL STATUS ONLY`, P1 `MISSING`, P2 `BLOCKED`,
   Evidence `DOCUMENTED PARTIAL · 5 unresolved document conflicts`를 관찰.
@@ -59,6 +67,25 @@
 
 ## 검증 상태
 
+- `OBSERVED` Application Settings 모델·UI·operation catalog·authority focused 회귀:
+  **85 passed**. immutable 3 sections/13 rows(4/4/5), 24 source identity,
+  9 conflicts, 16 warnings, 6 missing-evidence, strict lookup/digest,
+  file/process/network/worker/link/drive I/O poison, 기존 Expert/installed/
+  dispatch/connection/safety와 Run/Verify/Apply/Restore/Save authority 불변,
+  late Axis Summary 비전파, 세 테마 1366×820 geometry/contrast를 확인했다.
+- 이 85-pass 결과에서 **로컬 immutable catalog/UI만 GREEN**이다.
+  current drive config/I/O state, exact B01G output electrical/brake capability,
+  current/default 판정, transaction/readback/rollback, output actuation,
+  brake/safety efficacy와 field behavior는 **`NEED-DATA / NO-GO`**다.
+- `OBSERVED` Application Settings를 포함한 최신 전체 repository suite:
+  **1529 passed in 476.14s**, 직접 `pytest` 실행의 숫자 종료코드 **0**
+- `OBSERVED` Application Settings 독립 closeout:
+  **잔여 HIGH/MEDIUM/LOW 없음**. 독립 재계산한 24개 source SHA-256 전부
+  동결값과 일치했고 미검증 Gold Twitter 설치/하드웨어 PDF는 제외됨
+- `OBSERVED` Application Settings runtime GUI smoke:
+  Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 4/4/5개 행, 24개 frozen
+  identity, 짧은 표 헤더와 app inspect-only를 확인. Connect,
+  drive/worker/command/output/motion I/O 없음
 - `OBSERVED` Limits/Protections 모델·UI·operation catalog·authority focused 회귀:
   **69 passed**. canonical frozen snapshot, 27개 command row, 9개 문서 충돌,
   danger warning, strict lookup, 20개 source hash, zero file/process/network/worker/link/job/query/write,
@@ -68,7 +95,7 @@
   current drive config, active protection state, firmware/EAS parity, 값 유효성·추천,
   protection efficacy, read/write/Apply/Revert/SV와 field safety는
   **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` 최신 전체 오프라인 suite:
+- `OBSERVED` 직전 Limits/Protections 기준 전체 오프라인 suite:
   **1513 passed in 698.16s**. 출력은 100%와 passed summary까지 완료됐고 stderr는
   비어 있으며, 별도 capture-completeness 검사는 exit 0이다. 백그라운드 launcher가
   원 pytest process의 숫자 exit code를 보존하지 않은 한계는 남긴다.
@@ -76,7 +103,7 @@
   SimplIQ source, mutation digest, documented/app access 구분, fresh-import poison,
   connection/safety authority snapshot과 세 테마 contrast를 재확인해
   **잔여 HIGH/MEDIUM/LOW 없음**. 독립 focused 실행도 **69 passed**
-- `OBSERVED` 최신 runtime smoke:
+- `OBSERVED` Limits/Protections runtime smoke:
   Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 세 section 7/9/11 row,
   20 frozen identities, dark high-contrast table, action control 없음,
   Apply/Save `LOCKED`; drive/worker/command I/O와 motor action 없음
@@ -223,6 +250,18 @@
     Apply/SV/unit propagation/field safety는 `NEED-DATA / NO-GO`
   - focused 69 passed, 전체 1513 passed, runtime smoke와 독립 closeout 완료;
     private Draft PR #2에 `baa2841`로 게시
+- **Expert Application Settings · Documented Map v0.1**
+  - Expert 일곱 번째 단계에서 `Brake`, `Settling Window`,
+    `Inputs and Outputs`의 4/4/5개 row를 frozen static catalog로 표시
+  - authority `DOCUMENTED_APPLICATION_SETTINGS_MAP_ONLY`, status
+    `PARTIAL_NEED_DATA`; 24 sources, 9 conflicts, 16 warnings, 6 missing
+  - `IP + IB[N]`, `GO[N] + OP`는 live status의 문서상 semantics만 표시하고
+    `unavailable · not sampled`를 유지
+  - local inspect만 GREEN. current config/I/O/brake/default, validation/
+    evaluation/command/write/Apply/Revert/SV/output actuation/motion/safety는
+    `NEED-DATA / NO-GO`
+  - focused 85 passed, 전체 1529 passed, 독립 closeout과 runtime GUI smoke 완료
+  - private Draft PR 게시 전
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -232,7 +271,9 @@
   - Expert User Units는 documented 위치 식 preview만 부분 구현
   - limits/protection은 static documented map만 부분 구현; 값 read/validation/write와
     protection efficacy는 미구현
-  - I/O·settling·time verification, User Units의 drive readback/write와
+  - Application Settings의 Brake/Settling/I/O는 static documented map만
+    부분 구현; current readback/write/transaction/actuation은 잔여
+  - time verification, User Units의 drive readback/write와
     EAS page icon/Enter/Apply·Summary recommendation은 잔여
   - Single Axis의 STO drive-reported snapshot은 부분 구현
   - Digital I/O·mode별 수동 구동·Terminal·docked Recorder parity는 잔여 `NEED-DATA`
@@ -251,20 +292,20 @@
 | Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
 | Expert User Units · Documented Formula Preview v0.1 | **완료 · `0472ee5` · private Draft PR #2** |
 | Expert Limits / Protections · Documented Parameter Map v0.1 | **완료 · focused 69 / 전체 1513 passed + runtime/독립 closeout · `baa2841` · private Draft PR #2** |
-| EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1–2.5시간** |
+| Expert Application Settings · Documented Map v0.1 | **closeout 완료 · focused 85 / 전체 1529 passed + runtime/독립 검토 · private 게시 대기** |
+| Application Settings private Draft PR 게시 | **진행 중** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-Limits/Protections closeout 뒤 남은 무구동 매핑·비교는 **1–2.5시간**이다.
-이는 근거가 있는 LOCAL/READ-ONLY 계약을 고르는 시간이며 모든 EAS 페이지 구현 ETA가 아니다.
+Application Settings 로컬 closeout은 완료됐고 private 게시만 남았다.
+이는 근거가 있는 LOCAL/READ-ONLY 계약의 완료이며 모든 EAS 페이지 구현 완료를 뜻하지 않는다.
 Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
 
-1. Expert Application Settings에서 문서 근거가 충분한 다음 LOCAL/no-I/O inspector 확정
-2. 새 기능도 실패 우선 zero-I/O/authority/geometry/contrast 계약부터 작성
-3. exact current config·EAS transaction·protection efficacy 근거 전까지
-   evaluator/recommendation/read/write/Apply/SV는 `NEED-DATA / NO-GO`
+1. private `origin` Draft PR에 source/docs를 명시적으로 게시하고 사용자 media 변경 제외
+2. exact current config·EAS transaction·output electrical/brake capability 근거 전까지
+   evaluator/recommendation/read/write/Apply/SV/actuation은 `NEED-DATA / NO-GO`
 
 ## 현장 안전 규칙
 

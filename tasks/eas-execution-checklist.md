@@ -20,7 +20,7 @@
 - 위험 분류의 canonical 집합은 `LOCAL / READ / DRIVE_STATE / RAM / ENERGY / MOTION / SV /
   RESET-FLASH / SAFETY_STOP / NEED-DATA`다. `SAFETY_STOP`은 일반 위험 승격 순서 밖의 cleanup 경로다.
 - Offline check는 기존 row-specific test evidence를 표시한다. 최신 전체 suite summary는
-  2026-07-18에 1513 passed in 698.16s였지만,
+  2026-07-18에 1529 passed in 476.14s, 직접 종료코드 0이었지만,
   그 결과를 모든 행의 Offline test 완료로 확장하지 않는다.
 - 승인 Mutation 열은 매번 fresh approval이 필요하므로 과거 승인 이력을 재사용하지 않는다. 예외적으로
   SAFETY_STOP과 disconnect cleanup은 fresh approval이나 fresh telemetry를 기다리지 않고 비차단 attempt해야 한다.
@@ -109,9 +109,9 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-040 | Current Limits | [ ] | [x] G8 §8.2.6.1 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `MC/BV/PL1/CL1/PL2/US1/US2` immutable documentation rows only; local catalog GREEN, current values·validity·EAS parity·write `NEED-DATA/NO-GO` |
 | A-041 | Motion Limits and Modulo | [ ] | [x] G8 §8.2.6.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `SD/VH2/VL3/VH3/XM1/XM2/modulo/XA4:1/:2` documentation rows; XA bypass는 danger display only, no toggle/value; no current config/read/write/safety claim |
 | A-042 | Protections | [ ] | [x] G8 §8.2.6.3 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `ER/CL/XP/LL/HL` documentation rows와 disable warning/conflict만; focused 69 + 전체 1513 passed와 runtime은 immutable local inspector 범위, active protection·efficacy·field safety는 `NEED-DATA/NO-GO` |
-| A-043 | Brake | [ ] | [x] G8 §8.2.7.1 | [x] DRIVE_STATE/RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
-| A-044 | Settling Window | [ ] | [x] G8 §8.2.7.2 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
-| A-045 | Inputs and Outputs settings | [ ] | [x] G8 §8.2.7.3 | [x] DRIVE_STATE/RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
+| A-043 | Brake | [ ] | [x] G8 §8.2.7.1 | [x] DRIVE_STATE/RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `OL[N]/BP[1..2]/VH[1]` 4개 documentation rows only; exact B01G output electrical/brake capability, current config, validation, actuation과 safety는 `NEED-DATA/NO-GO` |
+| A-044 | Settling Window | [ ] | [x] G8 §8.2.7.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `TR[1..4]` documentation rows only; Target Reached 의미이지 accuracy/stability/safety evidence가 아님; current/read/write/unit propagation 없음 |
+| A-045 | Inputs and Outputs settings | [ ] | [x] G8 §8.2.7.3 | [x] DRIVE_STATE/RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `IL/IF/IP+IB/OL/GO+OP` 5개 documentation rows; status 2개는 `unavailable · not sampled`; current I/O/query/write/output actuation 없음. APP SETTINGS focused 85 + 전체 1529 passed, 독립 closeout/runtime 완료; 로컬 catalog/UI만 GREEN |
 | A-046 | Current Identification | [ ] | [x] G8 §8.2.8.1 | [x] ENERGY | [x] | [~] | [ ] | [x] closeout | [x] | |
 | A-047 | Current Design | [ ] | [x] G8 §8.2.8.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
 | A-048 | Current Verification - Time | [ ] | [x] G8 §8.2.8.3 | [x] ENERGY | [~] | [~] | [ ] | [~] | [~] | EAS exact waveform gate 미확정 |

@@ -1418,6 +1418,145 @@ def test_expert_limits_protections_never_absorbs_late_axis_summary(
         assert actual_value not in rendered
 
 
+def test_expert_application_settings_page_is_static_zero_io_and_authority_isolated(
+        window, qapp, monkeypatch):
+    _fill_expert_user_units_golden(window)
+    window.btn_expert_user_units_preview.click()
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError(
+            "Application Settings inspector entered an I/O/dispatch path")
+
+    class PoisonWorker:
+        def __getattr__(self, name):
+            def forbidden_worker_call(*args, **kwargs):
+                calls.append((name, args, kwargs))
+                raise AssertionError(
+                    "Application Settings inspector touched worker.%s" % name)
+
+            return forbidden_worker_call
+
+    poison_worker = PoisonWorker()
+    window.worker = poison_worker
+    before = _limits_authority_snapshot(window)
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden)
+    monkeypatch.setattr(window, "_claim_tune_dispatch", forbidden)
+
+    window._set_expert_lab_step("application_settings")
+    for index in range(window.expert_application_section.count()):
+        window.expert_application_section.setCurrentIndex(index)
+        qapp.processEvents()
+
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_application_settings_page)
+    assert window.worker is poison_worker
+    assert calls == []
+    assert _limits_authority_snapshot(window) == before
+    assert window.expert_application_section.isEditable() is False
+    assert window.expert_application_settings_page.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert window.expert_application_settings_page.findChildren(
+        QtWidgets.QPushButton) == []
+    assert tuple(
+        window.expert_application_table.item(row, 0).text()
+        for row in range(window.expert_application_table.rowCount())
+    ) == (
+        "IL[N]", "IF[N]", "IP + IB[N]", "OL[N]", "GO[N] + OP",
+    )
+    assert window.expert_application_table.horizontalHeaderItem(2).text() == (
+        "UNIT / ACCESS")
+    assert all(
+        "app: inspect-only" in
+        window.expert_application_table.item(row, 2).text()
+        for row in range(window.expert_application_table.rowCount()))
+    rendered = " ".join((
+        window.expert_lab_title.text(),
+        window.expert_lab_note.text(),
+        window.expert_application_banner.text(),
+        window.expert_application_status.text(),
+        window.expert_application_conflicts.text(),
+        window.expert_application_warnings.text(),
+        window.expert_application_missing.text(),
+        *(
+            window.expert_application_table.item(row, column).text()
+            for row in range(window.expert_application_table.rowCount())
+            for column in range(window.expert_application_table.columnCount())
+        ),
+    )).upper()
+    for phrase in (
+            "DOCUMENTED APPLICATION SETTINGS MAP",
+            "NOT CURRENT DRIVE CONFIG",
+            "NOT CURRENT I/O STATE",
+            "NOT BRAKE OR SAFETY EVIDENCE",
+            "NO DRIVE READ",
+            "NO VALIDATION",
+            "NO OUTPUT ACTUATION",
+            "NO WRITE",
+            "NO APPLY/REVERT/SV",
+            "NO MOTION"):
+        assert phrase in rendered
+    for forbidden_phrase in (
+            "VALIDATED SAFE",
+            "BRAKE IS SAFE",
+            "CURRENT DRIVE IS",
+            "CURRENT DRIVE CONFIG IS",
+            "CURRENT I/O STATE IS",
+            "INSTALLED VALUE",
+            "DEFAULT VALUE",
+            "EAS EQUIVALENT",
+            "RECOMMENDED VALUE",
+            "APP: R/W"):
+        assert forbidden_phrase not in rendered
+
+
+def test_expert_application_settings_never_absorbs_late_axis_summary(
+        window, qapp):
+    window._set_expert_lab_step("application_settings")
+    before = tuple(
+        window.expert_application_table.item(row, column).text()
+        for row in range(window.expert_application_table.rowCount())
+        for column in range(window.expert_application_table.columnCount())
+    )
+
+    sentinels = {
+        "BP[1]": 101010101,
+        "BP[2]": 202020202,
+        "VH[1]": 303030303,
+        "TR[1]": 404040404,
+        "TR[2]": 505050505,
+        "TR[3]": 606060606,
+        "TR[4]": 707070707,
+        "IL[1]": 808080808,
+        "IF[1]": 909090909,
+        "IP": 121212121,
+        "IB[1]": 131313131,
+        "OL[1]": 111111111,
+        "GO[1]": 222222222,
+        "OP": 333333333,
+    }
+    window._on_axis_summary({
+        "scope": "LAST OBSERVED",
+        "mode": "UM=5",
+        "raw": sentinels,
+    })
+    qapp.processEvents()
+
+    after = tuple(
+        window.expert_application_table.item(row, column).text()
+        for row in range(window.expert_application_table.rowCount())
+        for column in range(window.expert_application_table.columnCount())
+    )
+    assert after == before
+    rendered = " ".join(after)
+    for actual_value in sentinels.values():
+        assert str(actual_value) not in rendered
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
     def contrast_ratio(first, second):
@@ -1450,7 +1589,7 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
             qapp.setStyleSheet(themed.STYLE)
             for step in (
                     "current", "vp", "evidence", "status", "user_units",
-                    "limits_protections"):
+                    "limits_protections", "application_settings"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):
@@ -1473,13 +1612,34 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         table_palette.color(
                             QtGui.QPalette.ColorRole.Base),
                     ) >= 4.5
+                if step == "application_settings":
+                    table_palette = (
+                        window.expert_application_table.viewport().palette())
+                    assert contrast_ratio(
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Text),
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Base),
+                    ) >= 4.5
+                    for column in range(
+                            window.expert_application_table.columnCount()):
+                        header_text = (
+                            window.expert_application_table
+                            .horizontalHeaderItem(column).text())
+                        required = (
+                            window.expert_application_table.fontMetrics()
+                            .horizontalAdvance(header_text) + 20)
+                        assert required <= (
+                            window.expert_application_table
+                            .columnWidth(column))
                 buttons = (
                         window.btn_expert_step_current,
                         window.btn_expert_step_vp,
                         window.btn_expert_step_evidence,
                         window.btn_expert_step_status,
                         window.btn_expert_step_user_units,
-                        window.btn_expert_step_limits)
+                        window.btn_expert_step_limits,
+                        window.btn_expert_step_application)
                 for button in buttons:
                     assert button.isVisible()
                     required = (

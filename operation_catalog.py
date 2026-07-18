@@ -135,6 +135,22 @@ _SPECS = (
           "no command generation, no write, no Apply/SV, and no unit "
           "propagation.",
           status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.application_settings.evidence.inspect",
+          "Expert Application Settings · Documented Application Settings Map",
+          OperationRisk.LOCAL_UI,
+          "Inspect an immutable documented application settings map locally. "
+          "It is not current drive config, not current I/O state, and not "
+          "brake or safety evidence. It performs no drive read, no "
+          "validation/evaluation, no command generation, no write, no "
+          "Apply/Revert/SV, no output actuation, no motion, and no drive I/O.",
+          status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.application_settings.transaction",
+          "Expert Application Settings Transaction · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "Conditional visibility, validation rules, command mapping, write "
+          "order, readback, rollback, Revert, SV, and output actuation remain "
+          "unimplemented and NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,

@@ -107,6 +107,51 @@ def test_expert_limits_protections_inspector_is_local_partial_and_fail_closed():
         assert phrase in summary
 
 
+def test_expert_application_settings_inspector_is_local_partial_and_fail_closed():
+    spec = catalog.operation_spec(
+        "tuning.expert.application_settings.evidence.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    assert spec.risk not in catalog.DRIVE_MUTATING_RISKS
+    summary = spec.summary.lower()
+    for phrase in (
+            "documented application settings map",
+            "not current drive config",
+            "not current i/o state",
+            "not brake or safety evidence",
+            "no drive read",
+            "no validation",
+            "no command",
+            "no write",
+            "no apply/revert/sv",
+            "no output actuation",
+            "no motion",
+            "no drive i/o"):
+        assert phrase in summary
+
+
+def test_expert_application_settings_transaction_remains_need_data():
+    spec = catalog.operation_spec(
+        "tuning.expert.application_settings.transaction")
+
+    assert spec.risk is catalog.OperationRisk.NEED_DATA
+    assert spec.status is catalog.OperationStatus.NEED_DATA
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "conditional visibility",
+            "validation",
+            "readback",
+            "revert",
+            "sv",
+            "output actuation"):
+        assert phrase in summary
+
+
 def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     spec = catalog.operation_spec("axis.safety_snapshot")
 

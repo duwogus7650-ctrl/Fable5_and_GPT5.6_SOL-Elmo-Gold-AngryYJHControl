@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections + Application Settings 작업 인계서
 
-상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-18 21:06 KST**<br>
+상태: **APPLICATION SETTINGS CLOSEOUT COMPLETE · PRIVATE PUBLISH PENDING · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-18 21:50 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -21,6 +21,8 @@
   `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
 - Expert Limits / Protections · Documented Parameter Map v0.1 검증·구현 HEAD:
   `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
+- Expert Application Settings · Documented Map v0.1:
+  현재 working tree 구현이며 아직 commit/push HEAD가 없음
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -30,6 +32,10 @@
   위 게시 HEAD까지 반영했다.
   공개 원본 `source`에는 push하지 않았다.
 - 기존 사용자 `media/smoke_main.png` 변경은 working tree에 보존하고 게시에서 제외했다.
+- Application Settings working tree는 별도 일곱 번째 page와 frozen model,
+  operation catalog/test/docs로 구성됐다. focused **85 passed**, 전체
+  repository **1529 passed in 476.14s**(직접 종료코드 0), 독립 closeout
+  잔여 finding 없음과 Python 3.14 runtime GUI smoke를 완료했다. 게시 전이다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -188,6 +194,40 @@
 - 상세 계약:
   [`expert-limits-protections-evidence-v0.1.md`](expert-limits-protections-evidence-v0.1.md)
 
+### 2.8 Expert Application Settings · Documented Map v0.1
+
+- 일곱 번째 Expert 단계에서 `Brake`, `Settling Window`,
+  `Inputs and Outputs`의 static documentation row를 별도 page로 표시
+- canonical shape는 3 sections / 13 rows = **4 / 4 / 5**
+  - Brake: `OL[N]`, `BP[1]`, `BP[2]`, `VH[1]`
+  - Settling: `TR[1]`, `TR[2]`, `TR[3]`, `TR[4]`
+  - I/O: `IL[N]`, `IF[N]`, `IP + IB[N]`, `OL[N]`, `GO[N] + OP`
+- `IP + IB[N]`와 `GO[N] + OP`는 live status의 documentation semantics만
+  표시하고 **`unavailable · not sampled`**를 유지
+- authority는 `DOCUMENTED_APPLICATION_SETTINGS_MAP_ONLY`, model status는
+  `PARTIAL_NEED_DATA`; local immutable catalog/UI inspect만 GREEN
+- 24개 frozen source identity, 9개 document conflict, 16개 persistent
+  warning, 6개 missing-evidence를 보존
+- 각 row의 access는 `document: … · app: inspect-only`; 문서 R/W는 앱 write
+  authority가 아님
+- model/UI는 drive/worker/link/job/query/read/write/command를 만들지 않고
+  P1/P2/Evidence/Page Status/User Units/Limits/installed/dispatch/connection/
+  safety와 Run/Verify/Apply/Restore/Save authority를 바꾸지 않음
+- focused 회귀 **85 passed**
+- 전체 repository 회귀 **1529 passed in 476.14s**, 직접 종료코드 **0**
+- 독립 closeout 잔여 HIGH/MEDIUM/LOW 없음; 독립 재계산한 24개 source
+  SHA-256 전부 동결값과 일치
+- Python 3.14, 1366×820, `OFFLINE · READ ONLY` runtime에서 4/4/5개 행,
+  짧은 표 헤더와 24 source identity를 확인. Connect 및
+  drive/worker/command/output/motion I/O는 실행하지 않음
+- private Draft PR 게시 전
+- current drive config/I/O state, exact B01G output electrical/brake capability,
+  current/default 판정, transaction/readback/rollback, Apply/Revert/SV,
+  output actuation/motion, brake/safety efficacy와 field behavior는
+  `NEED-DATA / NO-GO`
+- 상세 계약:
+  [`expert-application-settings-evidence-v0.1.md`](expert-application-settings-evidence-v0.1.md)
+
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
 
@@ -293,8 +333,11 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
+| Application Settings model·UI·catalog·authority focused 회귀 | **85 passed** | immutable 3 sections/13 rows(4/4/5), 24 sources, 9 conflicts, 16 warnings, 6 missing, strict lookup/digest, poison file/process/network/worker/link/drive I/O, 기존 Expert/connection/safety/Run/Verify/Apply/Restore/Save authority 불변, late summary 비전파, 세 테마 geometry/contrast. **로컬 catalog/UI만 GREEN** |
+| Application Settings 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음** | 24개 source SHA-256 독립 재계산 전부 일치, 미검증 Gold Twitter 설치/하드웨어 PDF 제외, zero-I/O·fail-closed·authority 경계 재확인 |
+| Application Settings 최신 runtime smoke | **4 / 4 / 5 rows · 24 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, 짧은 표 헤더, app inspect-only, action 없음, Connect 미실행, drive/worker/command/output/motion I/O 없음 |
 | Limits/Protections 모델·UI·catalog·authority focused 회귀 | **69 passed** | immutable 27-row documented map, 9개 conflict, danger warning, strict lookup/20개 source hash, poison file/process/network/worker/link/job/query/write, 기존 모든 Expert/installed/dispatch/connection/safety authority 불변과 세 스킨 1366×820. **로컬 catalog만 GREEN** |
-| 최신 전체 repository suite | **1513 passed in 698.16s** | 100% passed summary, stderr empty, capture verifier exit 0. Background launcher가 원 pytest process 숫자 exit code를 보존하지 않은 한계 명시 |
+| 최신 전체 repository suite | **1529 passed in 476.14s** | 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
 | Limits/Protections 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음 · 독립 69 passed** | SimplIQ source, stable mutation digest, document/app access, fresh-import poison, connection/safety snapshot, 세 테마 contrast 재확인 |
 | Limits/Protections 최신 runtime smoke | **7 / 9 / 11 rows · 20 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, dark high-contrast table, app inspect-only, action 없음, Apply/Save LOCKED, drive/worker/command I/O와 motor action 없음 |
 | Limits table palette 실패→수정 | **white/bright unreadable RED → 세 테마 contrast `>=4.5` GREEN** | `expertEvidenceTable` 전용 QSS와 실제 QDD runtime 재확인 |
@@ -426,9 +469,10 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 
 ## 9. 안전한 재개 순서
 
-1. Expert Application Settings의 Brake/Settling/I/O 문서 근거를 대조해
-   다음 LOCAL/no-I/O inspector 최소 범위를 확정한다.
-2. exact transaction·firmware parity·output electrical capability 근거 전에는
+1. Expert Application Settings source/docs를 명시적으로 stage해 private
+   `origin` Draft PR에 게시하고
+   사용자 `media/smoke_main.png` 변경은 제외한다.
+2. exact transaction·firmware parity·output electrical/brake capability 근거 전에는
    live read/write/evaluator/recommendation/Apply/SV/actuation으로 승격하지 않는다.
 3. EAS를 추가 관찰해야 한다면 **미연결 상태**에서 화면·조건부 visibility만 매핑한다.
 4. EAS와 우리 앱의 동시 drive 연결이 없음을 확인

@@ -43,6 +43,7 @@ import autotune_velpos
 import expert_tuning_offline
 import expert_filter_scheduling_evidence
 import expert_limits_protections_evidence
+import expert_application_settings_evidence
 import expert_page_status
 import expert_user_units
 import single_axis_motion
@@ -7162,19 +7163,23 @@ class MainWindow(QtWidgets.QMainWindow):
             "5 · USER UNITS")
         self.btn_expert_step_limits = QtWidgets.QPushButton(
             "6 · LIMITS / PROTECT")
+        self.btn_expert_step_application = QtWidgets.QPushButton(
+            "7 · APP SETTINGS")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
         self.btn_expert_step_evidence.setCheckable(True)
         self.btn_expert_step_status.setCheckable(True)
         self.btn_expert_step_user_units.setCheckable(True)
         self.btn_expert_step_limits.setCheckable(True)
+        self.btn_expert_step_application.setCheckable(True)
         for button in (
                 self.btn_expert_step_current,
                 self.btn_expert_step_vp,
                 self.btn_expert_step_evidence,
                 self.btn_expert_step_status,
                 self.btn_expert_step_user_units,
-                self.btn_expert_step_limits):
+                self.btn_expert_step_limits,
+                self.btn_expert_step_application):
             button.setMinimumWidth(0)
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Ignored,
@@ -7188,6 +7193,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_step_group.addButton(
             self.btn_expert_step_user_units)
         self.expert_lab_step_group.addButton(self.btn_expert_step_limits)
+        self.expert_lab_step_group.addButton(
+            self.btn_expert_step_application)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
@@ -7200,6 +7207,8 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self._set_expert_lab_step("user_units"))
         self.btn_expert_step_limits.clicked.connect(
             lambda: self._set_expert_lab_step("limits_protections"))
+        self.btn_expert_step_application.clicked.connect(
+            lambda: self._set_expert_lab_step("application_settings"))
         expert_step_grid.addWidget(
             self.btn_expert_step_current, 0, 0, 1, 2)
         expert_step_grid.addWidget(
@@ -7212,6 +7221,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_expert_step_user_units, 1, 2, 1, 2)
         expert_step_grid.addWidget(
             self.btn_expert_step_limits, 1, 4, 1, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_application, 2, 2, 1, 2)
         for column in range(6):
             expert_step_grid.setColumnStretch(column, 1)
         lab_layout.addLayout(expert_step_grid)
@@ -7695,6 +7706,113 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_stack.addWidget(
             self.expert_limits_protections_page)
 
+        self.expert_application_settings_page = QtWidgets.QWidget()
+        application_layout = QtWidgets.QVBoxLayout(
+            self.expert_application_settings_page)
+        application_layout.setContentsMargins(0, 0, 0, 0)
+        application_layout.setSpacing(7)
+        self._expert_application_settings = (
+            expert_application_settings_evidence.build_evidence_snapshot())
+        self.expert_application_banner = QtWidgets.QLabel(
+            self._expert_application_settings.boundary)
+        self.expert_application_banner.setProperty("role", "hint")
+        self.expert_application_banner.setWordWrap(True)
+        application_layout.addWidget(self.expert_application_banner)
+        self.expert_application_status = QtWidgets.QLabel()
+        self.expert_application_status.setProperty("role", "field")
+        self.expert_application_status.setWordWrap(True)
+        application_layout.addWidget(self.expert_application_status)
+
+        application_selector_layout = QtWidgets.QHBoxLayout()
+        application_selector_label = QtWidgets.QLabel(
+            "Documented EAS section")
+        application_selector_label.setProperty("role", "field")
+        self.expert_application_section = QtWidgets.QComboBox()
+        self.expert_application_section.setEditable(False)
+        for section in self._expert_application_settings.sections:
+            self.expert_application_section.addItem(
+                "%s · %s" % (section.label, section.reference),
+                section.key)
+        application_selector_layout.addWidget(application_selector_label)
+        application_selector_layout.addWidget(
+            self.expert_application_section, 1)
+        application_layout.addLayout(application_selector_layout)
+
+        self.expert_application_table = QtWidgets.QTableWidget(0, 4)
+        self.expert_application_table.setObjectName("expertEvidenceTable")
+        self.expert_application_table.setHorizontalHeaderLabels((
+            "COMMAND",
+            "ROLE / REF",
+            "UNIT / ACCESS",
+            "STATUS / NOTE",
+        ))
+        for column, tooltip in enumerate((
+                "Documented command or combined semantics reference.",
+                "Documented role, range, and reference only; not current.",
+                "Documented unit/access; app remains inspect-only.",
+                "Evidence status plus condition, conflict, or missing scope.",
+        )):
+            self.expert_application_table.horizontalHeaderItem(
+                column).setToolTip(tooltip)
+        self.expert_application_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.expert_application_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.expert_application_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.expert_application_table.setWordWrap(True)
+        self.expert_application_table.setAlternatingRowColors(True)
+        self.expert_application_table.setMinimumWidth(0)
+        self.expert_application_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.expert_application_table.verticalHeader().setVisible(False)
+        application_header = self.expert_application_table.horizontalHeader()
+        for column in range(4):
+            application_header.setSectionResizeMode(
+                column,
+                QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.expert_application_table.setMinimumHeight(250)
+        application_layout.addWidget(self.expert_application_table, 1)
+
+        self.expert_application_conflicts = QtWidgets.QLabel(
+            "DOCUMENT CONFLICTS · " + " | ".join(
+                self._expert_application_settings.document_conflicts))
+        self.expert_application_warnings = QtWidgets.QLabel(
+            "PERSISTENT WARNINGS · " + " | ".join(
+                self._expert_application_settings.persistent_warnings))
+        self.expert_application_missing = QtWidgets.QLabel(
+            "MISSING EVIDENCE / NEED-DATA · " + " | ".join(
+                self._expert_application_settings.missing_evidence))
+        for detail in (
+                self.expert_application_conflicts,
+                self.expert_application_warnings,
+                self.expert_application_missing):
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            application_layout.addWidget(detail)
+        self.expert_application_sources = QtWidgets.QLabel(
+            "SOURCES · %d frozen identities · EAS III HTML SHA-256 %s · "
+            "MAN-G-CR v2.001 root SHA-256 %s" % (
+                len(self._expert_application_settings.sources),
+                next(
+                    source.sha256
+                    for source in self._expert_application_settings.sources
+                    if source.key == "app_settings_html"),
+                next(
+                    source.sha256
+                    for source in self._expert_application_settings.sources
+                    if source.key == "man_g_cr_root")))
+        self.expert_application_sources.setProperty("role", "hint")
+        self.expert_application_sources.setWordWrap(True)
+        application_layout.addWidget(self.expert_application_sources)
+        self.expert_lab_stack.addWidget(
+            self.expert_application_settings_page)
+
         self.expert_filter_type.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_filter_location.currentIndexChanged.connect(
@@ -7703,8 +7821,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_expert_evidence_panel)
         self.expert_limits_section.currentIndexChanged.connect(
             self._refresh_expert_limits_protections_panel)
+        self.expert_application_section.currentIndexChanged.connect(
+            self._refresh_expert_application_settings_panel)
         self._refresh_expert_evidence_panel()
         self._refresh_expert_limits_protections_panel()
+        self._refresh_expert_application_settings_panel()
         lab_layout.addWidget(self.expert_lab_stack)
         expert_layout.addWidget(self.expert_lab_frame)
         self._expert_plant = None
@@ -7893,6 +8014,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._decorate_operation_control(
             self.expert_limits_section,
             "tuning.expert.limits_protections.evidence.inspect")
+        self._decorate_operation_control(
+            self.expert_application_section,
+            "tuning.expert.application_settings.evidence.inspect")
         self._set_tuning_mode("quick")
         return f
 
@@ -7927,7 +8051,7 @@ class MainWindow(QtWidgets.QMainWindow):
         """Select one zero-I/O Expert model page without changing authority."""
         if step not in (
                 "current", "vp", "evidence", "status", "user_units",
-                "limits_protections"):
+                "limits_protections", "application_settings"):
             raise ValueError("unknown Expert Lab step %r" % step)
         if step == "evidence":
             self.expert_lab_title.setText(
@@ -7965,6 +8089,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 "assessment. No drive read, validation, recommendation, "
                 "command generation, write, Apply/SV, motion, or unit "
                 "propagation.")
+        elif step == "application_settings":
+            self.expert_lab_title.setText(
+                "EXPERT APPLICATION SETTINGS v0.1 · "
+                "DOCUMENTED APPLICATION SETTINGS MAP · PARTIAL / NEED-DATA")
+            self.expert_lab_note.setText(
+                "Immutable documentation catalog only: not current drive "
+                "config, not current I/O state, and not brake or safety "
+                "evidence. No drive read, validation/evaluation, command, "
+                "write, Apply/Revert/SV, output actuation, motion, or drive "
+                "I/O.")
         else:
             self.expert_lab_title.setText(self._expert_model_title)
             self.expert_lab_note.setText(self._expert_model_note)
@@ -7977,6 +8111,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_step_user_units.setChecked(step == "user_units")
         self.btn_expert_step_limits.setChecked(
             step == "limits_protections")
+        self.btn_expert_step_application.setChecked(
+            step == "application_settings")
         self.expert_lab_stack.setCurrentIndex(
             {
                 "current": 0,
@@ -7985,6 +8121,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "status": 3,
                 "user_units": 4,
                 "limits_protections": 5,
+                "application_settings": 6,
             }[step])
         if step == "status":
             self._refresh_expert_page_status()
@@ -8016,6 +8153,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 cell.setToolTip(value)
                 self.expert_limits_table.setItem(row, column, cell)
         self.expert_limits_table.resizeRowsToContents()
+
+    def _refresh_expert_application_settings_panel(self, *_args):
+        """Render one immutable application-settings documentation section."""
+        if not hasattr(self, "_expert_application_settings"):
+            return
+        section = expert_application_settings_evidence.section_evidence(
+            self.expert_application_section.currentData())
+        self.expert_application_status.setText(
+            "AUTHORITY %s · MODEL STATUS %s · %s · %d documented rows · "
+            "NOT CURRENT / NOT READ BACK · live I/O unavailable / not sampled"
+            % (
+                self._expert_application_settings.authority,
+                self._expert_application_settings.model_status,
+                section.reference,
+                len(section.parameters)))
+        self.expert_application_table.setRowCount(len(section.parameters))
+        for row, item in enumerate(section.parameters):
+            values = (
+                item.command,
+                "%s · %s" % (item.label, item.documented_effect),
+                "%s · %s" % (item.documented_unit, item.access),
+                "%s · %s" % (item.evidence_status, item.condition),
+            )
+            for column, value in enumerate(values):
+                cell = QtWidgets.QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.expert_application_table.setItem(row, column, cell)
+        self.expert_application_table.resizeRowsToContents()
 
     def _refresh_expert_evidence_panel(self, *_args):
         """Render only immutable public-document topology and blockers."""
