@@ -1968,6 +1968,143 @@ def test_expert_time_verification_never_absorbs_live_or_recorder_state(
         assert str(value) not in rendered
 
 
+def test_expert_summary_page_is_static_zero_io_and_authority_isolated(
+        window, qapp, monkeypatch):
+    window._set_expert_lab_step("status")
+    qapp.processEvents()
+    calls = []
+
+    def forbidden(*args, **kwargs):
+        calls.append((args, kwargs))
+        raise AssertionError("Summary evidence inspector entered mutation/I/O")
+
+    class PoisonWorker:
+        def __getattr__(self, name):
+            def forbidden_worker_call(*args, **kwargs):
+                calls.append((name, args, kwargs))
+                raise AssertionError(
+                    "Summary evidence touched worker.%s" % name)
+
+            return forbidden_worker_call
+
+    poison_worker = PoisonWorker()
+    window.worker = poison_worker
+    before = _limits_authority_snapshot(window)
+    dirty_before = window._expert_page_status_dirty
+    monkeypatch.setattr(app_main, "DriveWorker", forbidden)
+    monkeypatch.setattr(app_main, "ElmoLink", forbidden)
+    monkeypatch.setattr(window, "_claim_tune_dispatch", forbidden)
+    for method_name in (
+            "_recorder_save_workspace",
+            "_recorder_open_workspace",
+            "_save_current_clicked",
+            "_save_velpos_clicked"):
+        monkeypatch.setattr(window, method_name, forbidden)
+
+    window._set_expert_lab_step("summary")
+    expected_controls = {
+        "recommended_actions": (
+            "Save Parameters in Drive (SV)",
+            "Upload Parameters from Drive",
+            "Save Design Plants",
+            "Import to DB…",
+        ),
+        "save_transaction": (
+            "Parameter File Path",
+            "Design Folder Path",
+            "Save (combined commit)",
+            "Completion Log",
+        ),
+        "authority_split": (
+            "Drive Flash Persistence",
+            "Drive Parameter Export",
+            "Design Artifact Export",
+            "Motor Database Mutation",
+        ),
+    }
+    assert tuple(
+        window.expert_summary_section.itemData(index)
+        for index in range(window.expert_summary_section.count())
+    ) == tuple(expected_controls)
+    for index, section_key in enumerate(expected_controls):
+        window.expert_summary_section.setCurrentIndex(index)
+        qapp.processEvents()
+        assert window.expert_summary_table.rowCount() == 4
+        assert tuple(
+            window.expert_summary_table.item(row, 0).text()
+            for row in range(4)
+        ) == expected_controls[section_key]
+
+    assert window.expert_lab_stack.currentWidget() is (
+        window.expert_summary_page)
+    assert window.btn_expert_step_summary.text() == "10 · SUMMARY DOC MAP"
+    assert "EVIDENCE STATUS" in window.expert_summary_status.text()
+    assert "MODEL STATUS" not in window.expert_summary_status.text()
+    assert window.worker is poison_worker
+    assert calls == []
+    assert _limits_authority_snapshot(window) == before
+    assert window._expert_page_status_dirty == dirty_before
+    assert window.expert_summary_section.isEditable() is False
+    assert window.expert_summary_page.findChildren(QtWidgets.QLineEdit) == []
+    assert window.expert_summary_page.findChildren(QtWidgets.QPushButton) == []
+    assert window.expert_summary_page.findChildren(QtWidgets.QCheckBox) == []
+    assert window.expert_summary_page.findChildren(QtWidgets.QSlider) == []
+    assert not window.expert_summary_page.isAncestorOf(
+        window.expert_bode_widget)
+    assert not window.expert_summary_page.isAncestorOf(
+        window.recorder_page_stack)
+    assert tuple(
+        window.expert_summary_table.horizontalHeaderItem(column).text()
+        for column in range(4)
+    ) == (
+        "CONTROL / GROUP",
+        "ROLE / REF",
+        "AUTHORITY / ACCESS",
+        "STATUS / BOUNDARY",
+    )
+    assert all(
+        "app: inspect-only" in
+        window.expert_summary_table.item(row, 2).text()
+        for row in range(window.expert_summary_table.rowCount()))
+    rendered = " ".join((
+        window.expert_lab_title.text(),
+        window.expert_lab_note.text(),
+        window.expert_summary_banner.text(),
+        window.expert_summary_status.text(),
+        window.expert_summary_ambiguities.text(),
+        window.expert_summary_warnings.text(),
+        window.expert_summary_missing.text(),
+        *(
+            window.expert_summary_table.item(row, column).text()
+            for row in range(window.expert_summary_table.rowCount())
+            for column in range(window.expert_summary_table.columnCount())
+        ),
+    )).upper()
+    for phrase in (
+            "DOCUMENTED SUMMARY TRANSACTION MAP",
+            "NOT CURRENT EAS SUMMARY STATE",
+            "NOT CURRENT DRIVE/FILE/MOTOR DATABASE STATE",
+            "NOT PROOF OF SAVED DATA",
+            "NO DRIVE READ/UPLOAD",
+            "NO SV/DRIVE SAVE",
+            "NO FILE DIALOG",
+            "NO FILE/DESIGN EXPORT",
+            "NO DATABASE IMPORT/MUTATION",
+            "NO SAVE/APPLY",
+            "NO COMMAND GENERATION",
+            "NO ENERGIZATION/MOTION",
+            "NO DRIVE I/O"):
+        assert phrase in rendered
+    for forbidden_text in (
+            "CURRENT DRIVE SAVED",
+            "CURRENT FILE EXISTS",
+            "CURRENT DATABASE UPDATED",
+            "SAVE COMPLETED NOW",
+            "READY TO SAVE",
+            "APP: R/W"):
+        assert forbidden_text not in rendered
+
+
 def test_expert_v2_steps_fit_1366x820_in_all_skins(
         window, qapp):
     def contrast_ratio(first, second):
@@ -2001,7 +2138,7 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
             for step in (
                     "current", "vp", "evidence", "status", "user_units",
                     "limits_protections", "application_settings",
-                    "bode_verification", "time_verification"):
+                    "bode_verification", "time_verification", "summary"):
                 window._set_expert_lab_step(step)
                 window.resize(1366, 820)
                 for _ in range(3):
@@ -2088,6 +2225,25 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         assert required <= (
                             window.expert_time_verification_table
                             .columnWidth(column))
+                if step == "summary":
+                    table_palette = (
+                        window.expert_summary_table.viewport().palette())
+                    assert contrast_ratio(
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Text),
+                        table_palette.color(
+                            QtGui.QPalette.ColorRole.Base),
+                    ) >= 4.5
+                    for column in range(
+                            window.expert_summary_table.columnCount()):
+                        header_text = (
+                            window.expert_summary_table
+                            .horizontalHeaderItem(column).text())
+                        required = (
+                            window.expert_summary_table.fontMetrics()
+                            .horizontalAdvance(header_text) + 20)
+                        assert required <= (
+                            window.expert_summary_table.columnWidth(column))
                 buttons = (
                         window.btn_expert_step_current,
                         window.btn_expert_step_vp,
@@ -2097,7 +2253,8 @@ def test_expert_v2_steps_fit_1366x820_in_all_skins(
                         window.btn_expert_step_limits,
                         window.btn_expert_step_application,
                         window.btn_expert_step_bode_verification,
-                        window.btn_expert_step_time_verification)
+                        window.btn_expert_step_time_verification,
+                        window.btn_expert_step_summary)
                 for button in buttons:
                     assert button.isVisible()
                     required = (

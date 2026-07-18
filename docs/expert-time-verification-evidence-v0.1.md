@@ -252,14 +252,15 @@ recording, Apply/SV, 통전 또는 모션은 실행하지 않았다.
 EAS parity, field execution, 실제 Verification의 안전성·정확성·실행
 가능성은 검증하지 않았으며 계속 `NEED-DATA / NO-GO`다.
 
-## Summary 후속 범위
+## Summary 분리 범위
 
 Expert Summary는 이 모델에 포함하지 않는다. Summary는
 `Save Parameters in Drive (SV)`, drive parameter upload, design-plant file,
 motor database와 복합 Save/Cancel transaction을 다루며 Time Verification과
 다른 authority를 가진다.
 
-따라서 Summary는 별도 후속 slice인
-`Summary · Documented Transaction Map`으로 분리해야 한다. 해당 slice도
-먼저 zero-I/O static inspector로 구현하고, SV·drive read·local file·DB
-mutation의 실제 실행은 각각 독립된 NEED-DATA operation으로 유지해야 한다.
+별도 slice인 `Summary · Documented Transaction Map`은 zero-I/O static
+inspector로 구현됐다. 상세 계약은
+[`expert-summary-transaction-evidence-v0.1.md`](expert-summary-transaction-evidence-v0.1.md)를
+따른다. SV·drive read·local file·DB mutation의 실제 실행은 각각 독립된
+NEED-DATA operation으로 유지한다.

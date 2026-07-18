@@ -1,5 +1,7 @@
 """Pure contracts for the shared EAS operation/risk catalog."""
 
+import pytest
+
 import operation_catalog as catalog
 
 
@@ -220,6 +222,69 @@ def test_expert_time_verification_evidence_is_local_partial_zero_io():
             "no injection",
             "no energization",
             "no motion"):
+        assert phrase in summary
+
+
+def test_expert_summary_evidence_is_local_partial_zero_io():
+    spec = catalog.operation_spec(
+        "tuning.expert.summary.evidence.inspect")
+
+    assert spec.risk is catalog.OperationRisk.LOCAL_UI
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in (
+            "immutable",
+            "summary transaction",
+            "document",
+            "no drive read",
+            "no sv",
+            "no file dialog",
+            "no file export",
+            "no database mutation",
+            "no save",
+            "no apply",
+            "no energization",
+            "no motion"):
+        assert phrase in summary
+
+
+@pytest.mark.parametrize(
+    ("operation_id", "risk", "phrases"),
+    (
+        (
+            "tuning.expert.summary.drive_persist",
+            catalog.OperationRisk.PERSISTENT_WRITE,
+            ("sv", "drive flash", "readback", "rollback", "need-data"),
+        ),
+        (
+            "tuning.expert.summary.parameter_export",
+            catalog.OperationRisk.LOCAL_FILE,
+            ("drive read", "local file", "path", "format", "need-data"),
+        ),
+        (
+            "tuning.expert.summary.design_export",
+            catalog.OperationRisk.LOCAL_FILE,
+            ("identified plants", "controllers", "schema", "path", "need-data"),
+        ),
+        (
+            "tuning.expert.summary.database_import",
+            catalog.OperationRisk.LOCAL_FILE,
+            ("motor database", "mutation", "duplicate", "rollback", "need-data"),
+        ),
+    ),
+)
+def test_expert_summary_mutations_remain_separate_need_data(
+        operation_id, risk, phrases):
+    spec = catalog.operation_spec(operation_id)
+
+    assert spec.risk is risk
+    assert spec.status is catalog.OperationStatus.NEED_DATA
+    assert spec.gates == frozenset()
+    assert not spec.menu_enabled
+    summary = spec.summary.lower()
+    for phrase in phrases:
         assert phrase in summary
 
 

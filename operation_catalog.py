@@ -193,6 +193,46 @@ _SPECS = (
           "independent stop, telemetry, restore, and fault-recovery contracts "
           "remain unimplemented and NEED-DATA.",
           status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.summary.evidence.inspect",
+          "Expert Summary - Documented Transaction Map",
+          OperationRisk.LOCAL_UI,
+          "Inspect an immutable Summary transaction document map locally. It "
+          "performs no drive read, no SV, no file dialog, no file export, no "
+          "database mutation, no Save, no Apply, no energization, and no "
+          "motion.",
+          status=OperationStatus.PARTIAL),
+    _spec("tuning.expert.summary.drive_persist",
+          "Expert Summary Drive Persistence (SV) - NEED-DATA",
+          OperationRisk.PERSISTENT_WRITE,
+          "Actual SV would persist the selected tuning parameters in drive "
+          "flash. Exact target/parameter identity, pre-save snapshot, "
+          "readback, power-cycle evidence, rollback, and closeout remain "
+          "unimplemented and NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.summary.parameter_export",
+          "Expert Summary Parameter Export - NEED-DATA",
+          OperationRisk.LOCAL_FILE,
+          "Actual parameter export combines a drive read with a local file "
+          "write. Snapshot consistency, destination path, file format, "
+          "integrity, overwrite, and recovery remain unimplemented and "
+          "NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.summary.design_export",
+          "Expert Summary Design Export - NEED-DATA",
+          OperationRisk.LOCAL_FILE,
+          "Actual design export would save identified plants and controllers. "
+          "The source identity, complete artifact schema, destination path, "
+          "integrity, overwrite, and recovery remain unimplemented and "
+          "NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
+    _spec("tuning.expert.summary.database_import",
+          "Expert Summary Motor Database Import - NEED-DATA",
+          OperationRisk.LOCAL_FILE,
+          "Actual import would perform a motor database mutation. Exact "
+          "database identity/schema, backup, duplicate policy, transaction "
+          "verification, rollback, and closeout remain unimplemented and "
+          "NEED-DATA.",
+          status=OperationStatus.NEED_DATA),
     _spec("tuning.expert.filter.offline.evaluate",
           "Expert Filter Model · NEED-DATA",
           OperationRisk.NEED_DATA,

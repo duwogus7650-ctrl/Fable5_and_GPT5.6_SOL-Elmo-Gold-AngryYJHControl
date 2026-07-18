@@ -46,6 +46,7 @@ import expert_limits_protections_evidence
 import expert_application_settings_evidence
 import expert_bode_verification_evidence
 import expert_time_verification_evidence
+import expert_summary_transaction_evidence
 import expert_page_status
 import expert_user_units
 import single_axis_motion
@@ -7171,6 +7172,8 @@ class MainWindow(QtWidgets.QMainWindow):
             "8 · BODE DOC MAP")
         self.btn_expert_step_time_verification = QtWidgets.QPushButton(
             "9 · TIME DOC MAP")
+        self.btn_expert_step_summary = QtWidgets.QPushButton(
+            "10 · SUMMARY DOC MAP")
         self.btn_expert_step_current.setCheckable(True)
         self.btn_expert_step_vp.setCheckable(True)
         self.btn_expert_step_evidence.setCheckable(True)
@@ -7180,6 +7183,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_expert_step_application.setCheckable(True)
         self.btn_expert_step_bode_verification.setCheckable(True)
         self.btn_expert_step_time_verification.setCheckable(True)
+        self.btn_expert_step_summary.setCheckable(True)
         for button in (
                 self.btn_expert_step_current,
                 self.btn_expert_step_vp,
@@ -7189,7 +7193,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.btn_expert_step_limits,
                 self.btn_expert_step_application,
                 self.btn_expert_step_bode_verification,
-                self.btn_expert_step_time_verification):
+                self.btn_expert_step_time_verification,
+                self.btn_expert_step_summary):
             button.setMinimumWidth(0)
             button.setSizePolicy(
                 QtWidgets.QSizePolicy.Policy.Ignored,
@@ -7209,6 +7214,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_expert_step_bode_verification)
         self.expert_lab_step_group.addButton(
             self.btn_expert_step_time_verification)
+        self.expert_lab_step_group.addButton(
+            self.btn_expert_step_summary)
         self.btn_expert_step_current.clicked.connect(
             lambda: self._set_expert_lab_step("current"))
         self.btn_expert_step_vp.clicked.connect(
@@ -7227,25 +7234,29 @@ class MainWindow(QtWidgets.QMainWindow):
             lambda: self._set_expert_lab_step("bode_verification"))
         self.btn_expert_step_time_verification.clicked.connect(
             lambda: self._set_expert_lab_step("time_verification"))
+        self.btn_expert_step_summary.clicked.connect(
+            lambda: self._set_expert_lab_step("summary"))
         expert_step_grid.addWidget(
-            self.btn_expert_step_current, 0, 0, 1, 2)
+            self.btn_expert_step_current, 0, 0)
         expert_step_grid.addWidget(
-            self.btn_expert_step_vp, 0, 2, 1, 2)
+            self.btn_expert_step_vp, 0, 1)
         expert_step_grid.addWidget(
-            self.btn_expert_step_evidence, 0, 4, 1, 2)
+            self.btn_expert_step_evidence, 0, 2)
         expert_step_grid.addWidget(
-            self.btn_expert_step_status, 1, 0, 1, 2)
+            self.btn_expert_step_status, 1, 0)
         expert_step_grid.addWidget(
-            self.btn_expert_step_user_units, 1, 2, 1, 2)
+            self.btn_expert_step_user_units, 1, 1)
         expert_step_grid.addWidget(
-            self.btn_expert_step_limits, 1, 4, 1, 2)
+            self.btn_expert_step_limits, 1, 2)
         expert_step_grid.addWidget(
-            self.btn_expert_step_application, 2, 0, 1, 2)
+            self.btn_expert_step_application, 2, 0)
         expert_step_grid.addWidget(
-            self.btn_expert_step_bode_verification, 2, 2, 1, 2)
+            self.btn_expert_step_bode_verification, 2, 1)
         expert_step_grid.addWidget(
-            self.btn_expert_step_time_verification, 2, 4, 1, 2)
-        for column in range(6):
+            self.btn_expert_step_time_verification, 2, 2)
+        expert_step_grid.addWidget(
+            self.btn_expert_step_summary, 3, 0, 1, 3)
+        for column in range(3):
             expert_step_grid.setColumnStretch(column, 1)
         lab_layout.addLayout(expert_step_grid)
 
@@ -8067,6 +8078,124 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_stack.addWidget(
             self.expert_time_verification_page)
 
+        self.expert_summary_page = QtWidgets.QWidget()
+        summary_layout = QtWidgets.QVBoxLayout(self.expert_summary_page)
+        summary_layout.setContentsMargins(0, 0, 0, 0)
+        summary_layout.setSpacing(7)
+        self._expert_summary = (
+            expert_summary_transaction_evidence.build_evidence_snapshot())
+        self.expert_summary_banner = QtWidgets.QLabel(
+            self._expert_summary.boundary)
+        self.expert_summary_banner.setProperty("role", "hint")
+        self.expert_summary_banner.setWordWrap(True)
+        summary_layout.addWidget(self.expert_summary_banner)
+        self.expert_summary_status = QtWidgets.QLabel()
+        self.expert_summary_status.setProperty("role", "field")
+        self.expert_summary_status.setWordWrap(True)
+        summary_layout.addWidget(self.expert_summary_status)
+
+        summary_selector_layout = QtWidgets.QHBoxLayout()
+        summary_selector_label = QtWidgets.QLabel(
+            "Documented EAS Summary section")
+        summary_selector_label.setProperty("role", "field")
+        self.expert_summary_section = QtWidgets.QComboBox()
+        self.expert_summary_section.setEditable(False)
+        for section in self._expert_summary.sections:
+            self.expert_summary_section.addItem(
+                "%s · %s" % (section.label, section.reference),
+                section.key)
+        summary_selector_layout.addWidget(summary_selector_label)
+        summary_selector_layout.addWidget(self.expert_summary_section, 1)
+        summary_layout.addLayout(summary_selector_layout)
+
+        self.expert_summary_table = QtWidgets.QTableWidget(0, 4)
+        self.expert_summary_table.setObjectName("expertEvidenceTable")
+        self.expert_summary_table.setStyleSheet(
+            "QTableWidget#expertEvidenceTable { font-size: 12px; } "
+            "QTableWidget#expertEvidenceTable QHeaderView::section "
+            "{ font-size: 12px; }")
+        self.expert_summary_table.setHorizontalHeaderLabels((
+            "CONTROL / GROUP",
+            "ROLE / REF",
+            "AUTHORITY / ACCESS",
+            "STATUS / BOUNDARY",
+        ))
+        for column, tooltip in enumerate((
+                "Documented Summary control or grouped authority; "
+                "not executable.",
+                "Installed-manual role/reference only; not a current result.",
+                "Risk authority and inspect-only access; no authority is "
+                "combined by this page.",
+                "Evidence status plus condition or missing transaction scope.",
+        )):
+            self.expert_summary_table.horizontalHeaderItem(
+                column).setToolTip(tooltip)
+        self.expert_summary_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.expert_summary_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.expert_summary_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.expert_summary_table.setWordWrap(True)
+        self.expert_summary_table.setAlternatingRowColors(True)
+        self.expert_summary_table.setMinimumWidth(0)
+        self.expert_summary_table.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Expanding)
+        self.expert_summary_table.verticalHeader().setVisible(False)
+        summary_header = self.expert_summary_table.horizontalHeader()
+        for column in (0, 1, 2):
+            summary_header.setSectionResizeMode(
+                column, QtWidgets.QHeaderView.ResizeMode.Fixed)
+        summary_header.setSectionResizeMode(
+            3, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.expert_summary_table.setColumnWidth(0, 210)
+        self.expert_summary_table.setColumnWidth(1, 180)
+        self.expert_summary_table.setColumnWidth(2, 250)
+        self.expert_summary_table.setMinimumHeight(220)
+        summary_layout.addWidget(self.expert_summary_table, 1)
+
+        self.expert_summary_ambiguities = QtWidgets.QLabel(
+            "DOCUMENT AMBIGUITIES · " + " | ".join(
+                self._expert_summary.document_ambiguities))
+        self.expert_summary_warnings = QtWidgets.QLabel(
+            "PERSISTENT WARNINGS · " + " | ".join(
+                self._expert_summary.persistent_warnings))
+        self.expert_summary_missing = QtWidgets.QLabel(
+            "MISSING EVIDENCE / NEED-DATA · " + " | ".join(
+                self._expert_summary.missing_evidence))
+        for detail in (
+                self.expert_summary_ambiguities,
+                self.expert_summary_warnings,
+                self.expert_summary_missing):
+            detail.setProperty("role", "hint")
+            detail.setWordWrap(True)
+            detail.setMinimumWidth(0)
+            detail.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Preferred)
+            summary_layout.addWidget(detail)
+        self.expert_summary_sources = QtWidgets.QLabel(
+            "SOURCES · %d frozen identities · EAS Drive Setup SHA-256 %s · "
+            "Summary before/after SHA-256 %s / %s" % (
+                len(self._expert_summary.sources),
+                next(
+                    source.sha256
+                    for source in self._expert_summary.sources
+                    if source.key == "drive_setup_html"),
+                next(
+                    source.sha256
+                    for source in self._expert_summary.sources
+                    if source.key == "summary_before_image"),
+                next(
+                    source.sha256
+                    for source in self._expert_summary.sources
+                    if source.key == "summary_after_image")))
+        self.expert_summary_sources.setProperty("role", "hint")
+        self.expert_summary_sources.setWordWrap(True)
+        summary_layout.addWidget(self.expert_summary_sources)
+        self.expert_lab_stack.addWidget(self.expert_summary_page)
+
         self.expert_filter_type.currentIndexChanged.connect(
             self._refresh_expert_evidence_panel)
         self.expert_filter_location.currentIndexChanged.connect(
@@ -8081,11 +8210,14 @@ class MainWindow(QtWidgets.QMainWindow):
             self._refresh_expert_bode_verification_panel)
         self.expert_time_verification_section.currentIndexChanged.connect(
             self._refresh_expert_time_verification_panel)
+        self.expert_summary_section.currentIndexChanged.connect(
+            self._refresh_expert_summary_panel)
         self._refresh_expert_evidence_panel()
         self._refresh_expert_limits_protections_panel()
         self._refresh_expert_application_settings_panel()
         self._refresh_expert_bode_verification_panel()
         self._refresh_expert_time_verification_panel()
+        self._refresh_expert_summary_panel()
         lab_layout.addWidget(self.expert_lab_stack)
         expert_layout.addWidget(self.expert_lab_frame)
         self._expert_plant = None
@@ -8283,6 +8415,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._decorate_operation_control(
             self.expert_time_verification_section,
             "tuning.expert.time_verification.evidence.inspect")
+        self._decorate_operation_control(
+            self.expert_summary_section,
+            "tuning.expert.summary.evidence.inspect")
         self._set_tuning_mode("quick")
         return f
 
@@ -8318,7 +8453,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if step not in (
                 "current", "vp", "evidence", "status", "user_units",
                 "limits_protections", "application_settings",
-                "bode_verification", "time_verification"):
+                "bode_verification", "time_verification", "summary"):
             raise ValueError("unknown Expert Lab step %r" % step)
         if step == "evidence":
             self.expert_lab_title.setText(
@@ -8390,6 +8525,18 @@ class MainWindow(QtWidgets.QMainWindow):
                 "PTP/Jog/Sine/Step, no command/write/SV, no energization/"
                 "motion, and no drive I/O. Documented UI Stop is not "
                 "STO/E-stop.")
+        elif step == "summary":
+            self.expert_lab_title.setText(
+                "EXPERT SUMMARY v0.1 · "
+                "DOCUMENTED SUMMARY TRANSACTION MAP · PARTIAL / NEED-DATA")
+            self.expert_lab_note.setText(
+                "Static document map only; not current EAS Summary state, "
+                "not current drive/file/motor database state, and not proof "
+                "of saved data. No drive read/upload, no SV/Drive Save, no "
+                "file dialog, no file/design export, no database import/"
+                "mutation, no Save/Apply, no command generation, no "
+                "energization/motion, and no drive I/O. The documented "
+                "combined Save is split here into independent authorities.")
         else:
             self.expert_lab_title.setText(self._expert_model_title)
             self.expert_lab_note.setText(self._expert_model_note)
@@ -8408,6 +8555,7 @@ class MainWindow(QtWidgets.QMainWindow):
             step == "bode_verification")
         self.btn_expert_step_time_verification.setChecked(
             step == "time_verification")
+        self.btn_expert_step_summary.setChecked(step == "summary")
         self.expert_lab_stack.setCurrentIndex(
             {
                 "current": 0,
@@ -8419,6 +8567,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "application_settings": 6,
                 "bode_verification": 7,
                 "time_verification": 8,
+                "summary": 9,
             }[step])
         if step == "status":
             self._refresh_expert_page_status()
@@ -8538,6 +8687,34 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.expert_time_verification_table.setItem(
                     row, column, cell)
         self.expert_time_verification_table.resizeRowsToContents()
+
+    def _refresh_expert_summary_panel(self, *_args):
+        """Render one immutable Summary transaction documentation section."""
+        if not hasattr(self, "_expert_summary"):
+            return
+        section = expert_summary_transaction_evidence.section_evidence(
+            self.expert_summary_section.currentData())
+        self.expert_summary_status.setText(
+            "AUTHORITY %s · EVIDENCE STATUS %s · %s · "
+            "%d documented groups · NOT CURRENT / NOT EXECUTED · "
+            "controls unavailable / not executable" % (
+                self._expert_summary.authority,
+                self._expert_summary.model_status,
+                section.reference,
+                len(section.items)))
+        self.expert_summary_table.setRowCount(len(section.items))
+        for row, item in enumerate(section.items):
+            values = (
+                item.display_group,
+                "%s · %s" % (item.control, item.documented_effect),
+                "%s · %s" % (item.risk_class, item.access),
+                "%s · %s" % (item.evidence_status, item.condition),
+            )
+            for column, value in enumerate(values):
+                cell = QtWidgets.QTableWidgetItem(value)
+                cell.setToolTip(value)
+                self.expert_summary_table.setItem(row, column, cell)
+        self.expert_summary_table.resizeRowsToContents()
 
     def _refresh_expert_evidence_panel(self, *_args):
         """Render only immutable public-document topology and blockers."""

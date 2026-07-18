@@ -395,6 +395,9 @@ EAS의 게인 알고리즘은 재현 불가지만, **드라이브 명령으로 R
 - `docs/recording-api.md` — .NET Drive Recording API 그라운딩(리플렉션 확정).
 - `docs/eas-feature-matrix.md` — EAS 기능별 LIVE/OFFLINE/MODEL/지원 제외 범위와 자동 설정 계약.
 - `docs/expert-tuning-offline-v2.md` — Expert v2 입력 basis, 수치 모델, 검증과 NEED-DATA 경계.
+- `docs/expert-summary-transaction-evidence-v0.1.md` — Expert Summary의
+  SV·drive upload·design file·motor DB 복합 Save를 분리한 immutable
+  zero-I/O transaction map.
 - `docs/expert-page-status-v0.1.md` — Expert local page 상태, 권한, EAS 비동등성 계약.
 - `docs/expert-user-units-v0.1.md` — DS-402 위치 식, MAN-G-CR guard mismatch,
   zero-I/O/zero-write 비범위.
