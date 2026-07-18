@@ -1,12 +1,12 @@
-<!-- scope_progress: 95 -->
-<!-- offline_progress: 93 -->
+<!-- scope_progress: 96 -->
+<!-- offline_progress: 94 -->
 <!-- field_progress: 5 -->
 <!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 5 records host-observed read-only admission only, not energization or motion validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings
+# Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode Map
 
-상태: **APPLICATION SETTINGS PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 22:02 KST**
+상태: **HIDDEN BODE MAP PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-19 01:03 KST**
 
 ## 현재 기준
 
@@ -31,22 +31,26 @@
 - Expert Application Settings · Documented Map v0.1 검증·구현 HEAD:
   `e577f790f6b15c418f1cd6a8fd9bd55da9a46d1f`
   (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
+- Expert Hidden Verification – Bode · Documented Map v0.1 검증·구현 HEAD:
+  `80731767b0f0b591d4330d6fabd461a1244537bd`
+  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
 - 현재 작업 대상:
-  게시 closeout 기록과 다음 no-I/O EAS bounded slice 선정
-- Expert Application Settings 구현은 private `origin`의 게시 HEAD다.
-  일곱 번째 `APP SETTINGS` page에 Brake 4 / Settling Window 4 / Inputs and
-  Outputs 5개 immutable documentation row, 24 frozen source identity,
-  9 conflicts, 16 warnings, 6 missing-evidence를 고정했다.
-- `IP + IB[N]`, `GO[N] + OP` 두 status-semantics row는
-  **`unavailable · not sampled`**이며 현재 drive/I/O state가 아니다.
-- authority는 `DOCUMENTED_APPLICATION_SETTINGS_MAP_ONLY`, status는
-  `PARTIAL_NEED_DATA`; local catalog/UI inspect만 GREEN이다. drive read/worker/
-  command/write/Apply/Revert/SV/output actuation/motion은 없다.
-- 제어창: 최신 source를 Python 3.14로 실행해 **OFFLINE · READ ONLY**에서
-  일곱 번째 `APP SETTINGS`, Brake 4 / Settling Window 4 /
-  Inputs and Outputs 5개 row, 24개 frozen source identity,
-  `COMMAND`, `ROLE / REF`, `UNIT / ACCESS`, `STATUS / NOTE`의 네 표 헤더를 확인했다.
-  Connect·읽기·쓰기·Apply/Revert/SV·output actuation·구동은 실행하지 않았다.
+  Hidden Bode 게시 closeout 기록과 다음 no-I/O EAS bounded slice 선정
+- Hidden Bode 구현은 private `origin`의 게시 HEAD다. 여덟 번째
+  `BODE DOC MAP` page에 Tuner Settings 8 / Current Bode 8 /
+  Velocity·Position Bode 8개 immutable documentation row, 7 frozen source
+  identity, 4 conflicts, 12 warnings, 8 missing-evidence를 고정했다.
+- authority는 `DOCUMENTED_HIDDEN_BODE_MAP_ONLY`, status는
+  `PARTIAL_NEED_DATA`; local catalog/UI inspect만 GREEN이다. 실제 Current
+  Verify는 ENERGY, V/P Verify는 MOTION이지만 이 page는 drive read/current
+  state/acquisition/evaluation/Verify/EAS setting change/recording/command/
+  write/Apply/Revert/SV/energization/motion을 제공하지 않는다.
+- 독립 검토의 LOW 표현 지적에 따라 실제 실행처럼 읽히던 `VERIFY BODE`를
+  `BODE DOC MAP`으로, `MODEL STATUS`를 `EVIDENCE STATUS`로 바꿨다.
+- runtime 구조 smoke는 Python 3.14, 1366×820, **OFFLINE**에서 8/8/8개 행,
+  action/edit widget 0, 수평 scroll 0을 확인했다. cosmetic label 수정 뒤에는
+  해당 권한/UI와 세 테마 geometry 테스트를 현재 트리에서 재통과했다.
+  Connect·읽기·쓰기·Verify·설정 변경·통전·구동은 실행하지 않았다.
 - Page Status runtime smoke: 네 번째 `STATUS / ERRORS` 단계에서
   `OVERALL PARTIAL · LOCAL STATUS ONLY`, P1 `MISSING`, P2 `BLOCKED`,
   Evidence `DOCUMENTED PARTIAL · 5 unresolved document conflicts`를 관찰.
@@ -70,6 +74,29 @@
 
 ## 검증 상태
 
+- `OBSERVED` Hidden Bode immutable model contract:
+  **14 passed**. exact 3 sections/24 rows(8/8/8), frozen singleton,
+  strict lookup, 7 sources, 4 conflicts, 12 warnings, 8 missing-evidence,
+  file/process/network I/O poison과 inspect만 true인 fail-closed capability를 확인했다.
+- `OBSERVED` LOW 표현 개선 뒤 Hidden Bode Expert 영향범위 회귀:
+  **211 passed in 65.06s**. 기존 P1/P2 MODEL과 다른 Expert inspector,
+  operation catalog, late Axis/model 비전파, 8-step UI zero-I/O/authority,
+  세 테마 1366×820 geometry/contrast를 재확인했다.
+- `OBSERVED` 현재 게시 트리의 최신 전체 repository suite:
+  **1547 passed in 503.66s**, 직접 `pytest` 실행의 숫자 종료코드 **0**
+- `OBSERVED` Hidden Bode 독립 read-only 검토:
+  **HIGH/MEDIUM 없음**. 7개 설치 source SHA-256을 원본에서 독립 재계산해
+  전부 동결값과 일치했고, LOW UI 표현 2건은 `BODE DOC MAP`과
+  `EVIDENCE STATUS`로 수정한 뒤 영향범위·전체 회귀를 다시 통과했다.
+- 이 GREEN은 immutable documentation catalog/UI의 열람 계약에만 적용된다.
+  실제 EAS Bode 측정, current/position/velocity 응답, tuning 적합성,
+  model/measurement parity, 정량 acceptance와 hardware safety는
+  **`NEED-DATA / NO-GO`**다.
+- `OBSERVED` 첫 Hidden Bode 전체 실행은 기존 Status Monitor GUI 테스트의
+  Qt native access violation으로 비정상 종료했다. 같은 시각 오래 실행 중이던
+  별도 pytest process가 관찰됐지만 직접 원인인지는 `UNVERIFIED`다.
+  해당 단일 테스트 **1 passed**, 후속 전체 실행 **1547 passed / exit 0**,
+  LOW 표현 개선 뒤 최신 전체 재실행도 **1547 passed / exit 0**이었다.
 - `OBSERVED` Application Settings 모델·UI·operation catalog·authority focused 회귀:
   **85 passed**. immutable 3 sections/13 rows(4/4/5), 24 source identity,
   9 conflicts, 16 warnings, 6 missing-evidence, strict lookup/digest,
@@ -265,6 +292,22 @@
     `NEED-DATA / NO-GO`
   - focused 85 passed, 전체 1529 passed, 독립 closeout과 runtime GUI smoke 완료
   - private Draft PR #2에 구현 commit `e577f79`로 게시
+- **Expert Hidden Verification – Bode · Documented Map v0.1**
+  - Expert 여덟 번째 `BODE DOC MAP` 단계에서 `Tuner Verification Settings`,
+    `Current Verification – Bode`, `Velocity / Position Verification – Bode`를
+    각 8개 row의 frozen static catalog로 표시
+  - authority `DOCUMENTED_HIDDEN_BODE_MAP_ONLY`, status
+    `PARTIAL_NEED_DATA`; 7 sources, 4 conflicts, 12 warnings, 8 missing
+  - hidden-page visibility는 authority가 아니며 actual `Verify`,
+    EAS settings reset/change와 recording control을 제공하지 않음
+  - 기존 P1 Bode preview는 OFFLINE MODEL, 이 page는 field experiment의
+    documentation map으로 분리. model/measurement parity와 pass/fail을 주장하지 않음
+  - local inspect만 GREEN. actual Current ENERGY와 V/P MOTION verification,
+    target parity, envelope, recorder provenance, abort/closeout와 quantitative
+    acceptance는 `NEED-DATA / NO-GO`
+  - pure 14 passed, 영향범위 211 passed in 65.06s, 전체
+    1547 passed in 503.66s / exit 0, 독립 source hash 7/7 일치
+  - private Draft PR #2에 구현 commit `8073176`로 게시
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -276,6 +319,8 @@
     protection efficacy는 미구현
   - Application Settings의 Brake/Settling/I/O는 static documented map만
     부분 구현; current readback/write/transaction/actuation은 잔여
+  - Hidden Current/V/P Bode는 static documented map만 부분 구현;
+    actual Verify와 setting mutation/recording은 잔여 `NEED-DATA`
   - time verification, User Units의 drive readback/write와
     EAS page icon/Enter/Apply·Summary recommendation은 잔여
   - Single Axis의 STO drive-reported snapshot은 부분 구현
@@ -297,17 +342,21 @@
 | Expert Limits / Protections · Documented Parameter Map v0.1 | **완료 · focused 69 / 전체 1513 passed + runtime/독립 closeout · `baa2841` · private Draft PR #2** |
 | Expert Application Settings · Documented Map v0.1 | **완료 · focused 85 / 전체 1529 passed + runtime/독립 검토 · `e577f79` · private Draft PR #2** |
 | Application Settings private Draft PR 게시 | **완료 · `e577f79`** |
+| Expert Hidden Verification – Bode · Documented Map v0.1 | **완료 · pure 14 / 영향범위 211 / 전체 1547 passed + runtime/독립 검토 · `8073176` · private Draft PR #2** |
+| 실제 Current Bode / V·P Bode 실행 | **NEED-DATA · ENERGY/MOTION 별도 gate · 신뢰 가능한 ETA 없음** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
-Application Settings 로컬 closeout과 private 게시는 완료됐다.
+Hidden Bode static map 로컬 closeout과 private 게시는 완료됐다.
 이는 근거가 있는 LOCAL/READ-ONLY 계약의 완료이며 모든 EAS 페이지 구현 완료를 뜻하지 않는다.
-Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
+Actual Bode Verify, exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
 
 ## 다음 자동 진행
 
 1. 잔여 무구동 EAS 세부 페이지를 evidence-first로 비교해 다음 bounded slice를 선정
-2. exact current config·EAS transaction·output electrical/brake capability 근거 전까지
+2. actual Bode는 exact target/config, excitation·travel·thermal envelope,
+   recorder provenance, abort/closeout와 quantitative oracle 전까지 잠금
+3. exact current config·EAS transaction·output electrical/brake capability 근거 전까지
    evaluator/recommendation/read/write/Apply/SV/actuation은 `NEED-DATA / NO-GO`
 
 ## 현장 안전 규칙

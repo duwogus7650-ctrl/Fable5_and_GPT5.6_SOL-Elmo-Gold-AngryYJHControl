@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections + Application Settings 작업 인계서
+# Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections + Application Settings + Hidden Bode Map 작업 인계서
 
-상태: **APPLICATION SETTINGS PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-18 22:02 KST**<br>
+상태: **HIDDEN BODE MAP PUBLISHED · LOCAL CATALOG/UI ONLY GREEN · MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-19 01:03 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -23,12 +23,15 @@
   `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
 - Expert Application Settings · Documented Map v0.1:
   `e577f790f6b15c418f1cd6a8fd9bd55da9a46d1f`
+- Expert Hidden Verification – Bode · Documented Map v0.1:
+  `80731767b0f0b591d4330d6fabd461a1244537bd`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
   `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
 - Quick/Single Axis/Expert·Filter/Scheduling evidence·Page Status·User Units·
-  Limits/Protections·Application Settings·안전 경계 변경은 새 비공개 `origin`의 기존 Draft PR #2에
+  Limits/Protections·Application Settings·Hidden Bode Map·안전 경계 변경은
+  새 비공개 `origin`의 기존 Draft PR #2에
   위 게시 HEAD까지 반영했다.
   공개 원본 `source`에는 push하지 않았다.
 - 기존 사용자 `media/smoke_main.png` 변경은 working tree에 보존하고 게시에서 제외했다.
@@ -36,6 +39,12 @@
   operation catalog/test/docs로 구성됐다. focused **85 passed**, 전체
   repository **1529 passed in 476.14s**(직접 종료코드 0), 독립 closeout
   잔여 finding 없음과 Python 3.14 runtime GUI smoke를 완료했다.
+- Hidden Bode Map 게시 구현은 별도 여덟 번째 `BODE DOC MAP` page와
+  3 sections/24 rows(8/8/8)의 frozen model, operation catalog/test/docs로
+  구성됐다. pure **14 passed**, LOW 표현 개선 뒤 Expert 영향범위
+  **211 passed in 65.06s**, 현재 트리 전체 **1547 passed in 503.66s**
+  (직접 종료코드 0), 7개 source SHA-256 독립 재대조와 read-only 검토를
+  완료했다. 실제 Current/V·P Bode Verify는 실행하지 않았다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -228,6 +237,41 @@
 - 상세 계약:
   [`expert-application-settings-evidence-v0.1.md`](expert-application-settings-evidence-v0.1.md)
 
+### 2.9 Expert Hidden Verification – Bode · Documented Map v0.1
+
+- 여덟 번째 `BODE DOC MAP` Expert 단계에서 `Tuner Verification Settings`,
+  `Current Verification – Bode`, `Velocity / Position Verification – Bode`의
+  static documentation row를 별도 page로 표시
+- canonical shape는 3 sections / 24 rows = **8 / 8 / 8**
+- authority는 `DOCUMENTED_HIDDEN_BODE_MAP_ONLY`, model status는
+  `PARTIAL_NEED_DATA`; local immutable catalog/UI inspect만 GREEN
+- 7개 frozen source identity, 4개 document conflict, 12개 persistent
+  warning, 8개 missing-evidence를 보존
+- Current Level `%PL/%CL`, Current Offset unit, screenshot-only
+  Unbalanced/Vertical Axis와 `position points` 표현 충돌을 임의 정규화하지 않음
+- hidden-page visibility는 authority가 아니며 `Reset to Factory Defaults`,
+  `Verify`, recording 또는 EAS setting action을 제공하지 않음
+- 기존 첫 번째 page의 Bode는 explicit R/L/TS 기반 OFFLINE MODEL이고,
+  이번 page는 EAS field experiment의 문서 지도다. model/measurement parity,
+  measured response 또는 pass/fail을 주장하지 않음
+- 실제 Current Verify는 ENERGY, V/P Verify는 MOTION 위험이 있으나 이
+  inspector는 drive read/current-state observation/acquisition/evaluation/
+  command/write/Apply/Revert/SV/recording/energization/motion을 모두 차단
+- pure model contract **14 passed**, LOW 표현 개선 뒤 Expert 영향범위 회귀
+  **211 passed in 65.06s**, 현재 트리 전체 **1547 passed in 503.66s / exit 0**
+- 7개 설치 NetHelp HTML/image SHA-256을 독립 재계산해 frozen 값과 전부 일치
+- 독립 read-only 검토는 HIGH/MEDIUM 없음. LOW UI 표현 2건을
+  `BODE DOC MAP`과 `EVIDENCE STATUS`로 수정하고 영향범위·전체 회귀를 재실행
+- Python 3.14, 1366×820 OFFLINE runtime 구조 smoke에서 8/8/8 rows,
+  action/edit widget 0, horizontal scroll 0. cosmetic label 수정은 현재 트리
+  geometry/authority 회귀로 별도 재확인
+- private Draft PR #2에 구현 commit `8073176`로 게시
+- current EAS setting/visibility, exact target parity, automatic amplitude law,
+  approved experiment envelope, sample/recording provenance, abort/closeout와
+  quantitative acceptance는 `NEED-DATA / NO-GO`
+- 상세 계약:
+  [`expert-bode-verification-evidence-v0.1.md`](expert-bode-verification-evidence-v0.1.md)
+
 현재 범위에는 다축, CAN/EtherCAT, firmware update, 일반 Jog/Homing/Current/Sine,
 Gold 계열 전체 자동 호환 또는 EAS 전체 패리티가 포함되지 않는다.
 
@@ -333,11 +377,16 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 | 증거 | 결과 | 주장 범위 |
 |---|---:|---|
+| Hidden Verification–Bode pure model contract | **14 passed** | immutable singleton, exact 3 sections/24 rows(8/8/8), strict lookup, 7 sources, 4 conflicts, 12 warnings, 8 missing, import/build/lookup file/process/network poison, inspect만 true인 fail-closed capability |
+| Hidden Verification–Bode Expert 영향범위 회귀 | **211 passed in 65.06s** | LOW 표현 개선 뒤 기존 P1/P2 MODEL, 다른 Expert evidence, operation catalog와 8-step UI의 zero-I/O/authority isolation, late Axis/model 비전파, 세 테마 1366×820 geometry/contrast. **로컬 catalog/UI만 GREEN** |
+| Hidden Verification–Bode source 재대조 | **7 / 7 SHA-256 일치** | 설치 NetHelp HTML 2개, Current/V/P page·motor-warning image 4개, Tuner Verification image 1개; `_11.png`은 다른 화면이라 제외 |
+| Hidden Verification–Bode 독립 검토 | **HIGH/MEDIUM 없음 · LOW 표현 2건 수정** | 실제 실행처럼 읽히던 `VERIFY BODE`→`BODE DOC MAP`, `MODEL STATUS`→`EVIDENCE STATUS`; 현재 트리 영향범위·전체 회귀 재통과 |
+| Hidden Verification–Bode runtime 구조 smoke | **8 / 8 / 8 rows · 7 frozen identities · OFFLINE** | Python 3.14, 1366×820, action/edit widget 0, horizontal scroll 0; Connect/Verify/settings change/drive I/O/motor action 없음 |
 | Application Settings model·UI·catalog·authority focused 회귀 | **85 passed** | immutable 3 sections/13 rows(4/4/5), 24 sources, 9 conflicts, 16 warnings, 6 missing, strict lookup/digest, poison file/process/network/worker/link/drive I/O, 기존 Expert/connection/safety/Run/Verify/Apply/Restore/Save authority 불변, late summary 비전파, 세 테마 geometry/contrast. **로컬 catalog/UI만 GREEN** |
 | Application Settings 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음** | 24개 source SHA-256 독립 재계산 전부 일치, 미검증 Gold Twitter 설치/하드웨어 PDF 제외, zero-I/O·fail-closed·authority 경계 재확인 |
 | Application Settings 최신 runtime smoke | **4 / 4 / 5 rows · 24 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, 짧은 표 헤더, app inspect-only, action 없음, Connect 미실행, drive/worker/command/output/motion I/O 없음 |
 | Limits/Protections 모델·UI·catalog·authority focused 회귀 | **69 passed** | immutable 27-row documented map, 9개 conflict, danger warning, strict lookup/20개 source hash, poison file/process/network/worker/link/job/query/write, 기존 모든 Expert/installed/dispatch/connection/safety authority 불변과 세 스킨 1366×820. **로컬 catalog만 GREEN** |
-| 최신 전체 repository suite | **1529 passed in 476.14s** | 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
+| 최신 전체 repository suite | **1547 passed in 503.66s** | LOW 표현 개선 뒤 현재 게시 트리에서 직접 `pytest` 실행, 100% passed summary, 숫자 종료코드 0 |
 | Limits/Protections 독립 closeout | **잔여 HIGH/MEDIUM/LOW 없음 · 독립 69 passed** | SimplIQ source, stable mutation digest, document/app access, fresh-import poison, connection/safety snapshot, 세 테마 contrast 재확인 |
 | Limits/Protections 최신 runtime smoke | **7 / 9 / 11 rows · 20 frozen identities · OFFLINE/READ ONLY** | Python 3.14, 1366×820, dark high-contrast table, app inspect-only, action 없음, Apply/Save LOCKED, drive/worker/command I/O와 motor action 없음 |
 | Limits table palette 실패→수정 | **white/bright unreadable RED → 세 테마 contrast `>=4.5` GREEN** | `expertEvidenceTable` 전용 QSS와 실제 QDD runtime 재확인 |
@@ -365,6 +414,12 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 
 유용한 실패 이력:
 
+- 첫 Hidden Bode 전체 회귀는 기존 Status Monitor GUI 테스트의 Qt native
+  access violation으로 65%에서 종료됐다. 같은 시각 오래 실행 중인 별도
+  pytest process가 관찰됐지만 인과는 `UNVERIFIED`다.
+- 그 process를 종료한 뒤 해당 단일 테스트 **1 passed**, 전체
+  **1547 passed / exit 0**이었고, LOW 표현 개선 뒤 최신 트리 전체도
+  다시 **1547 passed / exit 0**을 완료했다.
 - 강화된 access-mode 계약 직후 전체 suite는 **1285 passed / 44 failed**였다.
 - 원인은 정상 admission을 흉내 내던 기존 fake link/worker가 transport 또는 requested mode를
   명시하지 않은 것이었다.
@@ -469,8 +524,9 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 
 ## 9. 안전한 재개 순서
 
-1. exact transaction·firmware parity·output electrical/brake capability 근거 전에는
-   live read/write/evaluator/recommendation/Apply/SV/actuation으로 승격하지 않는다.
+1. exact transaction·firmware parity·output electrical/brake capability와
+   Bode experiment envelope/acquisition/acceptance 근거 전에는 live read/write/
+   evaluator/recommendation/Apply/SV/actuation/Verify로 승격하지 않는다.
 2. EAS를 추가 관찰해야 한다면 **미연결 상태**에서 화면·조건부 visibility만 매핑한다.
 3. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
 4. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
