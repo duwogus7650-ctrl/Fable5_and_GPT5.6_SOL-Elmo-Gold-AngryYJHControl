@@ -5,8 +5,8 @@
 
 # Gold Twitter · Quick + Single Axis + Expert v2 + Evidence + Page Status + User Units + Limits/Protections
 
-상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
-업데이트: **2026-07-18 20:58 KST**
+상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
+업데이트: **2026-07-18 21:06 KST**
 
 ## 현재 기준
 
@@ -25,10 +25,10 @@
 - Expert User Units · Documented Formula Preview v0.1 검증·구현 HEAD:
   `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
   (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert Limits / Protections · Documented Parameter Map v0.1:
-  working tree 구현·focused **69 passed**, 전체 **1513 passed**, 최신 runtime smoke와
-  독립 closeout 완료. private publish 전이라 구현 HEAD는 아직 기록하지 않음
-- 현재 작업 대상: Limits/Protections private Draft PR 갱신 뒤
+- Expert Limits / Protections · Documented Parameter Map v0.1 검증·구현 HEAD:
+  `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
+  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
+- 현재 작업 대상:
   Expert Application Settings의 근거 기반 LOCAL/no-I/O 최소 범위 확정
 - 제어창: 최신 source를 Python 3.14로 실행해 **OFFLINE · READ ONLY**에서
   여섯 번째 `LIMITS / PROTECT`, `Current 7 / Motion 9 / Protections 11` row,
@@ -222,7 +222,7 @@
   - 로컬 inspect만 GREEN. current config/active protection/추천/검증/command/write/
     Apply/SV/unit propagation/field safety는 `NEED-DATA / NO-GO`
   - focused 69 passed, 전체 1513 passed, runtime smoke와 독립 closeout 완료;
-    private publish만 대기
+    private Draft PR #2에 `baa2841`로 게시
 - **UI lifecycle 안전 보완**
   - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
   - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
@@ -250,7 +250,7 @@
 | Filter/Scheduling 문서 topology inspector | **완료 · `540877e` · private Draft PR #2** |
 | Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
 | Expert User Units · Documented Formula Preview v0.1 | **완료 · `0472ee5` · private Draft PR #2** |
-| Expert Limits / Protections · Documented Parameter Map v0.1 | **구현 + focused 69 / 전체 1513 passed + runtime/독립 closeout 완료 · private publish 대기** |
+| Expert Limits / Protections · Documented Parameter Map v0.1 | **완료 · focused 69 / 전체 1513 passed + runtime/독립 closeout · `baa2841` · private Draft PR #2** |
 | EAS 미연결 매핑 정리 + 잔여 무구동 세부 페이지 비교 | **1–2.5시간** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 
@@ -261,10 +261,9 @@ Exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
 
 ## 다음 자동 진행
 
-1. Limits/Protections 문서/commit/private Draft PR을 갱신
-2. Expert Application Settings에서 문서 근거가 충분한 다음 LOCAL/no-I/O inspector 확정
-3. 새 기능도 실패 우선 zero-I/O/authority/geometry/contrast 계약부터 작성
-4. exact current config·EAS transaction·protection efficacy 근거 전까지
+1. Expert Application Settings에서 문서 근거가 충분한 다음 LOCAL/no-I/O inspector 확정
+2. 새 기능도 실패 우선 zero-I/O/authority/geometry/contrast 계약부터 작성
+3. exact current config·EAS transaction·protection efficacy 근거 전까지
    evaluator/recommendation/read/write/Apply/SV는 `NEED-DATA / NO-GO`
 
 ## 현장 안전 규칙

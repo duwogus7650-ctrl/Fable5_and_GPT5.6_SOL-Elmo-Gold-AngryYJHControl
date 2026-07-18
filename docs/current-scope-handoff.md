@@ -1,7 +1,7 @@
 # Quick Tuning + Single Axis + Expert Candidate Lab v2 + Page Status + User Units + Limits/Protections 작업 인계서
 
-상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED · PRIVATE PUBLISH PENDING · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
-기준 시각: **2026-07-18 20:58 KST**<br>
+상태: **LIMITS/PROTECTIONS STATIC MAP OFFLINE VERIFIED + PRIVATE DRAFT PUBLISHED · NEXT APPLICATION SETTINGS EVIDENCE IN PROGRESS · MOTOR ACTION NOT RUN**<br>
+기준 시각: **2026-07-18 21:06 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -19,16 +19,15 @@
   `a20e19a0d28bc66b91572ad93d4cd2da4f032672`
 - Expert User Units · Documented Formula Preview v0.1 검증·구현 HEAD:
   `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
-- Expert Limits / Protections · Documented Parameter Map v0.1:
-  working tree 구현·focused **69 passed**, 전체 **1513 passed**, runtime smoke와
-  독립 closeout 완료. commit/private publish 전이므로 구현 HEAD는 아직 없음
+- Expert Limits / Protections · Documented Parameter Map v0.1 검증·구현 HEAD:
+  `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
   `duwogus7650-ctrl/Fable5-Elmo-Gold-AngryYJHControl`
-- Quick/Single Axis/Expert·Filter/Scheduling evidence·Page Status·User Units·안전 경계
-  변경은 새 비공개 `origin`의 기존 Draft PR #2에 위 게시 HEAD까지 반영했다.
-  Limits/Protections working tree 변경은 아직 게시하지 않았다.
+- Quick/Single Axis/Expert·Filter/Scheduling evidence·Page Status·User Units·
+  Limits/Protections·안전 경계 변경은 새 비공개 `origin`의 기존 Draft PR #2에
+  위 게시 HEAD까지 반영했다.
   공개 원본 `source`에는 push하지 않았다.
 - 기존 사용자 `media/smoke_main.png` 변경은 working tree에 보존하고 게시에서 제외했다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
@@ -179,7 +178,8 @@
 - 모델과 UI는 drive/worker/link/job/query/write를 만들지 않고 P1/P2/Evidence/
   Page Status/User Units/installed/dispatch/connection/safety/Apply/Save 권한을 바꾸지 않음
 - focused 회귀 **69 passed**, 전체 repository suite **1513 passed**,
-  최신 runtime smoke와 독립 closeout을 완료했다. private publish만 대기
+  최신 runtime smoke와 독립 closeout을 완료했고 private Draft PR #2에
+  `baa2841`로 게시했다.
 - 최초 runtime의 흰 표/밝은 글자 결함은 `expertEvidenceTable` 전용 세 테마
   스타일과 text/base contrast `>=4.5` 회귀로 수정
 - current drive config와 active protection state, firmware/EAS parity,
@@ -426,19 +426,17 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 
 ## 9. 안전한 재개 순서
 
-1. Limits/Protections 변경을 commit하고 private Draft PR #2를 갱신하되 사용자
-   `media/smoke_main.png` 변경은 제외한다.
-2. Expert Application Settings의 Brake/Settling/I/O 문서 근거를 대조해
+1. Expert Application Settings의 Brake/Settling/I/O 문서 근거를 대조해
    다음 LOCAL/no-I/O inspector 최소 범위를 확정한다.
-3. exact transaction·firmware parity·output electrical capability 근거 전에는
+2. exact transaction·firmware parity·output electrical capability 근거 전에는
    live read/write/evaluator/recommendation/Apply/SV/actuation으로 승격하지 않는다.
-4. EAS를 추가 관찰해야 한다면 **미연결 상태**에서 화면·조건부 visibility만 매핑한다.
-5. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
-6. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
+3. EAS를 추가 관찰해야 한다면 **미연결 상태**에서 화면·조건부 visibility만 매핑한다.
+4. EAS와 우리 앱의 동시 drive 연결이 없음을 확인
+5. Read Only 재연결이 필요하면 mutation controls disabled와 freshness를 확인하고
    admission sweep의 `MO/SO/VX/PS/MF` 원시 transcript를 보존
-7. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
-8. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
-9. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
+6. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
+7. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
+8. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
 
 ## 10. 완료 의미
 
