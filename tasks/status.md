@@ -1,11 +1,11 @@
 <!-- scope_progress: 100 -->
 <!-- offline_progress: 100 -->
-<!-- field_progress: 43 -->
-<!-- progress_basis: Planning indicators, not safety scores. Scope means the implemented feature inventory is enumerated. Offline means code/tests/documents reviewed. Field means bounded live EAS and read-only drive comparisons only; it excludes motion, protection efficacy, STO/E-stop, write transactions, and Gold-family compatibility. -->
+<!-- field_progress: 57 -->
+<!-- progress_basis: Planning indicators, not safety scores. Scope means the implemented feature inventory is enumerated. Offline means code/tests/documents reviewed. Field now includes bounded live EAS/read-only comparisons, zero-torque SUPERVISED admission, and one fail-closed standalone signature attempt; it excludes a passing signature, Phase 1/2, motion verification, protection efficacy, persistent writes, and Gold-family compatibility. -->
 
 # EAS LIVE PARITY AUDIT · PX/PU + CURRENT LIVE RECHECK · SR23 FIX
 
-상태: **비실기 잔여 0 · SR23 수정/검증/게시 완료 · FIELD NEED-DATA ONLY**
+상태: **서명 RED · MF=0x80 speed-tracking fault · MO=0/TC=0 복귀 · 재시도 금지**
 
 업데이트: **2026-07-19 KST**
 
@@ -133,6 +133,64 @@
    생길 때까지 계속 잠근다.
 4. 다른 Gold 제품 호환성은 대상별 identity, I/O, firmware, feedback,
    protection과 구동 시험 없이는 주장하지 않는다.
+
+## 2026-07-19 supervised field session
+
+- current revision `f03453a`에서 AngryYJH `ONLINE · READ ONLY` admission 통과.
+- `MOTOR DISABLED`, PX=`-2038379934`, VX=0, position error=0,
+  active current=0 A.
+- Position/Velocity `54.6 ms`, Drive Mode `2.0 ms`, Current readback,
+  Digital Inputs `27.7 ms`, Digital Outputs `20.4 ms`로 bounded read 통과.
+- EAS III를 단독 연결해 GCON Revision E / Twitter FW / PAL / serial,
+  UM=5, I/O, STO indicators, PX/profile, five Current presets를 재대조.
+- EAS Quick Tuning의 Axis/Motor/Feedback page를 실제 target에서 읽었으며
+  Run/Apply/Enable/Set/Save/motion은 실행하지 않음.
+- 최종 상태: AngryYJH와 EAS 모두 정상 연결 해제.
+- 다음 단계는 `SUPERVISED` 연결 전 현장 3조건:
+  operator·area·restraint, 이번 런의 independent E-stop/STO test,
+  direction·allowed travel envelope의 물리 확인.
+- 상세:
+  [`docs/field-validation-session-2026-07-19.md`](../docs/field-validation-session-2026-07-19.md).
+
+## 2026-07-19 supervised admission
+
+- 작업자가 이번 런의 현장 대기, 축 주변 정리/구속, 독립 E-stop/STO,
+  방향/허용 이동 조건 확인을 보고함.
+- AngryYJH를 `ONLINE · SUPERVISED`로 연결했으며 연결 자체는 모터를
+  활성화하거나 명령을 쓰지 않음.
+- fresh readback: `MO=0`, `SO=0`, `MF=0`, amplifier `0x0`, `SR4=0`,
+  `SR14=1`, `SR15=1`, `PS=2`, `SR12=0`, `SR13=0`, `MS=3`.
+- 새 연결 세션이므로 이전 commutation authority는 정상 폐기되었고
+  `Commutation Signature required this connection`으로 표시됨.
+- 첫 통전 후보는 별도 signature 경로의 `+TC 0→최대 1.30 A`,
+  최대 2.0초, Phase 2 미진입, 종료 `TC=0/MO=0` 및 임시 리밋 복원 확인.
+- 작업자가 DC-link `48 V`, 외부 전원 current limit `5 A`를 기록하고
+  `+TC 0→최대 1.30 A`, 최대 2.0초 standalone signature 실행을 승인함.
+- 이 승인은 Phase 1/2, PTP/Jog/Homing/Sine, Apply/Save/SV, 증액·연장,
+  자동 재시도를 포함하지 않음.
+
+## 2026-07-19 commutation signature field result
+
+- `23:33 KST` standalone signature를 승인 범위 안에서 1회 시작.
+- 결과 `RED`: `i_ba` 미검출, 방향 미확정, `MF=0x80`.
+- Gold command reference상 `MF=0x80`은 `|DV[2]-VX| > ER[2]`인
+  speed-tracking error.
+- raw artifact에는 `breakaway`/`signature_gate`가 없고
+  `abort.segment=idle`; enable 직후, 측정 램프 진입 전 fault와 일치한다.
+- 임시 `SD/HL[2]/LL[2]/ER[2]`는 forward/reverse readback으로 원복:
+  `1e6/0/0/1e8`.
+- result closeout: `configuration_state=RESTORED`,
+  `final_state.pass=true`, `MO=0`, `TC=0`,
+  `disabled_verified=true`.
+- 별도 UI 확인: `MOTOR DISABLED`, `MO=0`, `SO=0`, `MF=128`,
+  `VX=0`, active current=0 A, PX=`-2038379934`로 시작값과 동일.
+- 사용자가 Escape로 제어를 중단했으므로 automation은 즉시 종료했고
+  정상 UI disconnect는 수행하지 않음. 마지막 관찰은
+  `ONLINE · SUPERVISED`지만 무토크/정지 상태.
+- raw evidence와 SHA-256:
+  [`docs/evidence/field-2026-07-19/README.md`](../docs/evidence/field-2026-07-19/README.md).
+- **재시도·fault clear·MO=1 금지**. 다음 실기 전 `DV[2]`, `VE`,
+  enable-time `ER[2]` transaction을 진단해야 함.
 
 ## 계속 잠긴 기능
 
