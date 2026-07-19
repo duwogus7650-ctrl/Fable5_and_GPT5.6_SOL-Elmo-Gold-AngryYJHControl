@@ -53,6 +53,7 @@ import single_axis_motion
 import single_axis_status
 import single_axis_enable_contract
 import single_axis_authority_evidence
+import single_axis_current_reference
 import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
@@ -741,7 +742,7 @@ class DriveWorker(QtCore.QThread):
     SUPERVISED_ACCESS_MODE = SUPERVISED_ACCESS_MODE
     _QUIESCENT_ADMISSION_REGISTERS = ("MO", "SO", "VX", "PS", "MF")
     _OBSERVE_ONLY_JOB_ALLOWLIST = frozenset((
-        "axis_read", "axis_drive_mode_read",
+        "axis_read", "axis_drive_mode_read", "axis_current_reference_read",
         "axis_digital_inputs_read", "axis_digital_outputs_read",
         "persistence_audit",
         "motion_stop", "recorder_stop",
@@ -749,6 +750,7 @@ class DriveWorker(QtCore.QThread):
     _READ_ONLY_QUERY_ALLOWLIST = frozenset((
         "VR", "VP", "VB", "SN[4]", "PX", "VX", "PE", "IQ",
         "MO", "SO", "MS", "MF", "SR", "ID", "UM", "RM",
+        "TC", "CL[1]", "PL[1]", "LC", "MC",
     ))
     _TRIAL_JOB_ALLOWLIST = {
         "P1": frozenset(("p1_trial_restore", "p1_trial_commit")),
@@ -788,6 +790,7 @@ class DriveWorker(QtCore.QThread):
     encoder_maint_result = QtCore.pyqtSignal(bool, str)   # (ok, drive-response text)
     soft_zero_result = QtCore.pyqtSignal(bool, str, object)  # ok, message, telemetry
     axis_summary = QtCore.pyqtSignal(dict)                 # read-only Quick Axis snapshot
+    axis_current_reference = QtCore.pyqtSignal(object)    # bounded current-reference snapshot
     axis_drive_mode = QtCore.pyqtSignal(object)            # bounded UM snapshot
     axis_digital_inputs = QtCore.pyqtSignal(object)        # bounded IP/IL/IF snapshot
     axis_digital_outputs = QtCore.pyqtSignal(object)       # bounded OP/OL/GO snapshot
@@ -973,6 +976,10 @@ class DriveWorker(QtCore.QThread):
     def refresh_axis_drive_mode(self):
         """Queue one bounded UM read-only snapshot."""
         self._jobs.append(("axis_drive_mode_read", None))
+
+    def refresh_axis_current_reference(self):
+        """Queue one bounded current-reference read-only snapshot."""
+        self._jobs.append(("axis_current_reference_read", None))
 
     def refresh_axis_digital_inputs(self):
         """Queue one bounded IP/IL[1..6]/IF[1..6] read-only snapshot."""
@@ -1212,7 +1219,8 @@ class DriveWorker(QtCore.QThread):
                 "observe-only connection permits Axis/persistence reads and "
                 "software shutdown only")
         persistence_allowlist = frozenset((
-            "axis_read", "axis_drive_mode_read", "axis_digital_inputs_read",
+            "axis_read", "axis_drive_mode_read", "axis_current_reference_read",
+            "axis_digital_inputs_read",
             "axis_digital_outputs_read", "persistence_audit",
             "motion_stop", "recorder_stop"))
         if self._persistence_recovery_unknown:
@@ -1224,6 +1232,7 @@ class DriveWorker(QtCore.QThread):
         if self._energy_closeout_unknown:
             if kind in (
                     "axis_read", "axis_drive_mode_read",
+                    "axis_current_reference_read",
                     "axis_digital_inputs_read",
                     "axis_digital_outputs_read", "motion_stop",
                     "recorder_stop"):
@@ -1235,6 +1244,7 @@ class DriveWorker(QtCore.QThread):
         # behind coordinate, encoder, gain-trial, or persistence uncertainty.
         if kind in (
                 "axis_read", "axis_drive_mode_read",
+                "axis_current_reference_read",
                 "axis_digital_inputs_read",
                 "axis_digital_outputs_read", "motion_stop", "recorder_stop",
                 "recorder_upload"):
@@ -1635,6 +1645,11 @@ class DriveWorker(QtCore.QThread):
     def _emit_axis_drive_mode(self, link):
         snapshot = single_axis_drive_mode.read_drive_mode_snapshot(link)
         self.axis_drive_mode.emit(snapshot)
+
+    def _emit_axis_current_reference(self, link):
+        snapshot = (
+            single_axis_current_reference.read_current_reference_snapshot(link))
+        self.axis_current_reference.emit(snapshot)
 
     def _emit_axis_digital_outputs(self, link):
         snapshot = single_axis_digital_outputs.read_digital_output_snapshot(link)
@@ -2437,6 +2452,8 @@ class DriveWorker(QtCore.QThread):
                         self._emit_axis_summary(link)
                     elif kind == "axis_drive_mode_read":
                         self._emit_axis_drive_mode(link)
+                    elif kind == "axis_current_reference_read":
+                        self._emit_axis_current_reference(link)
                     elif kind == "axis_digital_inputs_read":
                         self._emit_axis_digital_inputs(link)
                     elif kind == "axis_digital_outputs_read":
@@ -4137,6 +4154,7 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addWidget(self._build_single_axis_authority_frame())
         v.addWidget(self._build_axis_enable_contract_frame())
         v.addWidget(self._build_axis_drive_mode_frame())
+        v.addWidget(self._build_axis_current_reference_frame())
         v.addWidget(self._build_axis_digital_inputs_frame())
         v.addWidget(self._build_axis_digital_outputs_frame())
 
@@ -4618,6 +4636,222 @@ class MainWindow(QtWidgets.QMainWindow):
             "Identity-bound explicit UM snapshot · acquisition %.1f ms · "
             "documented map only · NO MODE CHANGE / ENABLE / REFERENCE / "
             "MOTION" % (1000.0 * snapshot.sample_duration_s))
+
+    def _build_axis_current_reference_frame(self):
+        """Build the bounded current-reference read-only panel."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.axis_current_reference_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel(
+            "CURRENT REFERENCE · READ-ONLY SNAPSHOT v0.1")
+        title.setProperty("role", "field")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.lbl_axis_current_reference_state = QtWidgets.QLabel("UNKNOWN")
+        self.lbl_axis_current_reference_state.setObjectName("pill")
+        self.lbl_axis_current_reference_state.setProperty("on", "false")
+        self.lbl_axis_current_reference_state.setProperty("status", "neutral")
+        head.addWidget(self.lbl_axis_current_reference_state)
+        layout.addLayout(head)
+
+        self.lbl_axis_current_reference_contract = QtWidgets.QLabel(
+            single_axis_current_reference.EVIDENCE_LABEL
+            + " · EXPLICIT REFRESH ONLY · COMMAND LOCKED / NEED-DATA · "
+              "TC REQUIRES MO=1 + SO=1 AND FORCES CURRENT LOOP · "
+              "NO COMMAND WITHOUT FIELD ENVELOPE + WATCHDOG + ST → MO=0 "
+              "CLOSEOUT")
+        self.lbl_axis_current_reference_contract.setProperty("role", "hint")
+        self.lbl_axis_current_reference_contract.setWordWrap(True)
+        self.lbl_axis_current_reference_contract.setMinimumWidth(0)
+        self.lbl_axis_current_reference_contract.setMinimumHeight(112)
+        layout.addWidget(self.lbl_axis_current_reference_contract)
+
+        self.lbl_axis_current_reference_motor = QtWidgets.QLabel("—")
+        self.lbl_axis_current_reference_motor.setProperty("role", "value")
+        self.lbl_axis_current_reference_motor.setWordWrap(True)
+        layout.addWidget(self.lbl_axis_current_reference_motor)
+
+        rows = (
+            ("TC", "Torque/current command · amperes · query only"),
+            ("IQ", "Active current component · torque producing"),
+            ("ID", "Reactive current component · normally regulated to zero"),
+            ("CL[1]", "Continuous motor phase-current limit"),
+            ("PL[1]", "Peak current limit"),
+            ("LC", "Current-limit flag · SR bit 13 cross-check"),
+            ("MC", "Factory drive maximum phase-current rating"),
+        )
+        self.axis_current_reference_table = QtWidgets.QTableWidget(
+            len(rows), 3)
+        self.axis_current_reference_table.setObjectName("expertEvidenceTable")
+        self.axis_current_reference_table.setStyleSheet(
+            "QTableWidget { font-family: 'Segoe UI'; font-size: 11px; }")
+        self.axis_current_reference_table.setHorizontalHeaderLabels((
+            "DRIVE ITEM",
+            "CURRENT READBACK",
+            "DOCUMENTED MEANING",
+        ))
+        self.axis_current_reference_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.axis_current_reference_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.axis_current_reference_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.axis_current_reference_table.setAlternatingRowColors(True)
+        self.axis_current_reference_table.verticalHeader().setVisible(False)
+        header = self.axis_current_reference_table.horizontalHeader()
+        header.setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.axis_current_reference_table.setMinimumWidth(0)
+        self.axis_current_reference_table.setMinimumHeight(300)
+        for row, (item_name, meaning) in enumerate(rows):
+            for column, value in enumerate((item_name, "—", meaning)):
+                item = QtWidgets.QTableWidgetItem(value)
+                item.setToolTip(value)
+                self.axis_current_reference_table.setItem(row, column, item)
+        self.axis_current_reference_table.resizeRowsToContents()
+        layout.addWidget(self.axis_current_reference_table)
+
+        actions = QtWidgets.QHBoxLayout()
+        self.btn_axis_current_reference_refresh = QtWidgets.QPushButton(
+            "Refresh Current Reference · READ ONLY")
+        self.btn_axis_current_reference_refresh.setEnabled(False)
+        self.btn_axis_current_reference_refresh.clicked.connect(
+            self._refresh_axis_current_reference_clicked)
+        self._decorate_operation_control(
+            self.btn_axis_current_reference_refresh,
+            "axis.current_reference.refresh")
+        actions.addWidget(self.btn_axis_current_reference_refresh)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.lbl_axis_current_reference_detail = QtWidgets.QLabel(
+            "OFFLINE · no current identity-bound current-reference snapshot")
+        self.lbl_axis_current_reference_detail.setProperty("role", "hint")
+        self.lbl_axis_current_reference_detail.setWordWrap(True)
+        self.lbl_axis_current_reference_detail.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_current_reference_detail)
+        self._reset_axis_current_reference(
+            "OFFLINE · no current identity-bound current-reference snapshot")
+        return frame
+
+    def _reset_axis_current_reference(self, reason):
+        """Blank the current-reference observation without granting authority."""
+        self._axis_current_reference_snapshot = None
+        if not hasattr(self, "lbl_axis_current_reference_state"):
+            return
+        self.lbl_axis_current_reference_state.setText("UNKNOWN")
+        self.lbl_axis_current_reference_state.setProperty("on", "false")
+        self.lbl_axis_current_reference_state.setProperty(
+            "status", "neutral")
+        self._restyle(self.lbl_axis_current_reference_state)
+        self.lbl_axis_current_reference_motor.setText("—")
+        for row in range(self.axis_current_reference_table.rowCount()):
+            self.axis_current_reference_table.item(row, 1).setText("—")
+        self.lbl_axis_current_reference_detail.setText(
+            str(reason or "Current-reference snapshot unavailable"))
+
+    def _refresh_axis_current_reference_clicked(self):
+        """Request only the typed, bounded current-reference read job."""
+        current = bool(
+            self.worker
+            and self.worker.isRunning()
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and not getattr(self, "_connection_shutdown_pending", False))
+        if not current:
+            self._reset_axis_current_reference(
+                "Current identity/telemetry authority is unavailable")
+            return
+        self._reset_axis_current_reference(
+            "Reading bounded current-reference query set in the worker")
+        self.lbl_axis_current_reference_state.setText("READING")
+        self.worker.refresh_axis_current_reference()
+
+    def _on_axis_current_reference(self, snapshot):
+        """Render only a canonical current-session read-only snapshot."""
+        source = self.sender()
+        if source is not None and source is not self.worker:
+            return
+        canonical = None
+        if isinstance(
+                snapshot,
+                single_axis_current_reference.CurrentReferenceSnapshot):
+            canonical = (
+                single_axis_current_reference
+                .decode_current_reference_snapshot(
+                    snapshot.raw,
+                    sample_duration_s=snapshot.sample_duration_s,
+                ))
+        current_source = bool(
+            not getattr(self, "_connection_shutdown_pending", False)
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and self.worker
+            and self.worker.isRunning())
+        if (not current_source
+                or not isinstance(
+                    snapshot,
+                    single_axis_current_reference.CurrentReferenceSnapshot)
+                or snapshot.state != single_axis_current_reference.CURRENT
+                or canonical is None
+                or canonical.state != single_axis_current_reference.CURRENT
+                or snapshot != canonical):
+            reason = (
+                getattr(snapshot, "reason", "")
+                or "Noncanonical or non-current current-reference snapshot")
+            self._reset_axis_current_reference(reason)
+            return
+
+        snapshot = canonical
+        self._axis_current_reference_snapshot = snapshot
+        self.lbl_axis_current_reference_state.setText(
+            "CURRENT · DRIVE READ ONLY")
+        self.lbl_axis_current_reference_state.setProperty("on", "false")
+        self.lbl_axis_current_reference_state.setProperty(
+            "status", "neutral")
+        self._restyle(self.lbl_axis_current_reference_state)
+        self.lbl_axis_current_reference_motor.setText(
+            "%s · UM=%d %s" % (
+                snapshot.motor_state,
+                snapshot.mode_value,
+                snapshot.mode_name,
+            ))
+        values = (
+            "%.4f A" % snapshot.tc_a,
+            "%.4f A" % snapshot.iq_a,
+            "%.4f A" % snapshot.id_a,
+            "%.4f A" % snapshot.continuous_limit_a,
+            "%.4f A" % snapshot.peak_limit_a,
+            "%d · %s" % (
+                1 if snapshot.current_limit_active else 0,
+                "ON" if snapshot.current_limit_active else "OFF",
+            ),
+            "%.4f A" % snapshot.maximum_drive_current_a,
+        )
+        for row, value in enumerate(values):
+            item = self.axis_current_reference_table.item(row, 1)
+            item.setText(value)
+            item.setToolTip(value)
+        self.lbl_axis_current_reference_detail.setText(
+            "Identity-bound query-only snapshot · acquisition %.1f ms · %s · "
+            "COMMAND LOCKED / NEED-DATA · NO TC ASSIGNMENT / LOOP CHANGE / "
+            "ENABLE / MOTION" % (
+                1000.0 * snapshot.sample_duration_s,
+                snapshot.limit_relation,
+            ))
 
     def _build_axis_digital_inputs_frame(self):
         """Build the explicit, bounded IP/IL/IF read-only input panel."""
@@ -11368,6 +11602,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.encoder_maint_result.connect(self._on_encoder_maint_result)
         self.worker.soft_zero_result.connect(self._on_soft_zero_result)
         self.worker.axis_summary.connect(self._on_axis_summary)
+        self.worker.axis_current_reference.connect(
+            self._on_axis_current_reference)
         self.worker.axis_drive_mode.connect(self._on_axis_drive_mode)
         self.worker.axis_digital_inputs.connect(self._on_axis_digital_inputs)
         self.worker.axis_digital_outputs.connect(self._on_axis_digital_outputs)
@@ -11653,6 +11889,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self, "_reset_axis_drive_mode", None)
         if callable(reset_mode):
             reset_mode(
+                str(detail or "Telemetry authority unavailable"))
+        reset_current_reference = getattr(
+            self, "_reset_axis_current_reference", None)
+        if callable(reset_current_reference):
+            reset_current_reference(
                 str(detail or "Telemetry authority unavailable"))
         reset_outputs = getattr(
             self, "_reset_axis_digital_outputs", None)
@@ -12221,6 +12462,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "No current admitted connection snapshot")
             self._reset_axis_drive_mode(
                 "No current admitted connection snapshot")
+            self._reset_axis_current_reference(
+                "No current admitted connection snapshot")
             self._reset_axis_digital_inputs(
                 "No current admitted connection snapshot")
             self._reset_axis_digital_outputs(
@@ -12300,6 +12543,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 telemetry_trusted)
         if hasattr(self, "btn_axis_drive_mode_refresh"):
             self.btn_axis_drive_mode_refresh.setEnabled(
+                telemetry_trusted)
+        if hasattr(self, "btn_axis_current_reference_refresh"):
+            self.btn_axis_current_reference_refresh.setEnabled(
                 telemetry_trusted)
         if hasattr(self, "btn_axis_digital_outputs_refresh"):
             self.btn_axis_digital_outputs_refresh.setEnabled(

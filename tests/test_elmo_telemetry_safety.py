@@ -6,6 +6,7 @@ import time
 
 from elmo_link import ElmoLink, TelemetrySnapshotError
 import persistence_audit
+import single_axis_current_reference
 import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
@@ -81,7 +82,7 @@ def _observe_only_link(monkeypatch):
 
 @pytest.mark.parametrize("query", [
     "VR", "SN[4]", "CA[18]", "KP[1]", "PX", "MO", "SO", "VX", "PS", "MF",
-    "UM",
+    "UM", "TC", "LC", "CL[1]", "PL[1]",
 ])
 def test_observe_only_transport_allows_bare_queries(monkeypatch, query):
     link, spy = _observe_only_link(monkeypatch)
@@ -92,7 +93,8 @@ def test_observe_only_transport_allows_bare_queries(monkeypatch, query):
 
 @pytest.mark.parametrize("command", [
     "UM=5", "CA[28]=0", "PX=0", "LD", "RS", "XQ", "SV",
-    "MO=1", "BG", "JV=1", "PA=1", "TC=0.1", "TW[80]=1",
+    "MO=1", "BG", "JV=1", "PA=1", "TC=0.1", "TC[1]", "LC=1",
+    "TW[80]=1",
     "BG[1]", "XQ[1]", "ZZ",
     "BT", "CP", "DF", "DL", "EI", "EO", "HP", "KL", "KR", "PB", "XC",
 ])
@@ -127,6 +129,14 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
         "PS": -2,
         "MF": 0,
         "UM": 5,
+        "TC": 0,
+        "IQ": 0,
+        "ID": 0,
+        "CL[1]": 6,
+        "PL[1]": 8,
+        "LC": 0,
+        "MC": 10,
+        "SR": 0,
     })
     link._comm = spy
     monkeypatch.setattr(link, "persistence_unknown_latched", lambda: False)
@@ -139,6 +149,8 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
     link.read_platform_clock()
     summary = single_axis_motion.read_axis_summary(link)
     drive_mode = single_axis_drive_mode.read_drive_mode_snapshot(link)
+    current_reference = (
+        single_axis_current_reference.read_current_reference_snapshot(link))
     inputs = single_axis_digital_inputs.read_digital_input_snapshot(link)
     outputs = single_axis_digital_outputs.read_digital_output_snapshot(link)
     for registers in persistence_audit.PHASE_REGISTERS.values():
@@ -147,6 +159,7 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
 
     assert summary["errors"] == {}
     assert drive_mode.state == single_axis_drive_mode.CURRENT
+    assert current_reference.state == single_axis_current_reference.CURRENT
     assert inputs.state == single_axis_digital_inputs.CURRENT
     assert outputs.state == single_axis_digital_outputs.CURRENT
     assert spy.commands

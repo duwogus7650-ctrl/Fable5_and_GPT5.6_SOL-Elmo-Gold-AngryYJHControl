@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert v2 + UM/Digital I/O Read v0.1 작업 인계서
+# Quick Tuning + Single Axis + Expert v2 + UM/Digital I/O/Current Reference Read v0.1 작업 인계서
 
-상태: **UM/DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · MODE CHANGE/PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
-기준 시각: **2026-07-19 12:35 KST**<br>
+상태: **CURRENT REFERENCE READ v0.1 · CURRENT TARGET READBACK OBSERVED · TC COMMAND/MODE CHANGE/PHYSICAL I/O/EAS PARITY/ENERGIZATION/MOTION NOT VALIDATED**<br>
+기준 시각: **2026-07-19 17:50 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -39,6 +39,9 @@
 - Single Axis Drive Mode · Read-Only Snapshot v0.1:
   `d84d7b87495c1725d2fa615a9beb9218a45c60f8`
   (field readback·전체 회귀·private Draft PR #2 게시 완료)
+- Single Axis Current Reference · Read-Only Snapshot v0.1:
+  current working tree에서 field readback·영향 범위/전체 repository 회귀 완료,
+  private Draft PR #2 게시 closeout 대상
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -121,6 +124,21 @@
 - exact 게시 commit `d84d7b8`로 제어창을 재시작한 뒤 같은
   `UM=5 · Position / CURRENT · DRIVE READ ONLY`를 acquisition **2.3 ms**로
   다시 관찰했다. 제어창은 COM3 Read Only 연결 상태로 열어 두었다.
+- Single Axis Current Reference v0.1은 별도 Motion frame과 pure
+  decoder/reader, exact query-only worker job, transport allowlist,
+  operation catalog/test/docs로 구성됐다. `MO/SO/MF/SR` pre/post와
+  `UM/TC/IQ/ID/CL[1]/PL[1]/LC/MC`만 읽고 150 ms/query·1.5 s/snapshot,
+  same-session identity, `SR` state bits, current/limit bounds를 교차검증한다.
+- 첫 field refresh는 transport가 bare `TC`를 vendor I/O 전에 차단해
+  `UNKNOWN`이 됐다. `TC/LC` exact bare query와 composed read를 RED
+  3건으로 고정한 뒤 exact `TC/LC`만 허용하고 bare `TC`만 non-motion
+  query로 분리했다. `TC=0.1`, `LC=1`, `TC[1]`은 계속 차단된다.
+- 수정된 Python 3.14 제어창에서 `ONLINE · READ ONLY`,
+  `DISABLED REPORTED`, `UM=5 · Position`, `TC/IQ/ID=0 A`,
+  `CL[1]=21.2132 A`, `PL[1]=70.7107 A`, `LC=OFF`, `MC=140.0000 A`,
+  acquisition **32.2 ms**를 관찰했다. 이는 drive readback/parameter
+  snapshot이며 physical current, torque, RMS conversion, thermal safety
+  또는 EAS parity 증거가 아니다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -210,6 +228,15 @@
 - current target readback 1회는 `OBSERVED`지만 배선·raw voltage·known
   inactive/active stimulus·EAS same-moment parity·filter/sticky timing은
   `NEED-DATA`
+- `Current Reference · Read-Only Snapshot v0.1`은 explicit refresh에서
+  `MO/SO/MF/SR` pre/post와 `UM/TC/IQ/ID/CL[1]/PL[1]/LC/MC`만 읽는다.
+  `SR↔MO/SO/LC`, pre/post 안정성, `TC↔PL[1]`, `CL[1]/PL[1]↔MC`,
+  motor-off `IQ=ID=0`을 교차검증하고 하나라도 불명확하면 전체 blank한다.
+- current target readback은 `OBSERVED`: `DISABLED REPORTED`,
+  `UM=5 · Position`, `TC/IQ/ID=0 A`, `CL[1]=21.2132 A`,
+  `PL[1]=70.7107 A`, `LC=OFF`, `MC=140.0000 A`, **32.2 ms**.
+  `TC=` assignment와 command surface는 구현하지 않았고 operation catalog의
+  command 계약은 `ENERGIZING / NEED_DATA`로 잠겨 있다.
 - `FINITE_PTP_LIVE_ENABLED=False`
 - live PTP catalog 상태는 `NEED-DATA`
 - 기계 travel, 방향, output ratio, limit 입력, 정지거리, 독립 E-stop/STO 근거 전에는
@@ -595,6 +622,10 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | Drive Mode 포함 최신 전체 repository | **1717 passed in 1012.58s · exit 0** | current working tree 전체 회귀 |
 | Drive Mode current-target runtime | **UM=5 · Position · 2.1 ms** | CURRENT DRIVE READ ONLY; motor disabled, velocity/current 0; no assignment/reference/motion |
 | Drive Mode 설치 source | **1 / 1 SHA-256 일치** | installed Gold `UM – Unit Mode` command page |
+| Current Reference transport/영향 범위 | **64 / 286 passed** | exact bare `TC/LC` query 허용, assignment/lookalike 차단, decoder/worker/catalog/UI/main safety |
+| Current Reference 포함 최신 전체 repository | **1781 passed in 1269.31s · exit 0** | 이전 1741 기준선보다 40 test 증가; 100% passed, skip/xfail summary 없음 |
+| Current Reference current-target runtime | **TC/IQ/ID=0 A · CL=21.2132 A · PL=70.7107 A · LC=OFF · MC=140 A · 32.2 ms** | CURRENT DRIVE READ ONLY; disabled, UM=5; no assignment/enable/loop change/energization/motion |
+| Current Reference 설치 source | **9 / 9 SHA-256 일치** | installed Gold `TC/CL/PL/LC/MC/ID-IQ/UM/MO-SO/SR` command pages |
 
 유용한 실패 이력:
 
@@ -734,9 +765,10 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 
 ## 10. 완료 의미
 
-현재 `READ ONLY FIELD ADMISSION + DIGITAL I/O SNAPSHOTS OBSERVED`는
+현재 `READ ONLY FIELD ADMISSION + DIGITAL I/O/CURRENT REFERENCE SNAPSHOTS
+OBSERVED`는
 host-observed 연결/정지 telemetry와 bounded logical-input 및
-logical-output/config readback을 보존했다는 뜻이다.
+logical-output/config/current-related drive readback을 보존했다는 뜻이다.
 최신 리비전의 supervised hardware transcript, closeout, recovery,
 cold audit와 motion envelope가 없으면 `hardware safe`, `field complete`, `EAS parity`,
 `Gold-compatible`을 선언하지 않는다.
@@ -772,3 +804,20 @@ Installed source identities와 상태 전이 근거는
 - current-target read-only observation:
   `ONLINE · READ ONLY / MOTOR DISABLED / MO=0 / SO=0 /
   DISABLED REPORTED - ENABLE LOCKED`
+
+## 12. Single Axis Current Reference · Read-Only Snapshot v0.1 handoff
+
+구현과 runtime 증거는
+[`single-axis-current-reference-read-v0.1.md`](single-axis-current-reference-read-v0.1.md)에
+고정했다.
+
+현재 판정:
+
+- exact 16-query same-session read: 구현 및 current target 관찰 완료
+- installed source identity: `9/9` SHA-256 일치
+- exact bare query transport regression: `64 passed`
+- current slice 영향 범위: `286 passed`
+- full repository regression: `1781 passed in 1269.31s / exit 0`
+- executable `TC=` command: `NEED-DATA`, UI control 없음
+- physical current/torque/thermal behavior와 EAS parity: `NEED-DATA`
+- independent E-stop/STO와 field safety: `NEED-DATA`

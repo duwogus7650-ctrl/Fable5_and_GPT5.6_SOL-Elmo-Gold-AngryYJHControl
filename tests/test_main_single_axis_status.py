@@ -12,6 +12,7 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 import main as app_main
+import single_axis_current_reference
 import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
@@ -22,6 +23,7 @@ import theme_qdd
 
 class _AxisWorker(QtCore.QObject):
     axis_summary = QtCore.pyqtSignal(dict)
+    axis_current_reference = QtCore.pyqtSignal(object)
     axis_drive_mode = QtCore.pyqtSignal(object)
     axis_digital_inputs = QtCore.pyqtSignal(object)
     axis_digital_outputs = QtCore.pyqtSignal(object)
@@ -42,6 +44,9 @@ class _AxisWorker(QtCore.QObject):
 
     def refresh_axis_drive_mode(self):
         self.calls.append(("refresh_axis_drive_mode", (), {}))
+
+    def refresh_axis_current_reference(self):
+        self.calls.append(("refresh_axis_current_reference", (), {}))
 
     def __getattr__(self, name):
         def forbidden(*args, **kwargs):
@@ -88,6 +93,7 @@ def ui(qapp, monkeypatch):
     win._telemetry_authoritative = True
     win._connection_shutdown_pending = False
     worker.axis_summary.connect(win._on_axis_summary)
+    worker.axis_current_reference.connect(win._on_axis_current_reference)
     worker.axis_drive_mode.connect(win._on_axis_drive_mode)
     worker.axis_digital_inputs.connect(win._on_axis_digital_inputs)
     worker.axis_digital_outputs.connect(win._on_axis_digital_outputs)
@@ -256,6 +262,31 @@ def _digital_output_snapshot(**updates):
 def _drive_mode_snapshot(value=5, *, duration=0.05):
     return single_axis_drive_mode.decode_drive_mode_snapshot(
         {"UM": value}, sample_duration_s=duration)
+
+
+def _current_reference_snapshot(*, duration=0.08):
+    sr = (1 << 14) | (1 << 15)
+    return single_axis_current_reference.decode_current_reference_snapshot(
+        {
+            "MO_PRE": 0,
+            "SO_PRE": 0,
+            "MF_PRE": 0,
+            "SR_PRE": sr,
+            "UM": 5,
+            "TC": 0.0,
+            "IQ": 0.0,
+            "ID": 0.0,
+            "CL[1]": 2.0,
+            "PL[1]": 4.0,
+            "LC": 0,
+            "MC": 5.0,
+            "MO_POST": 0,
+            "SO_POST": 0,
+            "MF_POST": 0,
+            "SR_POST": sr,
+        },
+        sample_duration_s=duration,
+    )
 
 
 def test_digital_input_panel_starts_unknown_and_exposes_no_write_surface(ui):
@@ -701,6 +732,142 @@ def test_worker_emits_only_the_typed_drive_mode_snapshot(monkeypatch):
     assert observed == [expected]
 
 
+def test_current_reference_panel_starts_unknown_and_has_no_command_surface(ui):
+    assert ui.win.lbl_axis_current_reference_state.text() == "UNKNOWN"
+    assert ui.win.axis_current_reference_table.rowCount() == 7
+    assert tuple(
+        ui.win.axis_current_reference_table.item(row, 0).text()
+        for row in range(7)
+    ) == ("TC", "IQ", "ID", "CL[1]", "PL[1]", "LC", "MC")
+    contract = ui.win.lbl_axis_current_reference_contract.text().upper()
+    for phrase in (
+            "QUERY ONLY",
+            "NO TC ASSIGNMENT",
+            "NO LOOP CHANGE",
+            "COMMAND LOCKED",
+            "NEED-DATA"):
+        assert phrase in contract
+    for widget_type in (
+            QtWidgets.QComboBox,
+            QtWidgets.QSpinBox,
+            QtWidgets.QDoubleSpinBox,
+            QtWidgets.QCheckBox,
+            QtWidgets.QLineEdit,
+            QtWidgets.QSlider):
+        assert (
+            ui.win.axis_current_reference_frame.findChildren(widget_type)
+            == [])
+    assert tuple(
+        button.text()
+        for button in ui.win.axis_current_reference_frame.findChildren(
+            QtWidgets.QPushButton)
+    ) == ("Refresh Current Reference · READ ONLY",)
+    assert ui.win.btn_axis_current_reference_refresh.property(
+        "operationId") == "axis.current_reference.refresh"
+
+
+def test_current_reference_snapshot_renders_without_granting_authority(
+        ui, qapp):
+    before = (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    )
+
+    ui.worker.axis_current_reference.emit(_current_reference_snapshot())
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_current_reference_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+    assert ui.win.lbl_axis_current_reference_motor.text() == (
+        "DISABLED REPORTED · UM=5 Position")
+    assert ui.win.axis_current_reference_table.item(0, 1).text() == "0.0000 A"
+    assert ui.win.axis_current_reference_table.item(3, 1).text() == "2.0000 A"
+    assert ui.win.axis_current_reference_table.item(4, 1).text() == "4.0000 A"
+    assert ui.win.axis_current_reference_table.item(5, 1).text() == "0 · OFF"
+    assert ui.win.axis_current_reference_table.item(6, 1).text() == "5.0000 A"
+    detail = ui.win.lbl_axis_current_reference_detail.text().upper()
+    assert "80.0 MS" in detail
+    assert "NO TC ASSIGNMENT" in detail
+    assert "COMMAND LOCKED" in detail
+    assert (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    ) == before
+
+
+def test_current_reference_refresh_queues_one_typed_read_job(ui, qapp):
+    ui.win.btn_axis_current_reference_refresh.setEnabled(True)
+    ui.win.btn_axis_current_reference_refresh.click()
+    qapp.processEvents()
+
+    assert ui.worker.calls == [
+        ("refresh_axis_current_reference", (), {}),
+    ]
+    assert ui.win.lbl_axis_current_reference_state.text() == "READING"
+
+
+def test_late_or_forged_current_reference_snapshot_fails_closed(ui, qapp):
+    valid = _current_reference_snapshot()
+    forged = replace(valid, evidence_label="FORGED")
+
+    ui.worker.axis_current_reference.emit(forged)
+    qapp.processEvents()
+    assert ui.win.lbl_axis_current_reference_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = False
+    ui.worker.axis_current_reference.emit(valid)
+    qapp.processEvents()
+    assert ui.win.lbl_axis_current_reference_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = True
+    ui.worker.axis_current_reference.emit(valid)
+    qapp.processEvents()
+    ui.win._set_connected_ui(False)
+    assert ui.win.lbl_axis_current_reference_state.text() == "UNKNOWN"
+
+
+def test_worker_queues_exact_current_reference_read_job():
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+
+    worker.refresh_axis_current_reference()
+
+    assert worker._jobs == app_main.collections.deque((
+        ("axis_current_reference_read", None),
+    ))
+    assert "axis_current_reference_read" in worker._OBSERVE_ONLY_JOB_ALLOWLIST
+    assert {
+        "TC", "CL[1]", "PL[1]", "LC", "MC",
+    } <= worker._READ_ONLY_QUERY_ALLOWLIST
+
+
+def test_worker_emits_only_the_typed_current_reference_snapshot(monkeypatch):
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+    expected = _current_reference_snapshot()
+    calls = []
+    observed = []
+    monkeypatch.setattr(
+        app_main.single_axis_current_reference,
+        "read_current_reference_snapshot",
+        lambda link: calls.append(link) or expected)
+    worker.axis_current_reference.connect(observed.append)
+    link = object()
+
+    worker._emit_axis_current_reference(link)
+
+    assert calls == [link]
+    assert observed == [expected]
+
+
 def test_single_axis_authority_map_is_static_zero_io_and_isolated(
         ui, qapp, monkeypatch):
     calls_before = tuple(ui.worker.calls)
@@ -894,6 +1061,20 @@ def test_single_axis_authority_map_fits_1366x820_in_all_skins(ui, qapp):
             assert (
                 ui.win.axis_drive_mode_table.horizontalScrollBar().maximum()
                 == 0)
+            current_palette = (
+                ui.win.axis_current_reference_table.viewport().palette())
+            assert contrast_ratio(
+                current_palette.color(QtGui.QPalette.ColorRole.Text),
+                current_palette.color(QtGui.QPalette.ColorRole.Base),
+            ) >= 4.5
+            assert (
+                ui.win.axis_current_reference_table.horizontalScrollBar().maximum()
+                == 0)
+            assert (
+                ui.win.axis_current_reference_table.verticalScrollBar().maximum()
+                == 0)
+            assert ui.win.lbl_axis_current_reference_contract.height() >= (
+                ui.win.lbl_axis_current_reference_contract.sizeHint().height())
             assert ui.win.lbl_axis_drive_mode_contract.height() >= (
                 ui.win.lbl_axis_drive_mode_contract.sizeHint().height())
             assert ui.win.lbl_axis_enable_contract.height() >= (

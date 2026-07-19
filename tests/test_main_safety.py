@@ -290,7 +290,7 @@ def test_query_only_worker_job_guard_rejects_every_non_observer_job(kind):
 
 
 @pytest.mark.parametrize("kind", [
-    "axis_read", "axis_drive_mode_read",
+    "axis_read", "axis_drive_mode_read", "axis_current_reference_read",
     "axis_digital_inputs_read", "axis_digital_outputs_read",
     "persistence_audit",
     "motion_stop", "recorder_stop",

@@ -262,8 +262,8 @@ _NON_MO_MOTION_PREFIXES = tuple(
 _OBSERVE_ONLY_SCALAR_QUERIES = frozenset((
     # Connection identity and the exact telemetry/safety/axis-summary reads
     # used by the observe-only worker.  Unknown two-letter tokens fail closed.
-    "AC", "DC", "FS", "ID", "IP", "IQ", "MC", "MF", "MO", "MS", "OP", "PE",
-    "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TS", "UM", "VB",
+    "AC", "DC", "FS", "ID", "IP", "IQ", "LC", "MC", "MF", "MO", "MS", "OP",
+    "PE", "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TC", "TS", "UM", "VB",
     "VP", "VR", "VX",
 ))
 _OBSERVE_ONLY_INDEXED_QUERY_BASES = frozenset((
@@ -305,6 +305,11 @@ def _validate_single_vendor_command(cmd: str) -> None:
 
 def _is_motion_command(core: str) -> bool:
     """Fail-closed classification for power-enable and motion commands."""
+    # Bare TC is the documented read-only query.  Every other TC-prefixed
+    # spelling remains motion-gated and observe-only classification separately
+    # admits only this exact token.
+    if core == "TC":
+        return False
     if core.startswith("MO="):
         raw_value = core[3:]
         value = _finite_decimal(raw_value)

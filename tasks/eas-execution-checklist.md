@@ -146,7 +146,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-077 | Automated Closed Loop Bode Verification | [ ] | [x] G8 §8.7.6 | [x] ENERGY/MOTION | [~] | [ ] | [ ] | [~] | [~] | |
 | A-078 | Motion Single Axis: Position Loop | [ ] | [x] G8 §8.9.3.1 | [x] MOTION | [x] kernel | [ ] | [ ] | [x] offline | [x] | live NEED-DATA |
 | A-079 | Motion Single Axis: Velocity Loop | [ ] | [x] G8 §8.9.3.2 | [x] MOTION | [~] STOP model | [ ] | [ ] | [~] | [~] | |
-| A-080 | Motion Single Axis: Current Loop | [ ] | [x] G8 §8.9.3.3 | [x] ENERGY/MOTION | [~] STOP model | [ ] | [ ] | [~] | [~] | |
+| A-080 | Motion Single Axis: Current Loop | [ ] | [x] G8 §8.9.3.3 + Gold TC/ID-IQ/CL/PL/LC/MC | [x] READ→ENERGY/MOTION | [x] read-only snapshot | [x] query-only current target | [ ] `TC=` | [~] STOP model only | [x] read contract | `TC/IQ/ID/CL/PL/LC/MC` read 완료; Current command는 `NEED-DATA` |
 | A-081 | Motion Single Axis: Stepper UM=3 | [ ] | [x] G8 §8.9.3.4 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-082 | Motion Single Axis: Stepper UM=6 | [ ] | [x] G8 §8.9.3.5 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-083 | Single Axis I/O Status | [ ] | [x] G8 §8.9.4 | [x] READ | [~] telemetry | [~] | — | — | [~] | |

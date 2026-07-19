@@ -18,8 +18,15 @@
 - `GREEN` 범위: frozen local catalog, strict lookup, fail-closed capability와
   읽기 전용 UI 렌더링만.
 - `NEED-DATA / NO-GO` 범위: live drive state, Digital Output 변경, UM 변경,
-  Enable/Disable, PTP/Jog/Current/Sine/Homing/Stepper, Terminal command,
+  Enable/Disable, PTP/Jog/Current command/Sine/Homing/Stepper, Terminal command,
   Recorder config/acquisition와 EAS 동등성.
+
+2026-07-19 후속 구현에서 `Current Reference`의 **조회 부분만** 별도
+`CURRENT DRIVE READ ONLY` panel로 구현했다. 이는 이 static map의
+`can_inspect` capability를 바꾸지 않으며 `TC=` command는 계속
+`ENERGIZING / NEED_DATA`다. 상세 계약은
+[`single-axis-current-reference-read-v0.1.md`](single-axis-current-reference-read-v0.1.md)를
+따른다.
 
 이 페이지는 모터나 드라이브를 제어하지 않는다. 실제 Single Axis 기능이
 구현됐거나 안전하다는 판정도 아니다.
@@ -71,6 +78,10 @@ NO RECORDER CONFIG/ACQUISITION · NO ENERGIZATION/MOTION · NO DRIVE I/O`.
 - `recorder.*`: 별도 identity/freshness/ownership gate
 - 새 `eas.single_axis.authority.evidence.inspect`만
   `LOCAL_UI / PARTIAL`
+- 별도 `axis.current_reference.refresh`만 exact query set의
+  `DRIVE_READ / PARTIAL`
+- 별도 `axis.current_reference.command`는
+  `ENERGIZING / NEED_DATA`이며 executable control 없음
 
 ## 안전 해석
 
@@ -140,9 +151,12 @@ Homing/Stepper, Terminal command, Recorder config/acquisition, Apply/SV는
    재발견하고, Digital Output은 별도 safe-state/부하/rollback 계약으로 유지
 3. UM별 exact command/unit mapping과 disabled-before-change transaction
 4. site motion envelope, limit input, stop distance와 independent STO/E-stop
-5. bounded Current/Sine/Homing/Stepper watchdog·abort·rollback
-6. restricted Terminal grammar/allowlist 또는 계속 미지원
-7. Recorder trigger/ownership/upload/provenance와 motion synchronization
-8. Gold Twitter 외 Gold family에서 firmware/personality별 반복 검증
+5. `PARTIAL IMPLEMENTED`: Current Reference exact read-only snapshot.
+   `TC=` command는 current/thermal/torque envelope, independent protection,
+   watchdog와 `ST -> MO=0` closeout 전까지 잠금
+6. bounded Sine/Homing/Stepper watchdog·abort·rollback
+7. restricted Terminal grammar/allowlist 또는 계속 미지원
+8. Recorder trigger/ownership/upload/provenance와 motion synchronization
+9. Gold Twitter 외 Gold family에서 firmware/personality별 반복 검증
 
 이 gate를 통과하기 전에는 문서 map의 row를 실행 control로 바꾸지 않는다.

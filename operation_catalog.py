@@ -264,6 +264,18 @@ _SPECS = (
               "um_only",
           )),
           status=OperationStatus.PARTIAL),
+    _spec("axis.current_reference.refresh",
+          "Single Axis Current Reference · READ ONLY v0.1",
+          OperationRisk.DRIVE_READ,
+          "Explicitly read only MO/SO/MF/SR pre+post and "
+          "UM/TC/IQ/ID/CL[1]/PL[1]/LC/MC for the current identity-bound "
+          "session; no TC assignment, loop change, enable, or motion.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "bounded_read_allowlist",
+              "explicit_refresh",
+              "exact_current_reference_query_set",
+          )),
+          status=OperationStatus.PARTIAL),
     _spec("axis.digital_inputs.refresh",
           "Single Axis Digital Inputs · READ ONLY v0.1",
           OperationRisk.DRIVE_READ,
@@ -394,6 +406,14 @@ _SPECS = (
           "UM is non-volatile and the installed Gold reference requires the "
           "motor off; verified disabled/stationary state, exact readback, "
           "persistence recovery, and rollback authority are not frozen.",
+          status=OperationStatus.NEED_DATA),
+    _spec("axis.current_reference.command",
+          "Single Axis Current Reference Command · NEED-DATA",
+          OperationRisk.ENERGIZING,
+          "TC assignment requires MO=1 and SO=1, immediately forces the "
+          "current loop, and remains locked until an independent current/"
+          "thermal/torque envelope, watchdog, abort, and software STOP "
+          "(ST) -> MO=0 closeout contract are verified.",
           status=OperationStatus.NEED_DATA),
     _spec("eas.single_axis.manual_references",
           "Single Axis Current/Stepper/Sine References · NEED-DATA",

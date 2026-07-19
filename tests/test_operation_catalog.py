@@ -585,3 +585,31 @@ def test_single_axis_drive_mode_read_and_change_are_separate_operations():
     for phrase in (
             "motor off", "non-volatile", "exact readback", "rollback"):
         assert phrase in change.summary.lower()
+
+
+def test_single_axis_current_reference_read_and_command_are_separate():
+    read = catalog.operation_spec("axis.current_reference.refresh")
+    command = catalog.operation_spec("axis.current_reference.command")
+
+    assert read.risk is catalog.OperationRisk.DRIVE_READ
+    assert read.status is catalog.OperationStatus.PARTIAL
+    assert read.menu_enabled is False
+    assert {
+        "verified_identity",
+        "fresh_telemetry",
+        "bounded_read_allowlist",
+        "explicit_refresh",
+        "exact_current_reference_query_set",
+    } <= read.gates
+    for phrase in (
+            "tc", "iq", "id", "cl[1]", "pl[1]", "lc", "mc",
+            "no tc assignment"):
+        assert phrase in read.summary.lower()
+
+    assert command.risk is catalog.OperationRisk.ENERGIZING
+    assert command.status is catalog.OperationStatus.NEED_DATA
+    assert command.menu_enabled is False
+    assert command.gates == frozenset()
+    for phrase in (
+            "mo=1", "so=1", "current loop", "watchdog", "stop", "mo=0"):
+        assert phrase in command.summary.lower()
