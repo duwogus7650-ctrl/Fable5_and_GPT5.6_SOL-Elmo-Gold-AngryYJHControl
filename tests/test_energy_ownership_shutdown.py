@@ -352,7 +352,9 @@ def test_cancelled_queued_tune_does_not_poison_fresh_generation(
 @pytest.mark.parametrize("phase", ("P1", "P2"))
 def test_worker_direct_gain_trial_dispatch_is_production_locked_without_mutation(
         monkeypatch, phase):
-    """Bypassing the UI cannot bypass the production RAM-trial lock."""
+    """Bypassing the UI cannot bypass the RAM-trial opt-in contract: a link that
+    declares no gain-trial durability mode is rejected even via direct worker
+    dispatch (real drives opt in explicitly via RAM_TRIAL_VOLATILE_ROLLBACK)."""
     link = _SafetyLink(mo=0)
     worker = app_main.DriveWorker("COM_FAKE")
     result_emitted = threading.Event()
@@ -394,7 +396,7 @@ def test_worker_direct_gain_trial_dispatch_is_production_locked_without_mutation
     assert len(actions) == 1
     action, ok, message, trial = actions[0]
     assert action == "begin" and ok is False and trial is None
-    assert "durable" in message.lower() and "locked" in message.lower()
+    assert "locked" in message.lower()
     assert worker._p1_gain_trial is None
     assert worker._vp_gain_trial is None
     assert not any(

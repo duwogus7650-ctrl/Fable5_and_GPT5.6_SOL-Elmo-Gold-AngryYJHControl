@@ -414,9 +414,16 @@ def test_live_ptp_catalog_matches_the_production_field_gate():
 
 
 def test_gain_mutation_catalog_is_need_data_and_installed_verify_uses_signature_gate():
-    for operation_id in (
-            "tuning.p1.apply", "tuning.p1.save",
-            "tuning.p2.apply", "tuning.p2.save"):
+    # RAM-only Apply → Drive is the EAS-parity, field-verified path: reversible
+    # (Restore-backed), motor-OFF, and it never issues SV. It is IMPLEMENTED.
+    for operation_id in ("tuning.p1.apply", "tuning.p2.apply"):
+        spec = catalog.operation_spec(operation_id)
+        assert spec.status is catalog.OperationStatus.IMPLEMENTED
+        assert spec.risk is catalog.OperationRisk.RAM_WRITE
+        assert "trial_capability" in spec.gates
+        assert "No SV" in spec.summary
+    # The durable SV write stays NEED_DATA: unlocking Apply must not unlock Save.
+    for operation_id in ("tuning.p1.save", "tuning.p2.save"):
         spec = catalog.operation_spec(operation_id)
         assert spec.status is catalog.OperationStatus.NEED_DATA
         assert "durable pre-assignment gain-trial WAL" in spec.summary

@@ -98,6 +98,13 @@ JOG_UI_REFRESH_MS = 100
 # Synthetic kernels opt in inside their domain modules; the desktop UI never
 # exposes that test-only capability.
 PRODUCTION_GAIN_TRIALS_ENABLED = False
+# EAS-parity "Apply → Drive" (RAM only): field-verified in the reference program.
+# This opens ONLY the reversible RAM-trial apply path — gains are written with the
+# motor OFF (MO=0), the original set is read back and stored first, Restore rolls it
+# back, and no SV (durable write) is ever issued on this path. The permanent SV path
+# stays gated by PRODUCTION_GAIN_TRIALS_ENABLED (still False) plus a verification-run
+# GREEN, so unlocking Apply here never unlocks Save.
+PRODUCTION_GAIN_APPLY_RAM_ENABLED = True
 OBSERVE_ONLY_ACCESS_MODE = "OBSERVE_ONLY_WITH_SAFE_SHUTDOWN"
 SUPERVISED_ACCESS_MODE = "SUPERVISED_CONTROL"
 _ACCESS_MODE_LABELS = {
@@ -10232,7 +10239,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p1row.setHorizontalSpacing(8)
         p1row.setVerticalSpacing(6)
         p1label = QtWidgets.QLabel("P1 CURRENT GAINS"); p1label.setProperty("role", "field")
-        self.btn_tune_apply = QtWidgets.QPushButton("Apply P1 → RAM (LOCKED)"); self.btn_tune_apply.setEnabled(False)
+        self.btn_tune_apply = QtWidgets.QPushButton("Apply P1 → Drive RAM"); self.btn_tune_apply.setEnabled(False)
         self.btn_tune_apply.clicked.connect(self._apply_autotune_clicked)
         self.btn_tune_p1_restore = QtWidgets.QPushButton("Restore P1 → Original")
         self.btn_tune_p1_restore.setEnabled(False)
@@ -10251,7 +10258,7 @@ class MainWindow(QtWidgets.QMainWindow):
         p2row.setHorizontalSpacing(8)
         p2row.setVerticalSpacing(6)
         p2label = QtWidgets.QLabel("P2 VELOCITY / POSITION GAINS"); p2label.setProperty("role", "field")
-        self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → RAM (LOCKED)"); self.btn_tune_vp_apply.setEnabled(False)
+        self.btn_tune_vp_apply = QtWidgets.QPushButton("Apply P2 → Drive RAM"); self.btn_tune_vp_apply.setEnabled(False)
         self.btn_tune_vp_apply.clicked.connect(self._apply_velpos_clicked)
         self.btn_tune_vp_restore = QtWidgets.QPushButton("Restore P2 → Original")
         self.btn_tune_vp_restore.setEnabled(False)
@@ -10264,12 +10271,16 @@ class MainWindow(QtWidgets.QMainWindow):
                 self.btn_tune_vp_apply, self.btn_tune_vp_restore,
                 self.btn_tune_vp_save)):
             p2row.addWidget(b, 1 + index // 2, index % 2)
-        gain_lock_reason = (
-            "Hardware gain Apply/Save is locked until a durable "
-            "pre-assignment RAM-trial WAL is implemented.")
-        for b in (self.btn_tune_apply, self.btn_tune_p1_save,
-                  self.btn_tune_vp_apply, self.btn_tune_vp_save):
-            b.setToolTip(gain_lock_reason)
+        save_lock_reason = (
+            "Save → SV (durable) stays locked in this build; Apply writes to "
+            "drive RAM only and Restore rolls it back.")
+        for b in (self.btn_tune_p1_save, self.btn_tune_vp_save):
+            b.setToolTip(save_lock_reason)
+        apply_ram_reason = (
+            "Apply the GREEN/YELLOW candidate to drive RAM (motor OFF, "
+            "reversible via Restore, no SV).")
+        for b in (self.btn_tune_apply, self.btn_tune_vp_apply):
+            b.setToolTip(apply_ram_reason)
         expert_layout.addLayout(p2row)
         v.addWidget(self.tuning_expert_frame)
         v.addWidget(self.tuning_guided_run_frame)
@@ -10349,20 +10360,21 @@ class MainWindow(QtWidgets.QMainWindow):
         self.expert_lab_frame.setVisible(expert)
         if expert:
             self.tune_title.setText(
-                "EXPERT TUNING  ·  Candidate review (gain Apply/Save locked)")
+                "EXPERT TUNING  ·  Candidate review (Apply → Drive RAM; Save → SV locked)")
             self.tuning_mode_note.setText(
-                "Expert mode does not bypass any gate. Hardware P1/P2 gain Apply and "
-                "Save are locked until a durable pre-assignment RAM-trial WAL exists. "
-                "Verify can still move the motor for the currently installed gains; "
-                "retained recovery trials, if any, remain Restore-only.")
-            self.lbl_tuning_mode_risk.setText("MOTION / GAIN APPLY LOCKED")
+                "Expert mode does not bypass any gate. Apply → Drive RAM writes the "
+                "candidate gains to RAM with the motor OFF (reversible via Restore, no "
+                "SV); it is enabled only under SUPERVISED / MO=0 with an applicable "
+                "result. The durable Save → SV stays locked. Verify can move the motor "
+                "for the currently installed gains.")
+            self.lbl_tuning_mode_risk.setText("MOTION / RAM GAIN APPLY")
         else:
             self.tune_title.setText(
                 "QUICK TUNING  ·  Guided identification + design")
             self.tuning_mode_note.setText(
                 "Guided view measures and computes candidates only. Phase 1 energizes the "
-                "motor; commutation and Phase 2 can rotate it. Hardware gain Apply/Save "
-                "remain locked in every mode pending a durable pre-assignment trial WAL.")
+                "motor; commutation and Phase 2 can rotate it. Apply → Drive RAM is a "
+                "reversible, motor-OFF gain write (no SV); the durable Save → SV stays locked.")
             self.lbl_tuning_mode_risk.setText("ENERGIZES / MOTION")
 
     def _set_expert_lab_step(self, step):
@@ -11209,10 +11221,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.tune_status.setText("⏹ Abort 요청됨 — 드라이브를 안전 상태로 되돌리는 중…")
 
     def _apply_autotune_clicked(self):
-        if not PRODUCTION_GAIN_TRIALS_ENABLED:
+        if not PRODUCTION_GAIN_APPLY_RAM_ENABLED:
             self._flash(
-                "P1 Apply locked: durable pre-assignment RAM-trial WAL is not "
-                "available for hardware links.")
+                "P1 Apply locked: RAM-trial apply path is disabled in this build.")
             return
         if getattr(self, "_motor_write_inflight", False):
             self._flash("Motor profile 저장 중에는 P1 게인을 적용할 수 없습니다.")
@@ -11229,13 +11240,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 or r.status not in (autotune_current.GREEN, autotune_current.YELLOW)):
             self._flash("적용할 유효한 결과가 없습니다."); return
         btn = QtWidgets.QMessageBox.question(
-            self, "P1 synthetic/retained RAM trial 확인",
-            "개발 회귀/retained recovery 전용 경로입니다. Production hardware entry는 잠겨 있습니다.\n"
-            "산출된 전류루프 게인을 RAM에만 적용합니다 (모터 OFF에서만).\n"
-            "적용 전에 원래 KP[1]/KI[1]을 저장하고, 이 단계에서는 SV를 실행하지 않습니다.\n\n"
+            self, "P1 Apply → Drive RAM 확인",
+            "산출된 전류루프 게인을 드라이브 RAM에 적용합니다 (모터 OFF에서만).\n"
+            "적용 전에 원래 KP[1]/KI[1]을 되읽어 저장하고, 이 단계에서는 SV를 실행하지 않습니다.\n"
+            "(RAM 값은 휘발성 — 전원 재인가 시 저장된 SV 값으로 자동 복귀)\n\n"
             "• KP[1] = %.6g V/A\n• KI[1] = %.6g Hz\n"
-            "• 적용 후 Restore P1만 가능 (Save P1 → SV는 검증 capability 미구현으로 잠김)"
-            "\n\nRAM 임시 적용을 진행할까요?"
+            "• 적용 후 Restore P1로 원본 복원 가능 (Save P1 → SV는 계속 잠김)"
+            "\n\nRAM 적용을 진행할까요?"
             % (r.kp_v_per_a, r.ki_hz),
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No)
@@ -11379,12 +11390,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_tune_stage(-1, done_upto=self._AT_PHASE1_LAST)
             saved = ("  ·  저장: %s" % self._at_result_path) if self._at_result_path else ""
             self.tune_status.setText(
-                "✅ GREEN — 후보 산출 완료. Hardware P1 Apply는 durable "
-                "RAM-trial WAL 대기 중 잠김.%s" % saved)
+                "✅ GREEN — 후보 산출 완료. Apply P1 → Drive RAM 가능"
+                "(모터 OFF·복원 가능·SV 없음).%s" % saved)
             self.btn_tune_apply.setEnabled(False)
         elif res.status == autotune_current.YELLOW:
             self.tune_status.setText(
-                "⚠ YELLOW — %s (후보 검토만 가능; Hardware Apply 잠김)"
+                "⚠ YELLOW — %s (Apply P1 → Drive RAM 가능; 복원 가능·SV 없음)"
                 % (res.reason or ""))
             self.btn_tune_apply.setEnabled(False)
         else:
@@ -11509,9 +11520,8 @@ class MainWindow(QtWidgets.QMainWindow):
                    "capability 미구현으로 잠겨 있으므로, Restore로 복원한 "
                    "뒤 %s하세요." % action)
         else:
-            msg = ("P2 RAM 임시 게인이 남아 있습니다. Production Save는 "
-                   "durable pre-assignment trial WAL 부재로 잠겨 있으므로, "
-                   "Restore로 복원한 뒤 %s하세요." % action)
+            msg = ("P2 RAM 임시 게인이 남아 있습니다. Save P2 → SV는 검증런 "
+                   "GREEN 후에만 가능하므로, Restore로 복원한 뒤 %s하세요." % action)
         self._flash(msg)
         self.tune_status.setText("⚠ 미저장 %s 게인 보호 — %s" % (phase, msg))
         return True
@@ -11596,10 +11606,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.start_velpos_autotune(ov)     # cap override + module defaults
 
     def _apply_velpos_clicked(self):
-        if not PRODUCTION_GAIN_TRIALS_ENABLED:
+        if not PRODUCTION_GAIN_APPLY_RAM_ENABLED:
             self._flash(
-                "P2 Apply locked: durable pre-assignment RAM-trial WAL is not "
-                "available for hardware links.")
+                "P2 Apply locked: RAM-trial apply path is disabled in this build.")
             return
         if getattr(self, "_motor_write_inflight", False):
             self._flash("Motor profile 저장 중에는 P2 게인을 적용할 수 없습니다.")
@@ -11614,14 +11623,13 @@ class MainWindow(QtWidgets.QMainWindow):
                 or r.status not in (autotune_velpos.GREEN, autotune_velpos.YELLOW)):
             self._flash("적용할 유효한 Phase 2 결과가 없습니다."); return
         btn = QtWidgets.QMessageBox.question(
-            self, "Phase 2 synthetic/retained RAM trial 확인",
-            "개발 회귀/retained recovery 전용 경로입니다. Production hardware entry는 잠겨 있습니다.\n"
-            "산출된 속도/위치 게인을 RAM에만 임시 적용합니다 (모터 OFF에서만).\n"
-            "원래 게인을 먼저 저장하며, 이 단계에서는 SV를 실행하지 않습니다.\n\n"
+            self, "Phase 2 Apply → Drive RAM 확인",
+            "산출된 속도/위치 게인을 드라이브 RAM에 적용합니다 (모터 OFF에서만).\n"
+            "원래 게인을 먼저 되읽어 저장하며, 이 단계에서는 SV를 실행하지 않습니다.\n"
+            "(RAM 값은 휘발성 — 전원 재인가 시 저장된 SV 값으로 자동 복귀)\n\n"
             "• KP[2] = %.6g A/(cnt/s)\n• KI[2] = %.6g Hz\n• KP[3] = %.6g 1/s\n"
-            "• 이 retained/synthetic 경로도 Production Save 권한은 만들지 않습니다.\n"
-            "• 검증 뒤 Restore로 원래 게인을 복원합니다.\n"
-            "(FF[1]은 변경하지 않습니다)\n\nRAM 임시 적용을 진행할까요?"
+            "• Restore로 원래 게인 복원 가능 (Save P2 → SV는 이 빌드에서 잠김).\n"
+            "(FF[1]은 변경하지 않습니다)\n\nRAM 적용을 진행할까요?"
             % (r.kp_vel, r.ki_vel_hz, r.kp_pos),
             QtWidgets.QMessageBox.StandardButton.Yes | QtWidgets.QMessageBox.StandardButton.No,
             QtWidgets.QMessageBox.StandardButton.No)
@@ -11956,10 +11964,10 @@ class MainWindow(QtWidgets.QMainWindow):
             self._set_tune_stage(-1, done_upto=self._AT_PHASE2_LAST)
             saved = ("  ·  저장: %s" % self._vp_result_path) if self._vp_result_path else ""
             self.tune_status.setText(
-                "✅ Phase 2 GREEN — 후보 산출 완료. Hardware P2 Apply/Save는 "
-                "durable RAM-trial WAL 대기 중 잠김.%s" % saved)
+                "✅ Phase 2 GREEN — 후보 산출 완료. Apply P2 → Drive RAM 가능"
+                "(모터 OFF·복원 가능·SV 없음; Save→SV는 이 빌드에서 잠김).%s" % saved)
         elif res.status == autotune_velpos.YELLOW:
-            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (후보 검토만 가능; Hardware Apply 잠김)"
+            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (Apply P2 → Drive RAM 가능; 복원 가능·SV 없음)"
                                      % (res.reason or ""))
         else:
             self.tune_status.setText("⛔ Phase 2 RED — %s" % (res.reason or "실패"))
@@ -13340,7 +13348,11 @@ class MainWindow(QtWidgets.QMainWindow):
                           getattr(self, "_at_result_generation", None) == generation and
                           self._at_result.status in
                           (autotune_current.GREEN, autotune_current.YELLOW))
-            self.btn_tune_apply.setEnabled(False)
+            self.btn_tune_apply.setEnabled(
+                PRODUCTION_GAIN_APPLY_RAM_ENABLED and applicable
+                and mutation_trusted and not trial_active
+                and not dispatch_inflight and not motor_write_inflight
+                and not persistence_locked)
         if hasattr(self, "btn_tune_p1_restore"):
             self.btn_tune_p1_restore.setEnabled(
                 mutation_trusted and p1_restore_allowed and not dispatch_inflight
@@ -13360,7 +13372,11 @@ class MainWindow(QtWidgets.QMainWindow):
                           getattr(self, "_vp_result_generation", None) == generation and
                           self._vp_result.status in
                           (autotune_velpos.GREEN, autotune_velpos.YELLOW))
-            self.btn_tune_vp_apply.setEnabled(False)
+            self.btn_tune_vp_apply.setEnabled(
+                PRODUCTION_GAIN_APPLY_RAM_ENABLED and applicable
+                and mutation_trusted and not trial_active
+                and not dispatch_inflight and not motor_write_inflight
+                and not persistence_locked)
         if persistence_locked and hasattr(self, "btn_tune_abort"):
             self.btn_tune_abort.setEnabled(False)
         if not on:
@@ -13733,9 +13749,9 @@ def _smoke_autotune(app, win):
     chk("KP[1] populated", g["kp_cur"].text().startswith("0.0711") and "V/A" in g["kp_cur"].text())
     chk("KI[1] populated", g["ki_cur"].text().startswith("812") and "Hz" in g["ki_cur"].text())
     chk("PM populated", "°" in g["pm"].text())
-    chk("Apply remains production-locked after GREEN",
-        not win.btn_tune_apply.isEnabled()
-        and "LOCKED" in win.btn_tune_apply.text())
+    chk("Apply → Drive RAM enabled after GREEN",
+        win.btn_tune_apply.isEnabled()
+        and "Drive RAM" in win.btn_tune_apply.text())
     chk("Abort disabled after result", not win.btn_tune_abort.isEnabled())
     chk("stages 0..2 all done (●)", all("●" in win.tune_stage_lbls[i].text() for i in range(3)))
     chk("status shows GREEN", "GREEN" in win.tune_status.text())
@@ -14031,8 +14047,9 @@ def _smoke_velpos(app, win):
     chk("PM vel populated (GM 병기)", "°" in g["pm_vel"].text()
         and "GM" in g["pm_vel"].text())
     chk("PM pos populated", "°" in g["pm_pos"].text())
-    chk("Apply P2 remains production-locked after GREEN",
-        not win.btn_tune_vp_apply.isEnabled())
+    chk("Apply P2 → Drive RAM enabled after GREEN",
+        win.btn_tune_vp_apply.isEnabled()
+        and "Drive RAM" in win.btn_tune_vp_apply.text())
     chk("Abort disabled after result", not win.btn_tune_abort.isEnabled())
     chk("stages 3..5 all done (●)",
         all("●" in win.tune_stage_lbls[i].text() for i in (3, 4, 5)))

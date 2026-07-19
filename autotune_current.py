@@ -1804,14 +1804,31 @@ P1_TRIAL_UNKNOWN = "UNKNOWN"
 P1_TRIAL_AUTHORITY_INVALID = "AUTHORITY_INVALID"
 
 
-def _p1_gain_trial_is_explicit_synthetic(link) -> bool:
-    """Allow RAM-only trials solely for an explicit no-hardware contract."""
+P1_GAIN_TRIAL_FIELD_RAM_MODE = "RAM_TRIAL_VOLATILE_ROLLBACK"
+
+
+def _p1_gain_trial_mode_allows_ram(link) -> bool:
+    """Permit a rollback-capable RAM-only trial write.
+
+    Two contracts qualify, and ONLY these two:
+
+    * ``SYNTHETIC_NO_HARDWARE`` — the offline/no-hardware test contract.
+    * ``RAM_TRIAL_VOLATILE_ROLLBACK`` — a real drive link opting into the
+      EAS-parity, field-verified RAM trial.  This is safe because KP[1]/KI[1]
+      RAM writes are volatile: a power cycle reloads the durable (SV) set, so
+      the drive self-recovers even if the powered rollback never runs, and no
+      durable pre-assignment WAL is required.  The runtime guards below still
+      apply on every write (MO=0 readback, frozen rollback plan, full readback
+      verification) and this path never issues SV — that stays separately
+      gated on the commit path.
+    """
     try:
         mode = getattr(link, "p1_gain_trial_durability_mode", None)
     except Exception:
         return False
     return (type(mode) is str
-            and mode == P1_GAIN_TRIAL_SYNTHETIC_MODE)
+            and mode in (P1_GAIN_TRIAL_SYNTHETIC_MODE,
+                         P1_GAIN_TRIAL_FIELD_RAM_MODE))
 
 
 @dataclass
@@ -2221,11 +2238,10 @@ def begin_gain_trial_p1(link, result: AutotuneResult):
     if result is None or result.status not in (GREEN, YELLOW):
         return False, "P1 RAM 적용 불가: 결과 상태 %s" % (
             result.status if result else None), None
-    if not _p1_gain_trial_is_explicit_synthetic(link):
+    if not _p1_gain_trial_mode_allows_ram(link):
         return False, (
-            "P1 RAM gain trial locked: durable pre-assignment trial WAL is "
-            "not available for hardware-capable links; no drive command "
-            "executed"), None
+            "P1 RAM gain trial locked: this link does not opt into a "
+            "rollback-capable RAM trial; no drive command executed"), None
     if _p1_persistence_unknown_latched(link):
         return False, ("P1 RAM trial blocked: link persistence state UNKNOWN; "
                        "no drive command executed"), None
@@ -2456,11 +2472,10 @@ def apply_gains(link, result: AutotuneResult, persist: bool = False):
         return False, ("legacy persist=True blocked before RAM write; use "
                        "begin_gain_trial_p1 then commit_gain_trial_p1; "
                        "SV not executed")
-    if not _p1_gain_trial_is_explicit_synthetic(link):
+    if not _p1_gain_trial_mode_allows_ram(link):
         return False, (
-            "P1 RAM gain apply locked: durable pre-assignment trial WAL is "
-            "not available for hardware-capable links; no drive command "
-            "executed")
+            "P1 RAM gain apply locked: this link does not opt into a "
+            "rollback-capable RAM trial; no drive command executed")
     if result is None or result.status not in (GREEN, YELLOW) \
             or result.kp_v_per_a is None or result.ki_hz is None:
         return False, "적용 불가: 결과 상태 %s" % (result.status if result else None)
@@ -2469,8 +2484,10 @@ def apply_gains(link, result: AutotuneResult, persist: bool = False):
                        "no drive command executed")
     applied = []
     try:
-        if _to_num(link.command("MO")) == 1:
-            return False, "모터 ON(MO=1) — STOP 후 적용"
+        # Match begin_gain_trial_p1's motor-off strictness: reject unless MO reads
+        # back as exactly 0 (an unreadable/non-zero MO must fail closed, not write).
+        if _to_num(link.command("MO")) != 0:
+            return False, "모터 정지(MO=0)로 확인되지 않음 — STOP 후 적용"
 
         # Validate every wire literal before the first write so a formatting
         # failure cannot leave a partially-applied pair in RAM.

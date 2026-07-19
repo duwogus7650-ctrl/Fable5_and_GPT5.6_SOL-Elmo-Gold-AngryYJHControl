@@ -2620,20 +2620,44 @@ def test_begin_gain_trial_vp_captures_originals_and_never_saves():
     assert not any(c == "SV" for c, _ in drive.log)
 
 
-def test_p2_gain_trial_production_link_is_locked_before_any_drive_io():
-    class ProductionLikeDrive(VPSim):
+def test_p2_gain_trial_non_optin_link_is_locked_before_any_drive_io():
+    class NonOptInDrive(VPSim):
         p2_gain_trial_durability_mode = None
 
-    drive = ProductionLikeDrive()
+    drive = NonOptInDrive()
     original = _gain_snapshot(drive)
     drive.log.clear()
 
     ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
 
     assert not ok and trial is None
-    assert "durable" in msg.lower() and "locked" in msg.lower()
+    assert "locked" in msg.lower()
     assert drive.log == []
     assert _gain_snapshot(drive) == original
+
+
+def test_p2_gain_trial_field_ram_mode_permits_reversible_trial_without_sv():
+    # The real drive's EAS-parity field RAM mode permits a rollback-capable
+    # RAM trial: gains land in RAM, no SV, and Restore returns the originals.
+    class FieldRamDrive(VPSim):
+        p2_gain_trial_durability_mode = vp.P2_GAIN_TRIAL_FIELD_RAM_MODE
+
+    drive = FieldRamDrive()
+    original = _gain_snapshot(drive)
+    drive.log.clear()
+
+    ok, msg, trial = vp.begin_gain_trial_vp(drive, _green_gain_result())
+
+    assert ok, msg
+    assert trial is not None and trial.persistence_state == "RAM_TRIAL"
+    assert _gain_snapshot(drive) == pytest.approx(trial.applied)
+    assert not any(c == "SV" for c, _ in drive.log)
+
+    ok, msg = vp.restore_gain_trial_vp(drive, trial)
+    assert ok, msg
+    # Restore returns the originals within the drive's wire-literal rounding.
+    assert _gain_snapshot(drive) == pytest.approx(original, rel=1e-3)
+    assert not any(c == "SV" for c, _ in drive.log)
 
 
 def test_internal_command_guard_preserves_exact_trial_session(monkeypatch):

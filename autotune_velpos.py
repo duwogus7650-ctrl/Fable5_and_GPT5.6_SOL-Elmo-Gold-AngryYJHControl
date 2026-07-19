@@ -2992,14 +2992,27 @@ VP_GAIN_NAMES = ("KP[2]", "KI[2]", "KP[3]")
 P2_GAIN_TRIAL_SYNTHETIC_MODE = "SYNTHETIC_NO_HARDWARE"
 
 
-def _p2_gain_trial_is_explicit_synthetic(link) -> bool:
-    """Allow RAM-only trials solely for an explicit no-hardware contract."""
+P2_GAIN_TRIAL_FIELD_RAM_MODE = "RAM_TRIAL_VOLATILE_ROLLBACK"
+
+
+def _p2_gain_trial_mode_allows_ram(link) -> bool:
+    """Permit a rollback-capable RAM-only P2 trial write.
+
+    Qualifying contracts, and only these two: ``SYNTHETIC_NO_HARDWARE`` (offline
+    test) and ``RAM_TRIAL_VOLATILE_ROLLBACK`` (a real drive opting into the
+    EAS-parity, field-verified RAM trial).  Safe because KP[2]/KI[2]/KP[3] RAM
+    writes are volatile — a power cycle reloads the durable set — so no durable
+    pre-assignment WAL is required.  The runtime guards (MO=0 readback, frozen
+    rollback plan, full readback verification) still run on every write and this
+    path never issues SV (that stays separately gated on the commit path).
+    """
     try:
         mode = getattr(link, "p2_gain_trial_durability_mode", None)
     except Exception:
         return False
     return (type(mode) is str
-            and mode == P2_GAIN_TRIAL_SYNTHETIC_MODE)
+            and mode in (P2_GAIN_TRIAL_SYNTHETIC_MODE,
+                         P2_GAIN_TRIAL_FIELD_RAM_MODE))
 
 
 @dataclass(frozen=True)
@@ -3426,11 +3439,10 @@ def begin_gain_trial_vp(link, result: AutotuneVPResult):
     if result is None or result.status not in (GREEN, YELLOW):
         return False, "임시 적용 불가: 결과 상태 %s" % (
             result.status if result else None), None
-    if not _p2_gain_trial_is_explicit_synthetic(link):
+    if not _p2_gain_trial_mode_allows_ram(link):
         return False, (
-            "P2 RAM gain trial locked: durable pre-assignment trial WAL is "
-            "not available for hardware-capable links; no drive command "
-            "executed"), None
+            "P2 RAM gain trial locked: this link does not opt into a "
+            "rollback-capable RAM trial; no drive command executed"), None
     try:
         requested = {"KP[2]": result.kp_vel, "KI[2]": result.ki_vel_hz,
                      "KP[3]": result.kp_pos}

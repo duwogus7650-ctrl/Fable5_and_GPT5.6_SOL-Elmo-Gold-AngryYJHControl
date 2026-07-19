@@ -129,6 +129,8 @@ class _WorkerSpy:
         self.stop_calls = 0
         self.motor_writes = []
         self.verify_calls = []
+        self.p1_begin_calls = []
+        self.p2_begin_calls = []
         self.p1_commit_calls = []
         self.signature_token = "offline-ui-signature"
 
@@ -159,6 +161,12 @@ class _WorkerSpy:
 
     def start_verify_vp(self, kw, trial=None, signature_token=None):
         self.verify_calls.append((dict(kw), trial, signature_token))
+
+    def begin_current_gain_trial(self, trial):
+        self.p1_begin_calls.append(trial)
+
+    def begin_velpos_gain_trial(self, trial):
+        self.p2_begin_calls.append(trial)
 
     def commit_current_gain_trial(self, trial):
         self.p1_commit_calls.append(trial)
@@ -527,33 +535,94 @@ def test_superseded_worker_target_data_signal_is_ignored(
 
 
 def _seed_applicable_tuning_results(win):
-    win._at_result = SimpleNamespace(status=app_main.autotune_current.GREEN)
-    win._vp_result = SimpleNamespace(status=app_main.autotune_velpos.GREEN)
+    # Include the candidate gains the Apply confirmation dialog formats, so the
+    # reachable (unlocked) Apply path can render its prompt.
+    win._at_result = SimpleNamespace(
+        status=app_main.autotune_current.GREEN,
+        kp_v_per_a=1.0, ki_hz=200.0)
+    win._vp_result = SimpleNamespace(
+        status=app_main.autotune_velpos.GREEN,
+        kp_vel=1.0e-4, ki_vel_hz=10.0, kp_pos=80.0)
     generation = getattr(win, "_tuning_authority_generation", 0)
     win._at_result_generation = generation
     win._vp_result_generation = generation
     _seed_authoritative_connection(win)
-    assert not win.btn_tune_apply.isEnabled()
-    assert not win.btn_tune_vp_apply.isEnabled()
-    assert "LOCKED" in win.btn_tune_apply.text()
-    assert "LOCKED" in win.btn_tune_vp_apply.text()
+    # EAS-parity RAM Apply → Drive is unlocked: an applicable GREEN result at an
+    # admitted SUPERVISED / MO=0 connection offers Apply (reversible, no SV).
+    assert win.btn_tune_apply.isEnabled()
+    assert win.btn_tune_vp_apply.isEnabled()
+    assert "Drive RAM" in win.btn_tune_apply.text()
+    assert "Drive RAM" in win.btn_tune_vp_apply.text()
 
 
-def test_production_gain_apply_ui_rejects_before_confirmation(
+def test_gain_apply_ui_requires_confirmation_and_no_trial_on_decline(
         window, monkeypatch):
     win, _spy = window
     _seed_applicable_tuning_results(win)
-    monkeypatch.setattr(
-        QtWidgets.QMessageBox, "question",
-        lambda *_args, **_kwargs: pytest.fail(
-            "production gain Apply must reject before confirmation"))
+    seen = {"asked": 0}
+
+    def _decline(*_args, **_kwargs):
+        seen["asked"] += 1
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    monkeypatch.setattr(QtWidgets.QMessageBox, "question", _decline)
 
     win._apply_autotune_clicked()
     win._apply_velpos_clicked()
 
+    # Apply is reachable now, but a declined confirmation creates no RAM trial.
+    assert seen["asked"] == 2
     assert win._tune_dispatch_inflight is None
     assert win._p1_gain_trial is None
     assert win._vp_gain_trial is None
+
+
+def test_apply_controls_do_not_claim_locked_while_save_does(window):
+    win, _spy = window
+    # Apply → Drive RAM is a real, reachable write now: its tooltip must not
+    # tell the operator it is locked (an energizing-tool safety-message defect).
+    for name in ("btn_tune_apply", "btn_tune_vp_apply"):
+        tip = getattr(win, name).toolTip().lower()
+        assert "locked" not in tip, (name, tip)
+        assert "ram" in tip, (name, tip)
+    # The durable SV write is still locked and must still say so.
+    for name in ("btn_tune_p1_save", "btn_tune_vp_save"):
+        assert "locked" in getattr(win, name).toolTip().lower(), name
+
+
+def test_expert_mode_banner_reflects_ram_apply_unlocked(window):
+    win, _spy = window
+    win._show_tuning_mode("expert")
+    assert "LOCKED" not in win.lbl_tuning_mode_risk.text().upper()
+    note = win.tuning_mode_note.text()
+    assert "RAM" in note
+    assert "Save" in note and "lock" in note.lower()  # SV still called out as locked
+
+
+@pytest.mark.parametrize(
+    ("click", "begin_attr", "result_attr"),
+    (
+        ("_apply_autotune_clicked", "p1_begin_calls", "_at_result"),
+        ("_apply_velpos_clicked", "p2_begin_calls", "_vp_result"),
+    ),
+)
+def test_confirmed_ram_apply_dispatches_reversible_trial(
+        window, monkeypatch, click, begin_attr, result_attr):
+    win, spy = window
+    _seed_applicable_tuning_results(win)
+    monkeypatch.setattr(
+        QtWidgets.QMessageBox, "question",
+        lambda *_args, **_kwargs: QtWidgets.QMessageBox.StandardButton.Yes)
+
+    getattr(win, click)()
+
+    # The confirmed RAM Apply dispatches exactly the applicable result as a
+    # reversible RAM trial, and never touches the durable SV commit path.
+    calls = getattr(spy, begin_attr)
+    assert len(calls) == 1
+    assert calls[0] is getattr(win, result_attr)
+    assert win._tune_dispatch_inflight is not None
+    assert spy.p1_commit_calls == []
 
 
 def _assert_tuning_result_authority_invalidated(win):
@@ -682,9 +751,9 @@ def test_current_worker_matching_dispatch_generation_result_is_accepted(
     assert getattr(win, result_attr) is result
     assert getattr(win, "%s_generation" % result_attr) == generation
     button = getattr(win, button_name)
-    assert not button.isEnabled()
-    assert "LOCKED" in button.text()
-    assert "pre-assignment RAM-trial WAL" in button.toolTip()
+    assert button.isEnabled()
+    assert "Drive RAM" in button.text()
+    assert "drive RAM" in button.toolTip()
     assert win._tune_dispatch_inflight is None
 
 

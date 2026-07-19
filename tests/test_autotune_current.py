@@ -2018,7 +2018,9 @@ def test_apply_gains_refuses_motor_on():
     drive = SimDrive(mo0=1)
     res = AutotuneResult(status=GREEN, kp_v_per_a=0.07, ki_hz=800.0)
     ok, msg = apply_gains(drive, res)
-    assert not ok and "MO=1" in msg
+    # Fail closed unless MO reads back as exactly 0 (parity with begin_gain_trial).
+    assert not ok and "MO=0" in msg
+    assert not any(c.startswith("KP[1]=") for c, _ in drive.log)
 
 
 def test_apply_gains_refuses_red_result():
@@ -2241,38 +2243,66 @@ def test_p1_gain_trial_verification_gate_prevents_ambiguous_sv_path():
     assert ok, msg
 
 
-def test_p1_gain_trial_production_link_is_locked_before_any_drive_io():
-    class ProductionLikeDrive(SimDrive):
+def test_p1_gain_trial_non_optin_link_is_locked_before_any_drive_io():
+    # A link that opts into neither RAM-trial contract is rejected with no I/O.
+    class NonOptInDrive(SimDrive):
         p1_gain_trial_durability_mode = None
 
-    drive = ProductionLikeDrive(kp=0.06, ki=700.0)
+    drive = NonOptInDrive(kp=0.06, ki=700.0)
     res = AutotuneResult(
         status=GREEN, kp_v_per_a=0.071234567, ki_hz=812.939123)
 
     ok, msg, trial = at.begin_gain_trial_p1(drive, res)
 
     assert not ok and trial is None
-    assert "durable" in msg.lower() and "locked" in msg.lower()
+    assert "locked" in msg.lower()
     assert drive.log == []
     assert drive.regs["KP[1]"] == pytest.approx(0.06)
     assert drive.regs["KI[1]"] == pytest.approx(700.0)
 
 
-def test_legacy_p1_apply_is_production_locked_before_any_drive_io():
-    class ProductionLikeDrive(SimDrive):
+def test_legacy_p1_apply_non_optin_link_is_locked_before_any_drive_io():
+    class NonOptInDrive(SimDrive):
         p1_gain_trial_durability_mode = None
 
-    drive = ProductionLikeDrive(kp=0.06, ki=700.0)
+    drive = NonOptInDrive(kp=0.06, ki=700.0)
     res = AutotuneResult(
         status=GREEN, kp_v_per_a=0.071234567, ki_hz=812.939123)
 
     ok, msg = at.apply_gains(drive, res, persist=False)
 
     assert not ok
-    assert "durable" in msg.lower() and "locked" in msg.lower()
+    assert "locked" in msg.lower()
     assert drive.log == []
     assert drive.regs["KP[1]"] == pytest.approx(0.06)
     assert drive.regs["KI[1]"] == pytest.approx(700.0)
+
+
+def test_p1_gain_trial_field_ram_mode_permits_reversible_trial_without_sv():
+    # EAS-parity field RAM mode (the real drive's contract) permits a
+    # rollback-capable RAM trial: gains land in RAM, no SV is issued, and the
+    # original set restores exactly.
+    class FieldRamDrive(SimDrive):
+        p1_gain_trial_durability_mode = at.P1_GAIN_TRIAL_FIELD_RAM_MODE
+
+    drive = FieldRamDrive(kp=0.06, ki=700.0)
+    res = AutotuneResult(
+        status=GREEN, kp_v_per_a=0.071234567, ki_hz=812.939123)
+
+    ok, msg, trial = at.begin_gain_trial_p1(drive, res)
+
+    assert ok, msg
+    assert trial is not None and trial.persistence_state == "RAM_TRIAL"
+    # RAM holds exactly the representable wire literals the drive accepted.
+    assert drive.regs["KP[1]"] == pytest.approx(trial.applied["KP[1]"])
+    assert drive.regs["KI[1]"] == pytest.approx(trial.applied["KI[1]"])
+    assert not any(c == "SV" for c, _ in drive.log)
+
+    ok, msg = at.restore_gain_trial_p1(drive, trial)
+    assert ok, msg
+    assert drive.regs["KP[1]"] == pytest.approx(0.06, rel=1e-3)
+    assert drive.regs["KI[1]"] == pytest.approx(700.0, rel=1e-3)
+    assert not any(c == "SV" for c, _ in drive.log)
 
 
 def test_p1_gain_trial_failed_apply_rolls_back_and_suppresses_sv():

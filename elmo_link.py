@@ -523,8 +523,14 @@ def _normalize_motor_writes(writes) -> dict[str, float]:
 class ElmoLink:
     """Read-oriented transport to a single Gold drive over USB (default COM3)."""
 
-    p1_gain_trial_durability_mode = "LOCKED_PENDING_DURABLE_WAL"
-    p2_gain_trial_durability_mode = "LOCKED_PENDING_DURABLE_WAL"
+    # EAS-parity "Apply → Drive RAM" (field-verified in the reference program).
+    # KP/KI RAM writes are volatile: a power cycle reloads the durable (SV) set,
+    # so a rollback-capable RAM trial is safe without a durable pre-assignment
+    # WAL. The trial path keeps its runtime guards (MO=0 readback, frozen
+    # rollback plan, full readback verification) and never issues SV — the
+    # durable SV commit stays independently gated.
+    p1_gain_trial_durability_mode = "RAM_TRIAL_VOLATILE_ROLLBACK"
+    p2_gain_trial_durability_mode = "RAM_TRIAL_VOLATILE_ROLLBACK"
 
     def __init__(self, com_port: str = "COM3"):
         self.com_port = com_port
