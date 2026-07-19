@@ -82,7 +82,7 @@ def _observe_only_link(monkeypatch):
 
 
 @pytest.mark.parametrize("query", [
-    "VR", "SN[4]", "CA[18]", "KP[1]", "PX", "MO", "SO", "VX", "PS", "MF",
+    "VR", "SN[4]", "CA[18]", "KP[1]", "PX", "PU", "MO", "SO", "VX", "PS", "MF",
     "UM", "TC", "LC", "CL[1]", "PL[1]",
     "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]",
 ])
@@ -151,6 +151,16 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
         "DC": 18000,
         "SD": 15000,
         "PX": 11500,
+        "PU": 33565932,
+        "XM[1]": 0,
+        "XM[2]": 0,
+        "FC[1]": 1,
+        "FC[2]": 1,
+        "FC[5]": 1,
+        "FC[6]": 1,
+        "FC[7]": 1,
+        "FC[8]": 1,
+        "CA[45]": 1,
     })
     link._comm = spy
     monkeypatch.setattr(link, "persistence_unknown_latched", lambda: False)

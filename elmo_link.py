@@ -263,7 +263,7 @@ _OBSERVE_ONLY_SCALAR_QUERIES = frozenset((
     # Connection identity and the exact telemetry/safety/axis-summary reads
     # used by the observe-only worker.  Unknown two-letter tokens fail closed.
     "AC", "DC", "FS", "ID", "IP", "IQ", "JV", "LC", "MC", "MF", "MO", "MS", "OP",
-    "PE", "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TC", "TS", "UM", "VB",
+    "PE", "PS", "PU", "PX", "RM", "SD", "SO", "SP", "SR", "TC", "TS", "UM", "VB",
     "VP", "VR", "VX",
 ))
 _OBSERVE_ONLY_POSITION_VELOCITY_QUERIES = frozenset((

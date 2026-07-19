@@ -30,6 +30,16 @@ def _raw(**updates):
         "DC": 18000,
         "SD": 15000,
         "PX": 11500,
+        "PU": 33565932,
+        "XM[1]": 0,
+        "XM[2]": 0,
+        "FC[1]": 1,
+        "FC[2]": 1,
+        "FC[5]": 1,
+        "FC[6]": 1,
+        "FC[7]": 1,
+        "FC[8]": 1,
+        "CA[45]": 1,
         "VX": 0.0,
         "MO_POST": 0,
         "SO_POST": 0,
@@ -46,7 +56,10 @@ class _Drive:
         self.results = list(results or (
             0, 0, 0, (1 << 14) | (1 << 15),
             5, 12000, -500, 2500, 10000, 20000, 18000, 15000,
-            11500, 0.0,
+            11500, 33565932,
+            0, 0,
+            1, 1, 1, 1, 1, 1,
+            1, 0.0,
             0, 0, 0, (1 << 14) | (1 << 15),
         ))
         self.error_at = error_at
@@ -69,13 +82,14 @@ class _Drive:
 
 def test_document_sources_and_command_boundary_are_frozen():
     assert tuple(source.key for source in position_velocity.SOURCES) == (
-        "pa", "pr", "jv", "sp", "ac", "dc", "sd", "px", "vx",
+        "pa", "pr", "jv", "sp", "ac", "dc", "sd", "px", "pu",
+        "xm", "fc", "ca", "vx",
         "um", "mo_so", "mf", "sr",
     )
     assert position_velocity.SOURCES[0].sha256 == (
         "40F8B55DDCED8C0BE6A3ACB88BD0E15A8E35C4CD12C22C5BF0047E4BBE4978F9"
     )
-    assert position_velocity.SOURCES[8].sha256 == (
+    assert position_velocity.SOURCES[12].sha256 == (
         "A6D910DFCB93AD746B57EE8D12A6EC807BCB573FE05ACF4F1A2D3FDE0D74CD7A"
     )
     assert position_velocity.SOURCES[-1].sha256 == (
@@ -110,6 +124,16 @@ def test_read_steps_are_exact_queries_with_no_motion_or_assignment():
         ("DC", "DC"),
         ("SD", "SD"),
         ("PX", "PX"),
+        ("PU", "PU"),
+        ("XM[1]", "XM[1]"),
+        ("XM[2]", "XM[2]"),
+        ("FC[1]", "FC[1]"),
+        ("FC[2]", "FC[2]"),
+        ("FC[5]", "FC[5]"),
+        ("FC[6]", "FC[6]"),
+        ("FC[7]", "FC[7]"),
+        ("FC[8]", "FC[8]"),
+        ("CA[45]", "CA[45]"),
         ("VX", "VX"),
         ("MO_POST", "MO"),
         ("SO_POST", "SO"),
@@ -139,6 +163,14 @@ def test_disabled_snapshot_is_current_read_only_and_distinguishes_references():
     assert snapshot.deceleration_count_per_s2 == 18000
     assert snapshot.stop_deceleration_count_per_s2 == 15000
     assert snapshot.feedback_position_count == 11500
+    assert snapshot.eas_position_user_unit == 33565932
+    assert snapshot.eas_to_raw_position_delta == 1 << 25
+    assert snapshot.position_coordinate_status == "DIVERGED / NEED-DATA"
+    assert snapshot.main_position_socket == 1
+    assert snapshot.position_modulo_min == 0
+    assert snapshot.position_modulo_max == 0
+    assert snapshot.position_scale_numerator == 1
+    assert snapshot.position_scale_denominator == 1
     assert snapshot.feedback_velocity_count_per_s == 0.0
     assert snapshot.effective_acceleration_count_per_s2 == 15000
     assert snapshot.effective_deceleration_count_per_s2 == 15000
@@ -148,6 +180,16 @@ def test_disabled_snapshot_is_current_read_only_and_distinguishes_references():
     assert "NOT ACTIVE COMMAND" in snapshot.reference_semantics
     assert "QUERY ONLY" in snapshot.evidence_label
     assert "NO BG" in snapshot.evidence_label
+    assert "EAS SINGLE AXIS USES PU" in snapshot.reference_semantics
+
+
+def test_aligned_px_and_pu_are_reported_without_inventing_an_offset():
+    snapshot = position_velocity.decode_position_velocity_snapshot(
+        _raw(PU=11500), sample_duration_s=0.08)
+
+    assert snapshot.state == position_velocity.CURRENT
+    assert snapshot.eas_to_raw_position_delta == 0
+    assert snapshot.position_coordinate_status == "ALIGNED"
 
 
 def test_enabled_snapshot_reports_readback_without_granting_command_authority():
@@ -189,6 +231,13 @@ def test_enabled_snapshot_reports_readback_without_granting_command_authority():
         ({"DC": 0}, "DC"),
         ({"SD": 0}, "SD"),
         ({"PX": _INT32_MAX + 1}, "PX"),
+        ({"PU": _INT32_MAX + 1}, "PU"),
+        ({"XM[1]": _INT32_MIN - 1}, "XM[1]"),
+        ({"XM[2]": _INT32_MAX + 1}, "XM[2]"),
+        ({"FC[1]": 0}, "FC[1]"),
+        ({"FC[8]": _INT32_MAX + 1}, "FC[8]"),
+        ({"CA[45]": 0}, "CA[45]"),
+        ({"CA[45]": 5}, "CA[45]"),
         ({"VX": 2_000_000_001.0}, "VX"),
     ),
 )
@@ -202,7 +251,13 @@ def test_inconsistent_or_out_of_range_evidence_fails_closed(updates, reason):
     assert reason.lower() in snapshot.reason.lower()
 
 
-@pytest.mark.parametrize("key", ("PA[1]", "PR[1]", "JV", "PX"))
+@pytest.mark.parametrize(
+    "key",
+    (
+        "PA[1]", "PR[1]", "JV", "PX", "PU", "XM[1]", "XM[2]",
+        "FC[1]", "FC[2]", "FC[5]", "FC[6]", "FC[7]", "FC[8]", "CA[45]",
+    ),
+)
 @pytest.mark.parametrize("value", (None, True, "", "abc", 1.5, math.nan))
 def test_integer_evidence_rejects_noninteger_or_nonnumeric_values(key, value):
     snapshot = position_velocity.decode_position_velocity_snapshot(
@@ -243,7 +298,7 @@ def test_reader_issues_only_the_exact_bounded_query_sequence():
         kwargs == {"timeout_ms": position_velocity.READ_TIMEOUT_MS}
         for _command, kwargs in drive.commands)
     assert all("=" not in command for command, _kwargs in drive.commands)
-    assert len(drive.commands) == 18
+    assert len(drive.commands) == 28
 
 
 def test_reader_fails_closed_on_query_error_or_session_rotation():

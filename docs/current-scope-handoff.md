@@ -4,9 +4,10 @@
 
 2026-07-19 실제 EAS 재대조 결과와 현재 우선순위는
 [`eas-live-parity-audit-2026-07-19.md`](eas-live-parity-audit-2026-07-19.md)를
-기준으로 한다. raw PX는 EAS Terminal과 일치하지만 EAS Single Axis 표시가
-`2^25` counts 다르고, 기존 Current Reference readback은 EAS Current 탭의
-5-preset command surface와 다른 기능이다.
+기준으로 한다. EAS Single Axis 표시는 `PU (DS402 0x6064)`, dashboard의
+raw 위치는 `PX`다. 현재 target에서 `PU-PX=2^25`이며 firmware-internal
+원점 원인은 미확정이다. Current Reference readback과 별도로 EAS형
+5-preset local draft를 구현했지만 모든 Set TC 출력은 잠겨 있다.
 기준 시각: **2026-07-19 17:50 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
@@ -811,7 +812,7 @@ Installed source identities와 상태 전이 근거는
   `ONLINE · READ ONLY / MOTOR DISABLED / MO=0 / SO=0 /
   DISABLED REPORTED - ENABLE LOCKED`
 
-## 12. Single Axis Current Reference · Read-Only Snapshot v0.1 handoff
+## 12. Single Axis Current Reference + EAS Preset Drafts · v0.2 handoff
 
 구현과 runtime 증거는
 [`single-axis-current-reference-read-v0.1.md`](single-axis-current-reference-read-v0.1.md)에
@@ -824,19 +825,25 @@ Installed source identities와 상태 전이 근거는
 - exact bare query transport regression: `64 passed`
 - current slice 영향 범위: `286 passed`
 - full repository regression: `1781 passed in 1269.31s / exit 0`
-- executable `TC=` command: `NEED-DATA`, UI control 없음
+- EAS live shape: five presets, zero defaults, each tooltip `[TC]`, motor-off
+  Set disabled.
+- 앱 local draft: exactly five, `CL/PL/MC` warning bands, five
+  `Set TC · LOCKED`; signal/worker/drive I/O 0.
+- executable `TC=` command: `NEED-DATA`, 실행 control 없음
 - physical current/torque/thermal behavior와 EAS parity: `NEED-DATA`
 - independent E-stop/STO와 field safety: `NEED-DATA`
 
-## 13. Single Axis Position / Velocity References · Read-Only Snapshot v0.1
+## 13. Single Axis Position / Velocity References · Read-Only Snapshot v0.2
 
 상세 구현·source·runtime 근거:
 [`single-axis-position-velocity-reference-read-v0.1.md`](single-axis-position-velocity-reference-read-v0.1.md)
 
 현재 판정:
 
-- exact 18-query same-session read: 구현 및 current target 관찰 완료.
-- 설치 Gold source identity: `13/13` SHA-256 일치.
+- exact 28-query same-session reader 구현. 기존 18-query field snapshot과
+  후속 EAS terminal PU/XM/FC/CA 진단은 관찰 완료; 확장 revision acquisition
+  시간은 live 재측정 전.
+- 설치 Gold source identity: `17/17` SHA-256 일치.
 - pure decoder/reader: `56 passed`.
 - transport + pure: `144 passed`.
 - authority/UI/catalog/transport 직접 영향 범위: `244 passed`.
@@ -844,15 +851,20 @@ Installed source identities와 상태 전이 근거는
   motion proof가 아님.
 - COM3 Read Only: motor disabled, `UM=5 Position`, PA/PR/JV=0,
   SP=4,444,444 cnt/s, AC/DC/SD=1,000,000 cnt/s²,
-  PX=-2,038,379,934 cnt, VX=0.000 cnt/s, acquisition 35.6 ms.
-- 1366×820 최초 runtime에서 9번째 VX 행 clipping을 발견해 table 높이를
-  360→420 px로 수정하고 VX 접근성/표시를 재검증.
+  PX=-2,038,379,934 cnt, PU=-2,004,825,502 user units,
+  `PU-PX=+33,554,432`, XM=0, FC=1, CA[45]=1, VX=0.000 cnt/s.
+- EAS 표시값은 정확히 PU와 일치한다. 앱은 PX/PU/delta를 분리하고 delta를
+  자동 보정값으로 사용하지 않는다.
+- 14-row table은 590 px이며 세 skin 1366×820 horizontal scroll 0 계약을 통과.
 - assignment, `BG`, `MO=1`, `PX=0`, mode change, energization, motion:
   실행하지 않음.
 - executable PA/PR/JV + BG: `MOTION / NEED-DATA`, UI control 없음.
-- EAS same-moment parity, user-unit/direction, coordinate validity,
+- PU 표시값 parity는 관찰 완료. `PU-PX` firmware 원점, user-unit/direction,
+  coordinate validity,
   motion envelope, stopping distance, limit input, independent STO/E-stop:
   `NEED-DATA / NO-GO`.
-- closeout 영향 범위(모니터 포함): `270 passed in 104.51s`.
-- full repository regression: `1868 passed in 735.79s (12:15)`.
+- 신규 PX/PU + Current preset 집중 회귀: `142 passed in 34.79s`.
+- 직접 영향 범위: `284 passed in 133.72s`.
+- EAS parity ledger: `5 passed`.
+- full repository regression: `1956 passed in 692.83s / exit 0`.
 - `git diff --check`: exit 0.

@@ -9,26 +9,30 @@ import pytest
 import eas_live_parity as parity
 
 
-def test_position_audit_preserves_raw_terminal_match_and_display_mismatch():
+def test_position_audit_preserves_raw_px_and_eas_pu_as_distinct_coordinates():
     raw = parity.entry("single_axis.position.raw_px")
     display = parity.entry("single_axis.position.eas_display")
 
     assert raw.verdict == parity.VALUE_PARITY_OBSERVED
     assert raw.our_value == parity.EAS_TERMINAL_RAW_PX
     assert raw.eas_value == parity.EAS_TERMINAL_RAW_PX
-    assert display.verdict == parity.MISMATCH_NEED_DATA
+    assert display.verdict == parity.VALUE_PARITY_OBSERVED
     assert display.eas_value == parity.EAS_SINGLE_AXIS_POSITION
-    assert display.our_value == parity.OUR_RAW_PX
-    assert display.eas_value - display.our_value == 1 << 25
+    assert display.our_value == parity.OUR_EAS_SINGLE_AXIS_POSITION
+    assert parity.OUR_EAS_SINGLE_AXIS_POSITION - parity.OUR_RAW_PX == 1 << 25
+    assert "PU" in display.our_behavior
+    assert "unresolved" in display.evidence.lower()
     assert display.can_claim_eas_parity is False
 
 
-def test_current_readback_is_not_misrepresented_as_eas_current_command_ui():
+def test_current_presets_match_eas_shape_but_output_semantics_remain_locked():
     current = parity.entry("single_axis.current")
 
-    assert current.verdict == parity.UI_SEMANTICS_MISMATCH
+    assert current.verdict == parity.PARTIAL_LIVE_OBSERVED
     assert "five" in current.eas_behavior.lower()
+    assert "five" in current.our_behavior.lower()
     assert "readback" in current.our_behavior.lower()
+    assert "locked" in current.our_behavior.lower()
     assert current.field_executed is False
     assert current.can_claim_eas_parity is False
 
@@ -71,9 +75,9 @@ def test_audit_contains_no_motion_write_or_save_execution_claim():
     )
 
 
-def test_validator_catches_mutated_position_verdict():
+def test_validator_catches_mutated_position_display_value():
     entries = tuple(
-        replace(item, verdict=parity.VALUE_PARITY_OBSERVED)
+        replace(item, our_value=parity.OUR_RAW_PX)
         if item.feature_id == "single_axis.position.eas_display"
         else item
         for item in parity.ENTRIES

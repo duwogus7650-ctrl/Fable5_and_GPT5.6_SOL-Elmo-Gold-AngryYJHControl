@@ -1,8 +1,9 @@
-# Single Axis Current Reference · Read-Only Snapshot v0.1
+# Single Axis Current Reference + EAS Preset Drafts · v0.2
 
-> **2026-07-19 EAS live audit correction:** 이 기능은 EAS Single Axis의
-> `Current Command 1..5` preset/Set UI 구현이 아니다. `TC/IQ/ID/CL/PL/LC/MC`
-> current-drive readback이며 UI 의미 판정은 `UI_SEMANTICS_MISMATCH`다.
+> **2026-07-19 EAS live audit correction:** 기존
+> `TC/IQ/ID/CL/PL/LC/MC` panel은 current-drive readback이다. 별도 panel로
+> EAS Single Axis의 `Current Command 1..5` host preset shape를 구현했지만,
+> 모든 Set은 항상 잠겨 있고 drive I/O가 없다.
 
 ## 판정
 
@@ -21,6 +22,31 @@
 
 Software `DRIVE STOP`은 독립 STO/E-stop이 아니며, 이 readback을 hardware
 safety 또는 torque-isolation 증거로 사용하면 안 된다.
+
+## EAS Current preset local draft
+
+EAS III live UI에서 다음을 관찰했다.
+
+- `Current Command 1..5 [Amp.]`의 다섯 editable host preset.
+- 초기값은 모두 `0`.
+- 각 row tooltip은 동일한 `[TC]` target.
+- motor disabled 상태에서 다섯 Set 버튼 모두 disabled.
+
+앱은 이를 `single_axis_current_presets.py`의 pure local model과 별도 UI
+frame으로 구현했다.
+
+- 값 편집은 local draft만 변경한다.
+- 정확히 다섯 값, finite number, 관찰된 `CL[1]/PL[1]/MC` limit band를
+  검증한다.
+- 각 preview는 같은 `TC` register를 가리킨다.
+- `Set TC · LOCKED` 버튼은 다섯 개 모두 disabled이며 signal connection,
+  worker job, transport call이 없다.
+- Current Reference snapshot이 있으면 local warning만 갱신하며 command
+  authority로 승격하지 않는다.
+
+따라서 UI shape/mapping 판정은 `PARTIAL_LIVE_OBSERVED`, 출력 판정은
+`OUTPUT LOCKED / NEED-DATA`다. 실제 EAS Set behavior와 TC assignment parity는
+실행하지 않았다.
 
 ## 동결된 조회 절차
 
@@ -97,6 +123,8 @@ bare `TC`도 assignment와 같이 motion prefix로 분류된 것이었다.
 - GREEN: Current Reference·UI·catalog·main safety·transport 영향 범위
   **286 passed**
 - GREEN: 전체 repository **1781 passed in 1269.31s / exit 0**
+- 최신 PX/PU + EAS preset draft revision 전체 repository:
+  **1956 passed in 692.83s / exit 0**
 
 ## 설치 문서 identity
 
@@ -116,9 +144,11 @@ bare `TC`도 assignment와 같이 motion prefix로 분류된 것이었다.
 
 ## 명령 기능의 별도 잠금
 
-`axis.current_reference.command`는 operation catalog에
-`ENERGIZING / NEED_DATA`로만 존재하며 executable control은 없다. 향후 `TC=`
-기능을 열려면 최소한 다음 근거가 별도로 필요하다.
+기존 `axis.current_reference.command`는 operation catalog에
+`ENERGIZING / NEED_DATA`로만 존재한다. 새 다섯 button의 operationId는
+`axis.current_command_preset.N.locked` 표시 metadata일 뿐 catalog dispatch나
+실행 handler가 없다. 향후 `TC=` 기능을 열려면 최소한 다음 근거가 별도로
+필요하다.
 
 - current/thermal/torque envelope와 unit convention
 - restrained load와 의도하지 않은 motion/twitch 대책

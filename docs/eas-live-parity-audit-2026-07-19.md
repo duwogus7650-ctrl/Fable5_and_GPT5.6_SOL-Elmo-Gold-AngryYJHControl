@@ -20,8 +20,10 @@
 - 연결: COM3를 EAS와 AngryYJH가 번갈아 단독 소유했다. 두 프로그램을 동시에
   연결하지 않았다.
 - 상태: Motor Disabled, Velocity 0, Active Current 0.
-- 실행한 drive 명령: EAS Terminal의 정확한 query `PX` 한 건과 AngryYJH의
-  기존 bounded read-only refresh.
+- 실행한 drive 명령: EAS Terminal의 assignment 없는 정확한 read-only query
+  `PX`, `PU`, `XM[1]`, `XM[2]`, `FC[1]`, `FC[2]`, `FC[5]`, `FC[6]`,
+  `FC[7]`, `FC[8]`, `CA[45]`, `CA[91]`, `OV[9]`, `OV[39]`, `HM[2]`,
+  `FP[1]`과 AngryYJH의 기존 bounded read-only refresh.
 - 실행하지 않은 것: Enable, tuning/identification/commutation/Verify,
   PTP/Jog/Current/Sine/Homing, Recorder acquisition, assignment, Apply/Revert,
   Save/SV, upload/download, firmware/PAL 변경.
@@ -32,28 +34,35 @@
 
 ## 결정적 발견
 
-### 1. 위치 원값은 일치하지만 EAS 표시 위치는 불일치
+### 1. EAS 표시 위치는 raw `PX`가 아니라 `PU`다
 
 | 관찰점 | 값 |
 |---|---:|
 | EAS Terminal raw `PX` | `-2038379934 cnt` |
+| EAS Terminal `PU` (`DS402 0x6064`) | `-2004825502 user units` |
 | AngryYJH bounded raw `PX` | `-2038379934 cnt` |
 | EAS Single Axis / V/P Verification-Time 표시 | `-2004825502 cnt` |
-| 표시 차이 | `33554432 = 2^25 cnt` |
+| `PU-PX` | `33554432 = 2^25` |
+| `XM[1]`, `XM[2]` | `0`, `0` |
+| `FC[1,2,5,6,7,8]` | 모두 `1` |
+| `CA[45]` | `1` |
 
-raw drive query는 `VALUE_PARITY_OBSERVED`다. 그러나 EAS Single Axis의 표시
-변환은 raw PX에 `2^25`를 더한 값이고 EnDat 2.2 multi-turn/wrap/page 변환
-원인은 아직 확정하지 못했다. 따라서 화면 좌표 동등성은
-`MISMATCH_NEED_DATA`이며, AngryYJH raw PX를 EAS 표시 좌표와 같다고 부르면
-안 된다.
+EAS Single Axis 표시는 정확히 `PU`와 일치한다. 따라서 “EAS가 raw PX를
+화면에서 임의 변환한다”는 이전 설명은 폐기한다. `PX`는 raw main-position
+socket counts, `PU`는 EAS/DS402 user-position 좌표로 별도 authority다.
+다만 현재 `FC=1`, `XM=0`, `CA[45]=1`, `CA[91]=0`, `OV[9]=0`,
+`OV[39]=0`, `HM[2]=0`인데도 `PU-PX=2^25`인 firmware-internal 좌표 원점은
+아직 규명되지 않았다. 앱은 둘을 모두 표시하고 그 차이를 자동 보정값으로
+사용하지 않는다.
 
 ### 2. Current 화면은 기능 의미가 다름
 
-EAS Single Axis Current 탭은 `Current Command 1..5`의 편집 가능한 5개 preset과
-Set 버튼이다. AngryYJH의 기존 Current Reference panel은
-`TC/IQ/ID/CL[1]/PL[1]/LC/MC` query-only readback이다. 후자는 유용한 현재-drive
-증거지만 EAS Current command UI 구현이 아니다. 판정은
-`UI_SEMANTICS_MISMATCH`다.
+EAS Single Axis Current 탭은 `Current Command 1..5`의 편집 가능한 5개
+host preset과 Set 버튼이다. 각 row tooltip에서 동일한 `[TC]` target을
+관찰했고, motor disabled 상태에서는 모든 Set이 비활성화됐다. AngryYJH는
+기존 `TC/IQ/ID/CL[1]/PL[1]/LC/MC` query-only readback과 별도로 동일한
+5개 로컬 draft를 구현했다. 현재 Set은 항상 잠겨 있고 signal/worker job/drive
+I/O가 없으므로 판정은 `PARTIAL_LIVE_OBSERVED / OUTPUT LOCKED`다.
 
 ### 3. 설정값과 식별값을 섞으면 안 됨
 
@@ -103,10 +112,10 @@ Brake page는 `Using Brake=false`인 현재 EAS tree에서 별도 page로 나타
 |---|---|---|---|
 | Motion status | Disabled, velocity/current 0 | 같은 disabled/zero 상태 | `PARTIAL_LIVE_OBSERVED` |
 | raw PX | Terminal `-2038379934` | `-2038379934` | `VALUE_PARITY_OBSERVED` |
-| Position display | `-2004825502` | raw PX 직접 표시 | `MISMATCH_NEED_DATA` (`2^25`) |
+| Position display | `PU=-2004825502` | raw `PX`와 `PU`를 분리 표시 | 표시값 `VALUE_PARITY_OBSERVED`; 좌표 원점 `NEED-DATA` |
 | Position profile | AC/DC/SD 1e6, SP 4444444, PA/PR 0 | 같은 query 결과 | `VALUE_PARITY_OBSERVED`; motion 안 함 |
 | Velocity | Jog/profile controls | JV/SP/VX readback | 값 parity; Jog 안 함 |
-| Current | five command presets | current/limit readback | `UI_SEMANTICS_MISMATCH` |
+| Current | five host presets, each `[TC]`; Set disabled with motor off | 별도 5 local drafts + current/limit readback; Set always locked | `PARTIAL_LIVE_OBSERVED / OUTPUT LOCKED` |
 | Sine/Step | amplitude/frequency/offset/injection controls | documented authority row | `NOT_EXECUTED_NEED_DATA` |
 | Homing | Method 1, Main Position Socket, offset 0, speeds 1000 | documented authority row | `NOT_EXECUTED_NEED_DATA` |
 | Digital Inputs | 1..6 active, GP | 1..6 active, GP, active-high, 0 ms | logical `VALUE_PARITY_OBSERVED` |
@@ -168,10 +177,11 @@ EAS의 STO1/STO2 green indicators는 화면 관찰일 뿐 독립 STO 배선/torq
 
 - raw drive 값과 일부 설계값의 대조는 강해졌다.
 - 화면 구조가 비슷하다는 사실은 기능 parity가 아니다.
-- 현재 구현 중 EAS와 실제 값 parity가 관찰된 것은 raw PX, UM, motion profile
+- 현재 구현 중 EAS와 실제 값 parity가 관찰된 것은 raw PX, PU display, UM, motion profile
   query, Digital I/O logical state, installed P1/P2 gains의 제한된 범위다.
-- Current command, commutation, V/P identification, Recorder native workflow는
-  의미나 절차가 다르다.
+- Current preset의 UI shape와 `[TC]` mapping은 대조했지만 실제 Set/enable은
+  실행하지 않았다. commutation, V/P identification, Recorder native workflow는
+  여전히 의미나 절차가 다르다.
 - User Units, Limits/Protections, Application Settings, Bode/Time, Summary의
   대부분은 문서 inspector이며 실제 EAS 기능 구현으로 부르면 안 된다.
 - motion/energization/write/save 경로는 이 감사에서 검증하지 않았다.
@@ -180,21 +190,23 @@ EAS의 STO1/STO2 green indicators는 화면 관찰일 뿐 독립 STO 배선/torq
 
 - TDD RED:
   - EAS Current 5-preset UI와 app current readback의 의미 분리.
-  - EAS raw PX와 displayed position의 `2^25` mismatch 고정.
+  - EAS display=`PU`, raw=`PX`, `PU-PX=2^25`의 이중 좌표 계약 고정.
   - Motor/Feedback/Axis/Session Zero/PTP/Tool Organizer/Status/Recorder export
     등 과거 구현 누락을 audit ledger에서 검출.
-- focused UI + ledger: `57 passed`.
-- 직접 영향 범위: `204 passed in 269.59s`.
-- 전체 repository: `1873 passed in 852.71s (14:12)`, exit 0,
+- 신규 PX/PU + Current preset 집중: `142 passed in 34.79s`.
+- 직접 영향 범위: `284 passed in 133.72s`.
+- 전체 repository: `1956 passed in 692.83s (11:32)`, exit 0,
   skip/xfail summary 없음.
 - 위 시험은 코드 계약을 검증하며 EAS field behavior나 hardware safety를
   대신하지 않는다.
 
 ## 다음 게이트
 
-1. UI에서 Current readback과 EAS Current command를 명시적으로 분리한다.
-2. raw PX와 EAS displayed position을 이중 authority로 표시하고 EnDat 변환 원인을
-   vendor 문서/공식 API/controlled observation으로 규명한다.
+1. 완료: UI에서 Current readback과 EAS Current local drafts를 분리하고
+   출력은 잠갔다.
+2. 완료/잔여: raw PX와 EAS `PU`를 이중 authority로 표시했다. 남은 일은
+   `PU-PX=2^25` firmware-internal 좌표 원점을 vendor 문서/공식 API/통제된
+   관찰로 규명하는 것이다.
 3. 모든 read-only value page는 same-session EAS observation과 앱 snapshot을
    timestamp/identity-bound artifact로 남긴다.
 4. energizing/motion/write 기능은 별도 승인과 현장 safety gate 없이는 parity

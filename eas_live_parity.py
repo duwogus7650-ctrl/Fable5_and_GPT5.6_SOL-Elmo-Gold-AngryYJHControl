@@ -43,6 +43,7 @@ AUDIT_EXECUTION_BOUNDARY = "READ_ONLY_UI_AND_QUERY_OBSERVATION"
 EAS_TERMINAL_RAW_PX = -2_038_379_934
 OUR_RAW_PX = -2_038_379_934
 EAS_SINGLE_AXIS_POSITION = -2_004_825_502
+OUR_EAS_SINGLE_AXIS_POSITION = -2_004_825_502
 POSITION_DISPLAY_DELTA = EAS_SINGLE_AXIS_POSITION - EAS_TERMINAL_RAW_PX
 
 
@@ -358,16 +359,17 @@ ENTRIES = (
     _entry(
         "single_axis.status", "Single Axis",
         "Position/error/velocity/current and motor/program status.",
-        "Live telemetry card with fail-closed authority.",
+        "Live raw-PX telemetry card with separate PU/EAS coordinate evidence.",
         PARTIAL_LIVE_OBSERVED,
-        "Disabled/zero-velocity/zero-current state matched; position display "
-        "uses a separate unresolved EAS presentation transform.",
+        "Disabled/zero-velocity/zero-current state matched; the raw dashboard "
+        "is now explicitly labelled PX and the EAS coordinate is PU.",
         live_observed=True,
     ),
     _entry(
         "single_axis.position", "Single Axis",
         "Position tab with PTP/Jog/profile controls.",
-        "Raw PX telemetry, session zero and locked finite PTP surface.",
+        "Separate raw PX and EAS/DS402 PU readback, session zero and locked "
+        "finite PTP surface.",
         PARTIAL_LIVE_OBSERVED,
         "Profile values observed; no position motion executed.",
         live_observed=True,
@@ -402,13 +404,14 @@ ENTRIES = (
     ),
     _entry(
         "single_axis.position.eas_display", "Single Axis",
-        "Single Axis and Verification-Time display transformed position.",
-        "Displays raw PX directly.",
-        MISMATCH_NEED_DATA,
-        "The difference is exactly 2^25 counts; EnDat wrapping/page "
-        "conversion is unresolved.",
+        "Single Axis and Verification-Time display PU/DS402 0x6064 position.",
+        "Displays PU separately from raw PX and reports PU-PX without "
+        "auto-correction.",
+        VALUE_PARITY_OBSERVED,
+        "The displayed value now matches PU exactly. PU-PX remains exactly "
+        "2^25 counts and the firmware-internal coordinate origin is unresolved.",
         eas_value=EAS_SINGLE_AXIS_POSITION,
-        our_value=OUR_RAW_PX,
+        our_value=OUR_EAS_SINGLE_AXIS_POSITION,
         live_observed=True,
     ),
     _entry(
@@ -422,10 +425,12 @@ ENTRIES = (
     _entry(
         "single_axis.current", "Single Axis",
         "Five editable Current Command presets with Set controls.",
-        "TC/IQ/ID/CL/PL/LC/MC readback only.",
-        UI_SEMANTICS_MISMATCH,
-        "The app readback is useful evidence but is not the EAS Current tab "
-        "five-preset command surface.",
+        "Separate TC/IQ/ID/CL/PL/LC/MC readback plus five local Current "
+        "Command drafts; all Set TC outputs remain locked.",
+        PARTIAL_LIVE_OBSERVED,
+        "The five-preset shape, zero defaults and shared TC target match the "
+        "observed EAS UI. Enable/Set behavior was not executed and app output "
+        "remains locked.",
         live_observed=True,
     ),
     _entry(
@@ -680,14 +685,16 @@ def validate_entries(entries: tuple[ParityEntry, ...]) -> None:
             or raw.our_value != OUR_RAW_PX):
         raise ValueError("raw PX evidence is inconsistent")
     if (
-            display.verdict != MISMATCH_NEED_DATA
+            display.verdict != VALUE_PARITY_OBSERVED
             or not isinstance(display.eas_value, int)
             or not isinstance(display.our_value, int)
-            or display.eas_value - display.our_value != 1 << 25):
-        raise ValueError("position display mismatch evidence is inconsistent")
+            or display.eas_value != EAS_SINGLE_AXIS_POSITION
+            or display.our_value != OUR_EAS_SINGLE_AXIS_POSITION
+            or display.our_value - OUR_RAW_PX != 1 << 25):
+        raise ValueError("position display evidence is inconsistent")
     current = by_id["single_axis.current"]
-    if current.verdict != UI_SEMANTICS_MISMATCH:
-        raise ValueError("EAS Current UI semantics must remain mismatched")
+    if current.verdict != PARTIAL_LIVE_OBSERVED:
+        raise ValueError("EAS Current UI must remain partial and output-locked")
 
 
 validate_entries(ENTRIES)

@@ -13,6 +13,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import main as app_main
 import single_axis_current_reference
+import single_axis_current_presets
 import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
@@ -316,6 +317,16 @@ def _position_velocity_snapshot(*, duration=0.09):
                 "DC": 18000,
                 "SD": 15000,
                 "PX": 11500,
+                "PU": 33565932,
+                "XM[1]": 0,
+                "XM[2]": 0,
+                "FC[1]": 1,
+                "FC[2]": 1,
+                "FC[5]": 1,
+                "FC[6]": 1,
+                "FC[7]": 1,
+                "FC[8]": 1,
+                "CA[45]": 1,
                 "VX": 12.5,
                 "MO_POST": 0,
                 "SO_POST": 0,
@@ -857,6 +868,68 @@ def test_current_reference_refresh_queues_one_typed_read_job(ui, qapp):
     assert ui.win.lbl_axis_current_reference_state.text() == "READING"
 
 
+def test_eas_current_preset_panel_has_five_local_drafts_and_no_output(ui):
+    assert ui.win.lbl_axis_current_presets_state.text() == (
+        "LOCAL DRAFT / OUTPUT LOCKED")
+    assert len(ui.win.axis_current_preset_inputs) == 5
+    assert len(ui.win.axis_current_preset_buttons) == 5
+    assert tuple(
+        spin.value() for spin in ui.win.axis_current_preset_inputs
+    ) == (0.0,) * 5
+    assert tuple(
+        button.text() for button in ui.win.axis_current_preset_buttons
+    ) == ("Set TC · LOCKED",) * 5
+    assert all(
+        not button.isEnabled()
+        for button in ui.win.axis_current_preset_buttons)
+    assert tuple(
+        button.property("operationId")
+        for button in ui.win.axis_current_preset_buttons
+    ) == tuple(
+        "axis.current_command_preset.%d.locked" % index
+        for index in range(1, 6))
+    contract = ui.win.lbl_axis_current_presets_contract.text().upper()
+    for phrase in (
+            "EAS",
+            "FIVE HOST PRESETS",
+            "SAME TC REGISTER",
+            "LOCAL DRAFT",
+            "NO DRIVE I/O",
+            "OUTPUT LOCKED",
+            "NEED-DATA"):
+        assert phrase in contract
+
+
+def test_editing_or_clicking_eas_current_presets_never_dispatches_io(ui, qapp):
+    before = tuple(ui.worker.calls)
+
+    ui.win.axis_current_preset_inputs[2].setValue(1.25)
+    for button in ui.win.axis_current_preset_buttons:
+        button.click()
+    qapp.processEvents()
+
+    assert tuple(ui.worker.calls) == before
+    assert ui.win.axis_current_preset_buttons[2].isEnabled() is False
+    assert "TC=1.25" in ui.win.lbl_axis_current_presets_detail.text()
+    assert "LIMITS UNKNOWN" in ui.win.lbl_axis_current_presets_detail.text()
+
+
+def test_drive_current_snapshot_only_updates_local_preset_limit_warnings(
+        ui, qapp):
+    ui.win.axis_current_preset_inputs[0].setValue(5.1)
+    before = tuple(ui.worker.calls)
+
+    ui.worker.axis_current_reference.emit(_current_reference_snapshot())
+    qapp.processEvents()
+
+    assert tuple(ui.worker.calls) == before
+    assert "INVALID / ABOVE DRIVE MAXIMUM" in (
+        ui.win.lbl_axis_current_presets_detail.text())
+    assert all(
+        not button.isEnabled()
+        for button in ui.win.axis_current_preset_buttons)
+
+
 def test_late_or_forged_current_reference_snapshot_fails_closed(ui, qapp):
     valid = _current_reference_snapshot()
     forged = replace(valid, evidence_label="FORGED")
@@ -911,14 +984,15 @@ def test_worker_emits_only_the_typed_current_reference_snapshot(monkeypatch):
 
 def test_position_velocity_panel_starts_unknown_and_has_no_command_surface(ui):
     assert ui.win.lbl_axis_position_velocity_state.text() == "UNKNOWN"
-    assert ui.win.axis_position_velocity_table.rowCount() == 9
-    assert ui.win.axis_position_velocity_table.minimumHeight() >= 410
+    assert ui.win.axis_position_velocity_table.rowCount() == 14
+    assert ui.win.axis_position_velocity_table.minimumHeight() >= 580
     assert tuple(
         ui.win.axis_position_velocity_table.item(row, 0).text()
-        for row in range(9)
+        for row in range(14)
     ) == (
         "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]",
-        "DC", "SD", "PX", "VX",
+        "DC", "SD", "PX (RAW)", "PU (EAS / 0x6064)", "PU − PX",
+        "CA[45]", "XM[1..2]", "FC POSITION SCALE", "VX",
     )
     contract = ui.win.lbl_axis_position_velocity_contract.text().upper()
     for phrase in (
@@ -929,9 +1003,10 @@ def test_position_velocity_panel_starts_unknown_and_has_no_command_surface(ui):
             "NO BG",
             "COMMAND LOCKED",
             "NEED-DATA",
-            "RAW PX MATCHED EAS TERMINAL",
+            "EAS SINGLE AXIS USES PU",
+            "RAW PX",
             "2^25",
-            "MISMATCH / NEED-DATA"):
+            "DIVERGENCE / NEED-DATA"):
         assert phrase in contract
     for widget_type in (
             QtWidgets.QComboBox,
@@ -980,13 +1055,27 @@ def test_position_velocity_snapshot_renders_without_granting_authority(
         "2,500 cnt/s")
     assert ui.win.axis_position_velocity_table.item(4, 1).text() == (
         "20,000 cnt/s^2")
+    assert ui.win.axis_position_velocity_table.item(7, 1).text() == (
+        "11,500 cnt")
     assert ui.win.axis_position_velocity_table.item(8, 1).text() == (
+        "33,565,932 user units")
+    assert ui.win.axis_position_velocity_table.item(9, 1).text() == (
+        "+33,554,432 · DIVERGED / NEED-DATA")
+    assert ui.win.axis_position_velocity_table.item(10, 1).text() == (
+        "Socket 1")
+    assert ui.win.axis_position_velocity_table.item(11, 1).text() == (
+        "0 .. 0")
+    assert ui.win.axis_position_velocity_table.item(12, 1).text() == (
+        "1 / 1")
+    assert ui.win.axis_position_velocity_table.item(13, 1).text() == (
         "12.500 cnt/s")
     detail = ui.win.lbl_axis_position_velocity_detail.text().upper()
     assert "90.0 MS" in detail
     assert "LIMITED BY SD" in detail
     assert "NOT ACTIVE COMMAND" in detail
     assert "COMMAND LOCKED" in detail
+    assert "PU−PX=+33,554,432" in detail
+    assert "NOT AN AUTO-CORRECTION" in detail
     assert (
         ui.win._connection_admitted,
         ui.win._telemetry_authoritative,
@@ -1042,7 +1131,9 @@ def test_worker_queues_exact_position_velocity_read_job():
         in worker._OBSERVE_ONLY_JOB_ALLOWLIST)
     assert {
         "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]",
-        "DC", "SD", "PX", "VX",
+        "DC", "SD", "PX", "PU", "XM[1]", "XM[2]",
+        "FC[1]", "FC[2]", "FC[5]", "FC[6]", "FC[7]", "FC[8]",
+        "CA[45]", "VX",
     } <= worker._READ_ONLY_QUERY_ALLOWLIST
 
 

@@ -53,6 +53,7 @@ import single_axis_motion
 import single_axis_status
 import single_axis_enable_contract
 import single_axis_authority_evidence
+import single_axis_current_presets
 import single_axis_current_reference
 import single_axis_drive_mode
 import single_axis_digital_inputs
@@ -750,10 +751,13 @@ class DriveWorker(QtCore.QThread):
         "motion_stop", "recorder_stop",
     ))
     _READ_ONLY_QUERY_ALLOWLIST = frozenset((
-        "VR", "VP", "VB", "SN[4]", "PX", "VX", "PE", "IQ",
+        "VR", "VP", "VB", "SN[4]", "PX", "PU", "VX", "PE", "IQ",
         "MO", "SO", "MS", "MF", "SR", "ID", "UM", "RM",
         "TC", "CL[1]", "PL[1]", "LC", "MC",
         "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]", "DC", "SD",
+        "XM[1]", "XM[2]",
+        "FC[1]", "FC[2]", "FC[5]", "FC[6]", "FC[7]", "FC[8]",
+        "CA[45]",
     ))
     _TRIAL_JOB_ALLOWLIST = {
         "P1": frozenset(("p1_trial_restore", "p1_trial_commit")),
@@ -4078,7 +4082,8 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addLayout(top)
 
         grid = QtWidgets.QGridLayout(); grid.setSpacing(10)
-        (b1, self.m_pos, self.m_pos_sub) = metric("POSITION  [cnt]")
+        (b1, self.m_pos, self.m_pos_sub) = metric(
+            "RAW POSITION · PX  [cnt]")
         (b2, self.m_perr, _) = metric("POS. ERROR  [cnt]")
         (b3, self.m_vel, self.m_vel_sub) = metric("VELOCITY  [cnt/sec]")
         (b4, self.m_iq, _) = metric("ACTIVE CURRENT  [A]")
@@ -4174,6 +4179,7 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addWidget(self._build_axis_enable_contract_frame())
         v.addWidget(self._build_axis_drive_mode_frame())
         v.addWidget(self._build_axis_current_reference_frame())
+        v.addWidget(self._build_axis_current_presets_frame())
         v.addWidget(self._build_axis_position_velocity_reference_frame())
         v.addWidget(self._build_axis_digital_inputs_frame())
         v.addWidget(self._build_axis_digital_outputs_frame())
@@ -4778,6 +4784,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.axis_current_reference_table.item(row, 1).setText("—")
         self.lbl_axis_current_reference_detail.setText(
             str(reason or "Current-reference snapshot unavailable"))
+        if hasattr(self, "axis_current_preset_inputs"):
+            self._update_axis_current_presets()
 
     def _refresh_axis_current_reference_clicked(self):
         """Request only the typed, bounded current-reference read job."""
@@ -4872,6 +4880,123 @@ class MainWindow(QtWidgets.QMainWindow):
                 1000.0 * snapshot.sample_duration_s,
                 snapshot.limit_relation,
             ))
+        if hasattr(self, "axis_current_preset_inputs"):
+            self._update_axis_current_presets()
+
+    def _build_axis_current_presets_frame(self):
+        """Build an EAS-shaped local draft surface with all output locked."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.axis_current_presets_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel(
+            "EAS CURRENT COMMAND PRESETS · LOCAL DRAFT ONLY")
+        title.setProperty("role", "field")
+        title.setMinimumWidth(0)
+        title.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        head.addWidget(title, 1)
+        head.addStretch(1)
+        self.lbl_axis_current_presets_state = QtWidgets.QLabel(
+            "LOCAL DRAFT / OUTPUT LOCKED")
+        self.lbl_axis_current_presets_state.setObjectName("pill")
+        self.lbl_axis_current_presets_state.setProperty("on", "false")
+        self.lbl_axis_current_presets_state.setProperty("status", "neutral")
+        head.addWidget(self.lbl_axis_current_presets_state)
+        layout.addLayout(head)
+
+        self.lbl_axis_current_presets_contract = QtWidgets.QLabel(
+            single_axis_current_presets.EAS_OBSERVED_CONTRACT
+            + " FIVE HOST PRESETS MAP TO THE SAME TC REGISTER; "
+              "THEY ARE NOT FIVE DRIVE REGISTERS. OUTPUT LOCKED / NEED-DATA.")
+        self.lbl_axis_current_presets_contract.setProperty("role", "hint")
+        self.lbl_axis_current_presets_contract.setWordWrap(True)
+        layout.addWidget(self.lbl_axis_current_presets_contract)
+
+        grid = QtWidgets.QGridLayout()
+        grid.setHorizontalSpacing(8)
+        grid.setVerticalSpacing(6)
+        self.axis_current_preset_inputs = []
+        self.axis_current_preset_buttons = []
+        for index in range(1, single_axis_current_presets.PRESET_COUNT + 1):
+            label = QtWidgets.QLabel("Current Command %d [A]" % index)
+            spin = QtWidgets.QDoubleSpinBox()
+            spin.setRange(-999999.0, 999999.0)
+            spin.setDecimals(4)
+            spin.setSingleStep(0.1)
+            spin.setMinimumWidth(120)
+            spin.setSizePolicy(
+                QtWidgets.QSizePolicy.Policy.Ignored,
+                QtWidgets.QSizePolicy.Policy.Fixed)
+            spin.setValue(
+                single_axis_current_presets.EAS_DEFAULT_CURRENT_A)
+            spin.setKeyboardTracking(False)
+            spin.setToolTip(
+                "Local draft only · does not assign TC or access the drive")
+            spin.valueChanged.connect(self._update_axis_current_presets)
+            button = QtWidgets.QPushButton("Set TC · LOCKED")
+            button.setEnabled(False)
+            button.setProperty(
+                "operationId",
+                "axis.current_command_preset.%d.locked" % index)
+            button.setProperty("operationRisk", "LOCKED")
+            button.setToolTip(
+                "OUTPUT LOCKED / NEED-DATA · no signal is connected and no "
+                "worker job exists")
+            self.axis_current_preset_inputs.append(spin)
+            self.axis_current_preset_buttons.append(button)
+            grid.addWidget(label, index - 1, 0)
+            grid.addWidget(spin, index - 1, 1)
+            grid.addWidget(button, index - 1, 2)
+        grid.setColumnStretch(1, 1)
+        layout.addLayout(grid)
+
+        self.lbl_axis_current_presets_detail = QtWidgets.QLabel("")
+        self.lbl_axis_current_presets_detail.setProperty("role", "hint")
+        self.lbl_axis_current_presets_detail.setWordWrap(True)
+        layout.addWidget(self.lbl_axis_current_presets_detail)
+        self._update_axis_current_presets()
+        return frame
+
+    def _update_axis_current_presets(self, _value=None):
+        """Reclassify local drafts only; never dispatch a worker operation."""
+        if not hasattr(self, "axis_current_preset_inputs"):
+            return
+        snapshot = getattr(self, "_axis_current_reference_snapshot", None)
+        current = (
+            snapshot
+            if isinstance(
+                snapshot,
+                single_axis_current_reference.CurrentReferenceSnapshot)
+            and snapshot.state == single_axis_current_reference.CURRENT
+            else None)
+        model = single_axis_current_presets.build_current_command_presets(
+            tuple(spin.value() for spin in self.axis_current_preset_inputs),
+            continuous_limit_a=(
+                current.continuous_limit_a if current is not None else None),
+            peak_limit_a=(
+                current.peak_limit_a if current is not None else None),
+            maximum_drive_current_a=(
+                current.maximum_drive_current_a
+                if current is not None else None),
+        )
+        for button in self.axis_current_preset_buttons:
+            button.setEnabled(False)
+        self.lbl_axis_current_presets_detail.setText(
+            " · ".join(
+                "#%d %s A → %s · %s" % (
+                    item.index,
+                    format(item.value_a, ".12g"),
+                    item.command_preview,
+                    item.status,
+                )
+                for item in model)
+            + " · OUTPUT LOCKED / NO DRIVE I/O")
 
     def _build_axis_position_velocity_reference_frame(self):
         """Build the bounded position/velocity-reference read-only panel."""
@@ -4884,7 +5009,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         head = QtWidgets.QHBoxLayout()
         title = QtWidgets.QLabel(
-            "POSITION / VELOCITY REFERENCES - READ-ONLY SNAPSHOT v0.1")
+            "POSITION / VELOCITY REFERENCES - READ-ONLY SNAPSHOT v0.2")
         title.setProperty("role", "field")
         head.addWidget(title)
         head.addStretch(1)
@@ -4921,7 +5046,21 @@ class MainWindow(QtWidgets.QMainWindow):
             ("AC[1]", "Main profiler acceleration; capped by SD"),
             ("DC", "Main profiler deceleration; capped by SD"),
             ("SD", "Stop deceleration and profiler acceleration limit"),
-            ("PX", "Live main-feedback position in counts"),
+            ("PX (RAW)", "Raw main-position socket counts; dashboard source"),
+            (
+                "PU (EAS / 0x6064)",
+                "EAS Single Axis and DS402 user-position coordinate",
+            ),
+            (
+                "PU − PX",
+                "Observed coordinate difference; not an auto-correction",
+            ),
+            ("CA[45]", "Main-position feedback socket selected for PX"),
+            ("XM[1..2]", "Position-modulo minimum and maximum"),
+            (
+                "FC POSITION SCALE",
+                "(FC[2]×FC[6]×FC[7]) / (FC[1]×FC[5]×FC[8])",
+            ),
             ("VX", "Live main-feedback velocity in counts per second"),
         )
         self.axis_position_velocity_table = QtWidgets.QTableWidget(
@@ -4951,7 +5090,7 @@ class MainWindow(QtWidgets.QMainWindow):
         header.setSectionResizeMode(
             2, QtWidgets.QHeaderView.ResizeMode.Stretch)
         self.axis_position_velocity_table.setMinimumWidth(0)
-        self.axis_position_velocity_table.setMinimumHeight(420)
+        self.axis_position_velocity_table.setMinimumHeight(590)
         for row, (item_name, meaning) in enumerate(rows):
             for column, value in enumerate((item_name, "—", meaning)):
                 item = QtWidgets.QTableWidgetItem(value)
@@ -5084,6 +5223,17 @@ class MainWindow(QtWidgets.QMainWindow):
             "{:,d} cnt/s^2".format(
                 snapshot.stop_deceleration_count_per_s2),
             "{:,d} cnt".format(snapshot.feedback_position_count),
+            "{:,d} user units".format(snapshot.eas_position_user_unit),
+            "{:+,d} · {}".format(
+                snapshot.eas_to_raw_position_delta,
+                snapshot.position_coordinate_status),
+            "Socket %d" % snapshot.main_position_socket,
+            "{:,d} .. {:,d}".format(
+                snapshot.position_modulo_min,
+                snapshot.position_modulo_max),
+            "{:,d} / {:,d}".format(
+                snapshot.position_scale_numerator,
+                snapshot.position_scale_denominator),
             "{:,.3f} cnt/s".format(
                 snapshot.feedback_velocity_count_per_s),
         )
@@ -5094,6 +5244,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_axis_position_velocity_detail.setText(
             "Identity-bound query-only snapshot - acquisition %.1f ms - "
             "%s - effective AC=%d / DC=%d cnt/s^2 - %s - "
+            "PU−PX=%s (%s; NOT AN AUTO-CORRECTION) - "
             "COMMAND LOCKED / NEED-DATA - NO ASSIGNMENT / BG / ENABLE / "
             "MOTION" % (
                 1000.0 * snapshot.sample_duration_s,
@@ -5101,6 +5252,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 snapshot.effective_acceleration_count_per_s2,
                 snapshot.effective_deceleration_count_per_s2,
                 snapshot.reference_semantics,
+                "{:+,d}".format(snapshot.eas_to_raw_position_delta),
+                snapshot.position_coordinate_status,
             ))
 
     def _build_axis_digital_inputs_frame(self):
