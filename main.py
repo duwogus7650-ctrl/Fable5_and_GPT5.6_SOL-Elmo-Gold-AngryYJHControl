@@ -89,6 +89,10 @@ FINITE_PTP_LIVE_ENABLED = False
 # deadman, a max-duration timebox, ramp-aware overspeed + absolute ceiling, and a
 # two-tier stop chain (see single_axis_motion.run_jog).
 JOG_LIVE_ENABLED = True
+# GUI streams a fresh jog target this often while jogging; must be well under the
+# kernel deadman (JOG_DEADMAN_AGE_S=250 ms) so a live jog stays fresh, and a dead
+# GUI (timer stops) goes stale within the deadman and the kernel stops the motor.
+JOG_UI_REFRESH_MS = 100
 # Hardware RAM gain trials stay disabled until their write-ahead record can
 # coexist safely with the P2_LIMITS transaction used during verification.
 # Synthetic kernels opt in inside their domain modules; the desktop UI never
@@ -4275,9 +4279,64 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_motion_run.clicked.connect(self._motion_run_clicked)
         self._decorate_operation_control(self.btn_motion_run, "motion.ptp.run")
         v.addWidget(self.btn_motion_run)
+
+        v.addWidget(self._hline())
+        jog_title = QtWidgets.QLabel(
+            "VELOCITY JOG  ·  EAS Velocity tab · endless JV · deadman + timebox + auto-disable")
+        jog_title.setProperty("role", "field"); v.addWidget(jog_title)
+        self.jog_gate = QtWidgets.QLabel(
+            "LIVE LOCKED — connect (SUPERVISED), Session Zero, Commutation "
+            "Signature GREEN, and the three field-safety checks above are required.")
+        self.jog_gate.setProperty("role", "hint"); self.jog_gate.setWordWrap(True)
+        v.addWidget(self.jog_gate)
+        jform = QtWidgets.QGridLayout()
+        jform.setHorizontalSpacing(10); jform.setVerticalSpacing(6)
+        self.spn_jog_speed = QtWidgets.QDoubleSpinBox()
+        self.spn_jog_speed.setRange(single_axis_motion.JOG_MIN_RPM,
+                                    single_axis_motion.JOG_MAX_RPM_CEILING)
+        self.spn_jog_speed.setDecimals(0); self.spn_jog_speed.setSingleStep(10.0)
+        self.spn_jog_speed.setValue(single_axis_motion.JOG_MAX_RPM_DEFAULT)
+        self.spn_jog_speed.setToolTip(
+            "Signed jog speed streamed while a direction button is held/latched; "
+            "clamped to this value and to the live VH[2].")
+        self.spn_jog_current = QtWidgets.QDoubleSpinBox()
+        self.spn_jog_current.setRange(single_axis_motion.MIN_CURRENT_CAP_A,
+                                      single_axis_motion.MAX_CURRENT_CAP_A)
+        self.spn_jog_current.setDecimals(2); self.spn_jog_current.setValue(1.30)
+        jform.addWidget(QtWidgets.QLabel("Jog speed [rpm]"), 0, 0)
+        jform.addWidget(self.spn_jog_speed, 0, 1)
+        jform.addWidget(QtWidgets.QLabel("Temporary current cap [A peak]"), 1, 0)
+        jform.addWidget(self.spn_jog_current, 1, 1)
+        v.addLayout(jform)
+        self.chk_jog_run_held = QtWidgets.QCheckBox(
+            "Run Held (latched · click a direction to start, Stop to end)")
+        self.chk_jog_run_held.setToolTip(
+            "Off = hold-to-run (release the button to stop). On = one click "
+            "latches continuous jog until Stop Jog or DRIVE STOP.")
+        v.addWidget(self.chk_jog_run_held)
+        jogrow = QtWidgets.QHBoxLayout(); jogrow.setSpacing(8)
+        self.btn_jog_rev = QtWidgets.QPushButton("◀  Jog")
+        self.btn_jog_fwd = QtWidgets.QPushButton("Jog  ▶")
+        self.btn_jog_stop = QtWidgets.QPushButton("Stop Jog")
+        self.btn_jog_rev.setEnabled(False); self.btn_jog_fwd.setEnabled(False)
+        self.btn_jog_stop.setEnabled(False)
+        self.btn_jog_rev.setToolTip(
+            "Endless jog in the negative direction (deadman + timebox + auto-disable).")
+        self.btn_jog_fwd.setToolTip(
+            "Endless jog in the positive direction (deadman + timebox + auto-disable).")
+        self.btn_jog_stop.setToolTip(
+            "Gentle jog stop: JV=0 -> BG decel -> MO=0. DRIVE STOP is the immediate escape.")
+        self.btn_jog_rev.pressed.connect(lambda: self._jog_press(-1))
+        self.btn_jog_rev.released.connect(self._jog_release)
+        self.btn_jog_fwd.pressed.connect(lambda: self._jog_press(1))
+        self.btn_jog_fwd.released.connect(self._jog_release)
+        self.btn_jog_stop.clicked.connect(self._jog_stop_clicked)
+        jogrow.addWidget(self.btn_jog_rev); jogrow.addWidget(self.btn_jog_fwd)
+        jogrow.addStretch(1); jogrow.addWidget(self.btn_jog_stop)
+        v.addLayout(jogrow)
         locked = QtWidgets.QLabel(
-            "LOCKED IN v1: endless JV Jog · Run Held · Homing · Current · Sine Reference. "
-            "These need drive-level limit/watchdog and field evidence; software STOP is not STO.")
+            "Still LOCKED: Homing · Current · Sine Reference (need drive-level "
+            "limit/watchdog and field evidence; software STOP is not STO).")
         locked.setProperty("role", "hint"); locked.setWordWrap(True); v.addWidget(locked)
 
         v.addWidget(self._build_single_axis_authority_frame())
@@ -4296,6 +4355,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self._motion_inflight = False
         self._motion_stop_pending = False
         self._motion_config_unknown = False
+        self._jog_active = False
+        self._jog_active_rpm = 0.0
+        self._jog_timer = QtCore.QTimer(self)
+        self._jog_timer.setInterval(JOG_UI_REFRESH_MS)
+        self._jog_timer.timeout.connect(self._jog_deadman_tick)
         self._axis_summary_data = {}
         v.addStretch(1)
         return f
@@ -5791,6 +5855,41 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_motion_run.setEnabled(ready)
         # STOP never depends on the motion gate, coordinate state or gain trial.
         self.btn_motion_stop.setEnabled(connected)
+        if hasattr(self, "btn_jog_fwd"):
+            jog_ready = (
+                JOG_LIVE_ENABLED and mutation_trusted
+                and not getattr(self, "_persistence_recovery_unknown", False)
+                and self._motion_signature_is_current()
+                and self._motion_session_zero_confirmed
+                and not self._motion_config_unknown
+                and not self._motion_inflight
+                and checks)
+            self.btn_jog_fwd.setEnabled(jog_ready)
+            self.btn_jog_rev.setEnabled(jog_ready)
+            self.btn_jog_stop.setEnabled(connected)
+            self.spn_jog_speed.setEnabled(not self._jog_active)
+            self.spn_jog_current.setEnabled(not self._jog_active)
+            if hasattr(self, "jog_gate"):
+                if not JOG_LIVE_ENABLED:
+                    jtext = "Jog is disabled in this build."
+                elif self._jog_active:
+                    jtext = ("JOGGING · deadman/timebox armed. Release "
+                             "(hold-to-run) or Stop Jog / DRIVE STOP to end.")
+                elif jog_ready:
+                    jtext = ("READY: hold the ◀/▶ direction to jog (deadman + "
+                             "timebox + auto-disable), or latch with Run Held.")
+                elif not connected:
+                    jtext = "OFFLINE: 먼저 드라이브에 SUPERVISED로 연결하세요."
+                elif not self._motion_signature_is_current():
+                    jtext = "잠금: 이 세션의 Commutation Signature GREEN이 필요합니다."
+                elif not self._motion_session_zero_confirmed:
+                    jtext = "잠금: 먼저 Session Zero(PX=0)를 실행하세요."
+                elif not checks:
+                    jtext = "잠금: 이번 실행의 현장 안전 확인 3개를 모두 확인하세요."
+                else:
+                    jtext = ("잠금: SUPERVISED 접근·MO=0·persistence·구성 상태를 "
+                             "확인하세요.")
+                self.jog_gate.setText(jtext)
         if not FINITE_PTP_LIVE_ENABLED:
             text = (
                 "NEED-DATA 잠금: PTP 백엔드는 구현됐지만 기계 이동범위·정방향·"
@@ -5852,6 +5951,70 @@ class MainWindow(QtWidgets.QMainWindow):
         self._motion_inflight = True
         self._update_motion_controls()
         self.worker.run_position_move(request)
+
+    def _jog_press(self, direction):
+        """Start (or steer) the endless jog in the given signed direction.
+
+        Off Run-Held this is hold-to-run: the kernel deadman stops the motor if
+        this button is released (the refresh timer stops -> command goes stale).
+        """
+        if not (getattr(self, "btn_jog_fwd", None) is not None
+                and self.btn_jog_fwd.isEnabled()
+                and self.worker and self.worker.isRunning()):
+            self._flash("Jog 게이트가 충족되지 않았습니다 (SUPERVISED · 서명 GREEN · "
+                        "Session Zero · 안전 확인 3개).")
+            return
+        rpm = float(direction) * float(self.spn_jog_speed.value())
+        self._jog_active_rpm = rpm
+        if not self._jog_active:
+            request = single_axis_motion.JogRequest(
+                max_speed_rpm=float(self.spn_jog_speed.value()),
+                current_cap_a=float(self.spn_jog_current.value()))
+            self._jog_active = True
+            self.worker.run_jog(request)
+            self._jog_timer.start()
+        self.worker.jog_set_velocity(rpm)
+        self._update_motion_controls()
+
+    def _jog_release(self):
+        """Direction button released; ends the jog unless Run Held is latched."""
+        if self._jog_active and not self.chk_jog_run_held.isChecked():
+            self._jog_stop_clicked()
+
+    def _jog_stop_clicked(self):
+        """Gentle jog stop: stop streaming, request JV=0/BG decel then disable."""
+        self._jog_timer.stop()
+        self._jog_active_rpm = 0.0
+        if self.worker and self.worker.isRunning():
+            self.worker.jog_stop()
+        self._update_motion_controls()
+
+    def _jog_deadman_tick(self):
+        """Re-stamp the live jog target so the kernel deadman stays satisfied."""
+        if self._jog_active and self.worker and self.worker.isRunning():
+            self.worker.jog_set_velocity(self._jog_active_rpm)
+        else:
+            self._jog_timer.stop()
+
+    def _on_jog_result(self, result):
+        self._jog_active = False
+        self._jog_timer.stop()
+        self._jog_active_rpm = 0.0
+        self._flash("Jog %s · %s" % (getattr(result, "status", "?"),
+                                     getattr(result, "reason", "")))
+        self._update_motion_controls()
+
+    def _on_jog_sample(self, sample):
+        # During a jog the worker owns the link, so this is the live telemetry.
+        try:
+            vx = float(sample.get("VX", 0.0))
+            iq = float(sample.get("IQ", 0.0))
+        except (TypeError, ValueError):
+            return
+        if hasattr(self, "m_vel"):
+            self.m_vel.setText("{:,.0f}".format(vx))
+        if hasattr(self, "m_iq"):
+            self.m_iq.setText("{:.3f}".format(abs(iq)))
 
     def _refresh_axis_clicked(self):
         if self.worker and self.worker.isRunning():
@@ -12191,6 +12354,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.axis_digital_outputs.connect(self._on_axis_digital_outputs)
         self.worker.motion_result.connect(self._on_motion_result)
         self.worker.motion_authority.connect(self._on_motion_authority)
+        self.worker.jog_result.connect(self._on_jog_result)
+        self.worker.jog_sample.connect(self._on_jog_sample)
         self.worker.recorder_signals_result.connect(self._on_recorder_signals_result)
         self.worker.recorder_status_changed.connect(self._on_recorder_status)
         self.worker.recorder_manifest.connect(self._on_recorder_manifest)

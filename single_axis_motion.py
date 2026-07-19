@@ -82,7 +82,8 @@ JOG_TIMEBOX_DEFAULT_S = 60.0       # PX int32 headroom 0.92% at 300 rpm / 60 s
 JOG_TIMEBOX_HARD_S = 180.0
 JOG_OVERSPEED_FACTOR = 1.25
 JOG_OVERSPEED_FLOOR_RPM = 15.0     # low-speed false-positive floor
-JOG_STOP_SETTLE_TIMEOUT_S = 2.0    # operator stop: wait |VX|~0 before disable
+JOG_STOP_SETTLE_TIMEOUT_S = 2.0    # operator stop: minimum |VX|~0 settle floor
+JOG_STOP_SETTLE_TIMEOUT_S_MAX = 15.0  # cap on the decel-sized settle wait
 JOG_STOP_RPM = 1.0                 # |VX| below this (rpm) counts as stopped
 JOG_PROFILE_VELOCITY_MODE = 3      # OV[2] during a JV jog (CR :9450), not 1
 
@@ -1000,8 +1001,12 @@ def run_jog(
             sleep_fn(0.02)
 
         last_jv = 0
-        grace_prev_jv = 0
-        jv_change_at = clock_fn()
+        # Profiler-following expected speed: the overspeed reference tracks the
+        # drive profiler ramping toward the commanded JV at AC/DC, so a downshift
+        # never false-trips and a stuck-at-old-speed fault is never masked
+        # (fable-critic HIGH-2).
+        expected_counts = 0.0
+        last_tick = clock_fn()
         timebox_deadline = clock_fn() + values["timebox_s"]
         while True:
             now = clock_fn()
@@ -1017,6 +1022,9 @@ def run_jog(
                      and (now - float(ts)) <= JOG_DEADMAN_AGE_S)
             stop_req = bool(cmd.get("stop")) or not fresh
             raw_rpm = 0.0 if stop_req else float(cmd.get("rpm") or 0.0)
+            if not math.isfinite(raw_rpm):   # NaN/inf command -> fail safe to stop
+                raw_rpm = 0.0
+                stop_req = True
             target_rpm = max(-values["speed_rpm"],
                              min(values["speed_rpm"], raw_rpm))
             target_jv = int(round(target_rpm * ca18 / 60.0))
@@ -1027,8 +1035,6 @@ def run_jog(
                 _write_verified(link, "JV", target_jv, token, allow_motion=True)
                 link.command("BG", allow_motion=True)
                 motion_started = True
-                grace_prev_jv = last_jv
-                jv_change_at = now
                 last_jv = target_jv
             sample, _age = _read_active_sample(
                 link, _JOG_SAMPLE_READS, sample_clock_fn=sample_clock_fn)
@@ -1054,14 +1060,21 @@ def run_jog(
                     "current vector exceeded bounded jog cap "
                     "(sqrt(ID^2+IQ^2)=%.3f A, cap=%.3f A; native drive amperes)"
                     % (current_vector_a, cap))
-            # Ramp-aware overspeed reference: |JV_target|*1.25 alone false-trips
-            # during a downshift, so widen the reference to the larger of the old
-            # and new target for the decel transient window only.
-            t_grace = (abs(target_jv - grace_prev_jv)
-                       / max(1.0, float(accel_counts))
-                       + SMOOTHING_MS / 1000.0 + 2.0 * JOG_POLL_S)
-            ref = (max(abs(last_jv), abs(grace_prev_jv))
-                   if now < jv_change_at + t_grace else abs(last_jv))
+            # Profiler-following overspeed reference (fable-critic HIGH-2): advance
+            # an expected-speed estimate toward the commanded JV at the applied
+            # AC/DC each tick; the limit then follows the real accel/decel
+            # envelope, so a mid-decel retarget does not false-trip and a
+            # stuck-at-old-speed fault is caught as the expected speed decays
+            # below the frozen feedback.  max(expected, target) keeps the
+            # accel/first-tick edge from tripping before feedback catches up.
+            dt = max(0.0, now - last_tick)
+            last_tick = now
+            step = float(accel_counts) * dt
+            if expected_counts < last_jv:
+                expected_counts = min(float(last_jv), expected_counts + step)
+            elif expected_counts > last_jv:
+                expected_counts = max(float(last_jv), expected_counts - step)
+            ref = max(abs(expected_counts), abs(float(last_jv)))
             overspeed_limit = max(
                 JOG_OVERSPEED_FACTOR * ref + overspeed_margin, overspeed_floor)
             vx = float(sample["VX"])
@@ -1084,7 +1097,7 @@ def run_jog(
     except _MotionAborted as exc:
         aborted = True
         reason = str(exc)
-    except Exception as exc:  # noqa: BLE001 - any drive error must still disable
+    except BaseException as exc:  # noqa: BLE001 - ANY escape must still torque-off
         aborted = True
         reason = "jog exception: %s" % exc
 
@@ -1099,11 +1112,26 @@ def run_jog(
             link.command("BG", allow_motion=True)
         except Exception:
             pass
-        settle_deadline = clock_fn() + JOG_STOP_SETTLE_TIMEOUT_S
+        # Size the settle wait to the real deceleration time (|VX| / SD), not a
+        # fixed 2 s that is far shorter than a low-accel decel (fable-critic
+        # MEDIUM); keep watching MF so a fault mid-settle still reaches torque-off.
+        try:
+            s0, _a = _read_active_sample(
+                link, ("VX",), sample_clock_fn=sample_clock_fn)
+            vx_now = abs(float(s0["VX"]))
+        except Exception:
+            vx_now = float(speed_counts)
+        settle_s = min(
+            JOG_STOP_SETTLE_TIMEOUT_S_MAX,
+            max(JOG_STOP_SETTLE_TIMEOUT_S,
+                vx_now / max(1.0, float(stop_decel_counts)) + 1.0))
+        settle_deadline = clock_fn() + settle_s
         while clock_fn() < settle_deadline:
             try:
                 s, _a = _read_active_sample(
-                    link, ("VX",), sample_clock_fn=sample_clock_fn)
+                    link, ("VX", "MF"), sample_clock_fn=sample_clock_fn)
+                if int(s["MF"]) != 0:
+                    break   # fault during settle; safe_stop_disable below owns it
                 if abs(float(s["VX"])) <= JOG_STOP_RPM * idle_speed:
                     break
             except Exception:
@@ -1123,6 +1151,17 @@ def run_jog(
         restored_ok, restore_errors = _restore_settings(link, originals, token)
         evidence["settings_restored"] = restored_ok
         evidence["restore_errors"] = restore_errors
+        if not restored_ok:
+            # Torque is off, but the temporary RAM caps were not fully restored,
+            # so the session's real settings are polluted.  Report UNKNOWN (not a
+            # GREEN "restored") so the worker latches config-unknown and blocks
+            # further motion until it is audited (fable-critic HIGH-1).
+            return MotionResult(
+                UNKNOWN,
+                "jog disabled but temporary RAM settings were NOT fully restored "
+                "(%s); config audit required before further motion [%s]"
+                % ("; ".join(restore_errors) or "unknown", reason),
+                final_state=stop_result.final_state, evidence=evidence)
         if aborted:
             return MotionResult(RED, reason,
                                 final_state=stop_result.final_state,

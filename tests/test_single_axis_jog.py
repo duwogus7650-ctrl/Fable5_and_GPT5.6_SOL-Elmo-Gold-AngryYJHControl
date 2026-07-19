@@ -76,12 +76,16 @@ class JogSimLink:
 
     def __init__(self, *, persistence_unknown=False, vx_override=None,
                  iq_override=None, no_motion=False, disable_stuck=False,
-                 reg_overrides=None):
+                 reg_overrides=None, fail_write=None, vx_seq=None):
         self.unknown = persistence_unknown
         self.vx_override = vx_override      # fixed feedback VX (overspeed/runaway)
         self.iq_override = iq_override      # fixed active current (excursion)
         self.no_motion = no_motion          # VX stays 0 despite JV (breakaway)
         self.disable_stuck = disable_stuck
+        self.fail_write = fail_write        # (key, raw) -> bool: raise on that write
+        self.vx_seq = list(vx_seq) if vx_seq is not None else None  # scripted VX
+        self._vx_i = 0
+        self._motion_begun = False          # scripted VX only after first jog BG
         self.pending_jv = None
         self.log = []
         self.reg = _base_reg()
@@ -99,6 +103,8 @@ class JogSimLink:
         core = "".join(command.split()).rstrip(";")
         if "=" in core:
             key, raw = core.split("=", 1)
+            if self.fail_write and self.fail_write(key, raw):
+                raise IOError("injected write failure: %s" % command)
             value = float(raw)
             value = int(value) if value.is_integer() else value
             if key == "MO":
@@ -130,6 +136,8 @@ class JogSimLink:
             if self.pending_jv is None:
                 raise IOError("BG without JV")
             jv = self.pending_jv
+            if jv != 0:
+                self._motion_begun = True
             self.reg["OV[2]"] = 3
             if self.no_motion:
                 self.reg["VX"] = 0
@@ -145,6 +153,11 @@ class JogSimLink:
             return ""
         if core == "IQ" and self.iq_override is not None and self.reg["MO"]:
             return str(self.iq_override)
+        if (core == "VX" and self.vx_seq is not None and self.reg["MO"]
+                and self._motion_begun):
+            v = self.vx_seq[min(self._vx_i, len(self.vx_seq) - 1)]
+            self._vx_i += 1
+            return str(v)
         if (core == "VX" and self.vx_override is not None and self.reg["MO"]
                 and self.pending_jv not in (None, 0)):
             return str(self.vx_override)
@@ -324,3 +337,65 @@ def test_jog_commanded_but_no_rotation_reports_unknown():
     assert "breakaway" in result.reason.lower() or "no rotation" in result.reason.lower()
     assert int(drive.reg["MO"]) == 0
     assert result.evidence["settings_restored"] is True
+
+
+# --- fable-critic HIGH/gap coverage ---------------------------------------------
+
+def test_restore_failure_after_disable_reports_unknown_not_green():
+    # Torque-off verifies GREEN, but the CL[1] restore write fails -> the session
+    # settings are polluted; must be UNKNOWN (not a GREEN "restored"), never SV.
+    drive = JogSimLink(
+        fail_write=lambda k, raw: k == "CL[1]" and float(raw) == 5.0)
+    clock = Clock()
+    result = _run(drive, JogCmd(clock, [(100.0, False), (0.0, True)]), clock=clock)
+    assert result.status == sam.UNKNOWN
+    assert result.evidence["settings_restored"] is False
+    assert "restore" in result.reason.lower() or "config" in result.reason.lower()
+    assert int(drive.reg["MO"]) == 0
+    assert not any("SV" in w for w in drive.writes)
+
+
+def test_stuck_feedback_during_decel_is_caught_as_overspeed():
+    # After stop is commanded the axis stays pinned at ~300 rpm (a stuck-at-speed
+    # fault). The profiler-following overspeed reference decays and the guard must
+    # fire (the old grace logic masked this).
+    hi = int(round(300.0 * 65536 / 60.0))
+    drive = JogSimLink(vx_seq=[hi])          # feedback pinned high forever
+    clock = Clock()
+    cmd = JogCmd(clock, [(300.0, False)] * 20 + [(0.0, True)] * 15)
+    result = _run(drive, cmd, clock=clock, max_speed_rpm=300.0, accel_rpm_s=600.0)
+    assert result.status == sam.RED
+    assert "overspeed" in result.reason.lower()
+    assert int(drive.reg["MO"]) == 0
+
+
+def test_operator_stop_decelerates_before_disable_runaway_abort_is_immediate():
+    # Operator stop writes JV=0 (gentle decel) BEFORE ST; a runaway abort goes
+    # straight to ST with no gentle JV=0 first.
+    d1 = JogSimLink()
+    r1 = _run(d1, JogCmd(Clock(), [(100.0, False), (0.0, True)]))
+    assert r1.status == sam.GREEN
+    seq1 = [w for w in d1.writes if w == "ST" or w.startswith("JV=")]
+    assert "ST" in seq1
+    jv0_idx = max(i for i, w in enumerate(seq1) if w == "JV=0")
+    assert jv0_idx < seq1.index("ST"), "operator stop writes JV=0 before ST"
+
+    d2 = JogSimLink(vx_override=2_000_000)   # instant runaway -> immediate abort
+    r2 = _run(d2, JogCmd(Clock(), [(100.0, False)]))
+    assert r2.status == sam.RED
+    seq2 = [w for w in d2.writes if w == "ST" or w.startswith("JV=")]
+    st2 = seq2.index("ST")
+    assert not any(w == "JV=0" for w in seq2[:st2]), (
+        "runaway abort must not do a gentle JV=0 decel before ST")
+
+
+def test_nan_command_fails_safe_to_stop():
+    drive = JogSimLink()
+    clock = Clock()
+    result = _run(drive, JogCmd(clock, [(float("nan"), False), (0.0, True)]),
+                  clock=clock)
+    assert result.status in (sam.GREEN, sam.UNKNOWN)
+    assert int(drive.reg["MO"]) == 0
+    # a NaN target is never sent as a live JV
+    assert not any(w.startswith("JV=") and w not in ("JV=0",)
+                   for w in drive.writes)
