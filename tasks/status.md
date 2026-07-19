@@ -3,9 +3,9 @@
 <!-- field_progress: 40 -->
 <!-- progress_basis: Planning indicators, not safety scores. Scope means the implemented feature inventory is enumerated. Offline means code/tests/documents reviewed. Field means bounded live EAS and read-only drive comparisons only; it excludes motion, protection efficacy, STO/E-stop, write transactions, and Gold-family compatibility. -->
 
-# EAS LIVE PARITY AUDIT · IN PROGRESS
+# EAS LIVE PARITY AUDIT · COMPLETE · GAPS OPEN
 
-상태: **기존 완료 표시는 잠정 철회 · 처음부터 전 기능 재대조 중**
+상태: **처음부터 구현 전 범위 감사 완료 · 기능 동등성은 미완료**
 
 업데이트: **2026-07-19 KST**
 
@@ -62,10 +62,14 @@
 
 ## 다음 작업
 
-1. 전 기능 parity ledger를 코드/문서의 현재 구현과 1:1로 고정한다.
-2. 우리 앱의 모든 read-only refresh를 현재 연결에서 재실행해 EAS 관찰값과 대조한다.
-3. 과장된 “완료/동등” 문구와 혼동되는 Current/Position UI를 수정한다.
-4. 회귀시험 뒤 감사 결과를 private branch와 Draft PR에 반영한다.
+1. EAS 표시 위치와 raw `PX`의 `2^25` 변환 원인을 EnDat 2.2 설정·랩/페이지
+   규칙과 함께 독립적으로 규명한다.
+2. EAS Current 탭의 5개 Current Command preset을 별도 기능으로 설계하되,
+   write/energization은 안전 승인 전까지 잠근다.
+3. `DOC_ONLY`와 `NOT_EXECUTED_NEED_DATA` 항목을 EAS 기능 단위로 하나씩
+   구현·검증한다.
+4. 감사 원장과 수정 UI는 private branch commit `bfd4fec` 및 Draft PR #2에
+   게시 완료했다.
 
 ## 계속 잠긴 기능
 
