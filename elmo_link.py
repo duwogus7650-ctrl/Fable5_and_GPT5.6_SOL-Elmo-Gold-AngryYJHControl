@@ -262,7 +262,7 @@ _NON_MO_MOTION_PREFIXES = tuple(
 _OBSERVE_ONLY_SCALAR_QUERIES = frozenset((
     # Connection identity and the exact telemetry/safety/axis-summary reads
     # used by the observe-only worker.  Unknown two-letter tokens fail closed.
-    "AC", "DC", "FS", "ID", "IP", "IQ", "MC", "MF", "MO", "MS", "PE",
+    "AC", "DC", "FS", "ID", "IP", "IQ", "MC", "MF", "MO", "MS", "OP", "PE",
     "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TS", "UM", "VB",
     "VP", "VR", "VX",
 ))
@@ -341,6 +341,11 @@ def _is_observe_only_query(core: str) -> bool:
         # shown by the target Gold Twitter activity.  It does not infer the
         # optional 7..16/extended hardware topology from family-wide docs.
         return 1 <= int(match.group(2)) <= 6
+    if match and match.group(1) in {"GO", "OL"}:
+        # The Gold Twitter installation guide identifies exactly OUT1..OUT4.
+        # Querying those four configuration rows is allowed; assignments and
+        # family-wide/Port-C inference remain blocked.
+        return 1 <= int(match.group(2)) <= 4
     return bool(
         match
         and match.group(1) in _OBSERVE_ONLY_INDEXED_QUERY_BASES)

@@ -257,3 +257,24 @@ EAS의 게인계산 알고리즘은 재현 불가(EAS 내부)지만, **드라이
 - 다음 gate: EAS same-moment comparison, known inactive/active physical
   stimulus, polarity/filter/sticky timing. 그 전에는 safety interlock
   authority를 부여하지 않는다.
+
+### Single Axis Digital Outputs · Read-Only Snapshot v0.1 (2026-07-19)
+- installed Gold `OP`/`GO`/`OL` command pages와 local Gold Twitter
+  Installation Guide를 SHA-256 4개로 동결했다. 매뉴얼 page 62–63 시각
+  대조로 OUT1/2 5 V logic, OUT3/4 3.3 V logic을 고정했다.
+- explicit refresh는 `OL[1..4]`, `GO[1..4]`, final `OP`만
+  150 ms/query·2 s total·동일 session token으로 읽는다. assignment,
+  `OB/OC/XO`, output toggle/actuation, Enable/motion은 없다.
+- pure fail-closed decoder와 Motion 4×5 read-only table, transport/worker
+  typed-job allowlist, operation catalog를 구현했다. `OL` range 0..9와
+  Target Reached 10/11의 문서 충돌은 `OL_RANGE_CONFLICT`로 보존한다.
+- current-target `ONLINE · READ ONLY` observation: Output 1–4 모두
+  `INACTIVE · DRIVE LOGICAL ACTIVATION`, `General purpose`, `ACTIVE_HIGH`,
+  `Function via OL[N]`, acquisition `18.1 ms`.
+- 검증: pure `24 passed`, integration slice `113 passed in 46.12s`,
+  직접 영향 범위 `276 passed in 53.27s / exit 0`, 전체 repository
+  `1673 passed in 493.02s / exit 0`, source SHA-256 `4/4`;
+  세 skin contrast ≥4.5:1, horizontal scroll 0.
+- physical pin voltage/current, external load/brake, EAS same-moment parity,
+  output compare/STO indication 자극과 write/readback/rollback은
+  `NEED-DATA / NO-GO`; 이 readback을 safety authority로 사용하지 않는다.

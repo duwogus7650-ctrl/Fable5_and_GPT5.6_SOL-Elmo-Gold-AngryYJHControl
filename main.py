@@ -53,6 +53,7 @@ import single_axis_motion
 import single_axis_status
 import single_axis_authority_evidence
 import single_axis_digital_inputs
+import single_axis_digital_outputs
 import recorder_control
 import recorder_view
 import operation_catalog
@@ -738,7 +739,8 @@ class DriveWorker(QtCore.QThread):
     SUPERVISED_ACCESS_MODE = SUPERVISED_ACCESS_MODE
     _QUIESCENT_ADMISSION_REGISTERS = ("MO", "SO", "VX", "PS", "MF")
     _OBSERVE_ONLY_JOB_ALLOWLIST = frozenset((
-        "axis_read", "axis_digital_inputs_read", "persistence_audit",
+        "axis_read", "axis_digital_inputs_read", "axis_digital_outputs_read",
+        "persistence_audit",
         "motion_stop", "recorder_stop",
     ))
     _READ_ONLY_QUERY_ALLOWLIST = frozenset((
@@ -784,6 +786,7 @@ class DriveWorker(QtCore.QThread):
     soft_zero_result = QtCore.pyqtSignal(bool, str, object)  # ok, message, telemetry
     axis_summary = QtCore.pyqtSignal(dict)                 # read-only Quick Axis snapshot
     axis_digital_inputs = QtCore.pyqtSignal(object)        # bounded IP/IL/IF snapshot
+    axis_digital_outputs = QtCore.pyqtSignal(object)       # bounded OP/OL/GO snapshot
     motion_result = QtCore.pyqtSignal(str, object)         # action, MotionResult
     motion_authority = QtCore.pyqtSignal(bool, str)        # session signature authority
     recorder_signals_result = QtCore.pyqtSignal(object, str)  # names, error
@@ -966,6 +969,10 @@ class DriveWorker(QtCore.QThread):
     def refresh_axis_digital_inputs(self):
         """Queue one bounded IP/IL[1..6]/IF[1..6] read-only snapshot."""
         self._jobs.append(("axis_digital_inputs_read", None))
+
+    def refresh_axis_digital_outputs(self):
+        """Queue one bounded OP/OL[1..4]/GO[1..4] read-only snapshot."""
+        self._jobs.append(("axis_digital_outputs_read", None))
 
     def run_position_move(self, request):
         """Queue one finite PTP move; the kernel always auto-disables."""
@@ -1197,7 +1204,9 @@ class DriveWorker(QtCore.QThread):
                 "observe-only connection permits Axis/persistence reads and "
                 "software shutdown only")
         persistence_allowlist = frozenset((
-            "axis_read", "persistence_audit", "motion_stop", "recorder_stop"))
+            "axis_read", "axis_digital_inputs_read",
+            "axis_digital_outputs_read", "persistence_audit",
+            "motion_stop", "recorder_stop"))
         if self._persistence_recovery_unknown:
             if kind in persistence_allowlist:
                 return True, ""
@@ -1205,7 +1214,10 @@ class DriveWorker(QtCore.QThread):
                 "Persistence UNKNOWN durable lock — only read-only audit/Axis "
                 "read and software STOP/Recorder Stop are allowed")
         if self._energy_closeout_unknown:
-            if kind in ("axis_read", "motion_stop", "recorder_stop"):
+            if kind in (
+                    "axis_read", "axis_digital_inputs_read",
+                    "axis_digital_outputs_read", "motion_stop",
+                    "recorder_stop"):
                 return True, ""
             return False, (
                 "Energy closeout UNKNOWN — only read-only Axis Summary and "
@@ -1213,7 +1225,9 @@ class DriveWorker(QtCore.QThread):
         # Read-only discovery and the STOP escape path must not be trapped
         # behind coordinate, encoder, gain-trial, or persistence uncertainty.
         if kind in (
-                "axis_read", "motion_stop", "recorder_stop", "recorder_upload"):
+                "axis_read", "axis_digital_inputs_read",
+                "axis_digital_outputs_read", "motion_stop", "recorder_stop",
+                "recorder_upload"):
             return True, ""
         if self._recorder_active:
             return False, (
@@ -1607,6 +1621,10 @@ class DriveWorker(QtCore.QThread):
     def _emit_axis_digital_inputs(self, link):
         snapshot = single_axis_digital_inputs.read_digital_input_snapshot(link)
         self.axis_digital_inputs.emit(snapshot)
+
+    def _emit_axis_digital_outputs(self, link):
+        snapshot = single_axis_digital_outputs.read_digital_output_snapshot(link)
+        self.axis_digital_outputs.emit(snapshot)
 
     def _run_motion_stop(self, link, action="stop"):
         try:
@@ -2405,6 +2423,8 @@ class DriveWorker(QtCore.QThread):
                         self._emit_axis_summary(link)
                     elif kind == "axis_digital_inputs_read":
                         self._emit_axis_digital_inputs(link)
+                    elif kind == "axis_digital_outputs_read":
+                        self._emit_axis_digital_outputs(link)
                     elif kind == "motion_stop":
                         self._run_motion_stop(link)
                     elif kind == "motion_move":
@@ -4100,6 +4120,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         v.addWidget(self._build_single_axis_authority_frame())
         v.addWidget(self._build_axis_digital_inputs_frame())
+        v.addWidget(self._build_axis_digital_outputs_frame())
 
         self._motion_signature_green = False
         self._motion_signature_token = None
@@ -4472,6 +4493,198 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_axis_digital_inputs_detail.setText(
             "Identity-bound explicit snapshot · acquisition %.1f ms · "
             "IP read last · logical state only · no output/write/motion" %
+            (1000.0 * snapshot.sample_duration_s))
+
+    def _build_axis_digital_outputs_frame(self):
+        """Build the explicit, bounded OP/OL/GO read-only output panel."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.axis_digital_outputs_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel(
+            "DIGITAL OUTPUTS · READ-ONLY SNAPSHOT v0.1")
+        title.setProperty("role", "field")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.lbl_axis_digital_outputs_state = QtWidgets.QLabel("UNKNOWN")
+        self.lbl_axis_digital_outputs_state.setObjectName("pill")
+        self.lbl_axis_digital_outputs_state.setProperty("on", "false")
+        self.lbl_axis_digital_outputs_state.setProperty("status", "neutral")
+        head.addWidget(self.lbl_axis_digital_outputs_state)
+        layout.addLayout(head)
+
+        self.lbl_axis_digital_outputs_contract = QtWidgets.QLabel(
+            single_axis_digital_outputs.EVIDENCE_LABEL
+            + " · EXPLICIT REFRESH ONLY · OP READ ONLY · "
+              "NO OL/GO ASSIGNMENT · NO OUTPUT WRITE · NO OUTPUT ACTUATION · "
+              "NO ENABLE/MOTION")
+        self.lbl_axis_digital_outputs_contract.setProperty("role", "hint")
+        self.lbl_axis_digital_outputs_contract.setWordWrap(True)
+        self.lbl_axis_digital_outputs_contract.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_digital_outputs_contract)
+
+        self.axis_digital_outputs_table = QtWidgets.QTableWidget(4, 5)
+        self.axis_digital_outputs_table.setObjectName("expertEvidenceTable")
+        self.axis_digital_outputs_table.setStyleSheet(
+            "QTableWidget { font-family: 'Segoe UI'; font-size: 11px; }")
+        self.axis_digital_outputs_table.setHorizontalHeaderLabels((
+            "OUTPUT / LOGIC",
+            "DRIVE LOGICAL ACTIVATION",
+            "OL FUNCTION",
+            "POLARITY",
+            "GO ROUTE",
+        ))
+        self.axis_digital_outputs_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.axis_digital_outputs_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.axis_digital_outputs_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.axis_digital_outputs_table.setAlternatingRowColors(True)
+        self.axis_digital_outputs_table.verticalHeader().setVisible(False)
+        header = self.axis_digital_outputs_table.horizontalHeader()
+        header.setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        header.setSectionResizeMode(
+            3, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            4, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.axis_digital_outputs_table.setMinimumWidth(0)
+        self.axis_digital_outputs_table.setMinimumHeight(205)
+        for row in range(4):
+            number = row + 1
+            voltage = "5 V logic" if number <= 2 else "3.3 V logic"
+            self.axis_digital_outputs_table.setItem(
+                row, 0, QtWidgets.QTableWidgetItem(
+                    "Output %d · %s" % (number, voltage)))
+            for column in range(1, 5):
+                self.axis_digital_outputs_table.setItem(
+                    row, column, QtWidgets.QTableWidgetItem("—"))
+        layout.addWidget(self.axis_digital_outputs_table)
+
+        action = QtWidgets.QHBoxLayout()
+        self.btn_axis_digital_outputs_refresh = QtWidgets.QPushButton(
+            "Refresh Digital Outputs · READ ONLY")
+        self.btn_axis_digital_outputs_refresh.setEnabled(False)
+        self.btn_axis_digital_outputs_refresh.clicked.connect(
+            self._refresh_axis_digital_outputs_clicked)
+        self._decorate_operation_control(
+            self.btn_axis_digital_outputs_refresh,
+            "axis.digital_outputs.refresh")
+        action.addWidget(self.btn_axis_digital_outputs_refresh)
+        action.addStretch(1)
+        layout.addLayout(action)
+
+        self.lbl_axis_digital_outputs_detail = QtWidgets.QLabel(
+            "OFFLINE · no current identity-bound output snapshot")
+        self.lbl_axis_digital_outputs_detail.setProperty("role", "hint")
+        self.lbl_axis_digital_outputs_detail.setWordWrap(True)
+        self.lbl_axis_digital_outputs_detail.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_digital_outputs_detail)
+        self._reset_axis_digital_outputs(
+            "OFFLINE · no current identity-bound output snapshot")
+        return frame
+
+    def _reset_axis_digital_outputs(self, reason):
+        """Blank all output values without changing any drive authority."""
+        self._axis_digital_outputs_snapshot = None
+        if not hasattr(self, "lbl_axis_digital_outputs_state"):
+            return
+        self.lbl_axis_digital_outputs_state.setText("UNKNOWN")
+        self.lbl_axis_digital_outputs_state.setProperty("on", "false")
+        self.lbl_axis_digital_outputs_state.setProperty("status", "neutral")
+        self._restyle(self.lbl_axis_digital_outputs_state)
+        for row in range(4):
+            for column in range(1, 5):
+                self.axis_digital_outputs_table.item(row, column).setText("—")
+        self.lbl_axis_digital_outputs_detail.setText(
+            str(reason or "Digital-output snapshot unavailable"))
+
+    def _refresh_axis_digital_outputs_clicked(self):
+        """Request the bounded reader; never synthesize or retain old values."""
+        current = bool(
+            self.worker
+            and self.worker.isRunning()
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and not getattr(self, "_connection_shutdown_pending", False))
+        if not current:
+            self._reset_axis_digital_outputs(
+                "Current identity/telemetry authority is unavailable")
+            return
+        self._reset_axis_digital_outputs(
+            "Reading OL[1..4] + GO[1..4] + OP in the worker")
+        self.lbl_axis_digital_outputs_state.setText("READING")
+        self.worker.refresh_axis_digital_outputs()
+
+    def _on_axis_digital_outputs(self, snapshot):
+        """Render only a current-worker, identity-bound read-only snapshot."""
+        source = self.sender()
+        if source is not None and source is not self.worker:
+            return
+        canonical = None
+        if isinstance(
+                snapshot,
+                single_axis_digital_outputs.DigitalOutputSnapshot):
+            canonical = (
+                single_axis_digital_outputs.decode_digital_output_snapshot(
+                    snapshot.raw,
+                    sample_duration_s=snapshot.sample_duration_s,
+                ))
+        current_source = bool(
+            not getattr(self, "_connection_shutdown_pending", False)
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and self.worker
+            and self.worker.isRunning())
+        if (not current_source
+                or not isinstance(
+                    snapshot,
+                    single_axis_digital_outputs.DigitalOutputSnapshot)
+                or snapshot.state != single_axis_digital_outputs.CURRENT
+                or canonical is None
+                or canonical.state != single_axis_digital_outputs.CURRENT
+                or snapshot != canonical):
+            reason = (
+                getattr(snapshot, "reason", "")
+                or "Noncanonical or non-current digital-output snapshot")
+            self._reset_axis_digital_outputs(reason)
+            return
+
+        snapshot = canonical
+        self._axis_digital_outputs_snapshot = snapshot
+        for row, output_state in enumerate(snapshot.outputs):
+            values = (
+                output_state.state_label,
+                output_state.function_label,
+                output_state.polarity,
+                output_state.route_label,
+            )
+            for column, value in enumerate(values, start=1):
+                cell = self.axis_digital_outputs_table.item(row, column)
+                cell.setText(value)
+                cell.setToolTip(value)
+        self.lbl_axis_digital_outputs_state.setText(
+            "CURRENT · DRIVE READ ONLY")
+        self.lbl_axis_digital_outputs_state.setProperty("on", "false")
+        self.lbl_axis_digital_outputs_state.setProperty("status", "neutral")
+        self._restyle(self.lbl_axis_digital_outputs_state)
+        self.lbl_axis_digital_outputs_detail.setText(
+            "Identity-bound explicit snapshot · acquisition %.1f ms · "
+            "OP read last · physical level UNVERIFIED · "
+            "no output write/actuation/motion" %
             (1000.0 * snapshot.sample_duration_s))
 
     def _motion_stop_clicked(self):
@@ -10803,6 +11016,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.soft_zero_result.connect(self._on_soft_zero_result)
         self.worker.axis_summary.connect(self._on_axis_summary)
         self.worker.axis_digital_inputs.connect(self._on_axis_digital_inputs)
+        self.worker.axis_digital_outputs.connect(self._on_axis_digital_outputs)
         self.worker.motion_result.connect(self._on_motion_result)
         self.worker.motion_authority.connect(self._on_motion_authority)
         self.worker.recorder_signals_result.connect(self._on_recorder_signals_result)
@@ -11080,6 +11294,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self, "_reset_axis_digital_inputs", None)
         if callable(reset_inputs):
             reset_inputs(
+                str(detail or "Telemetry authority unavailable"))
+        reset_outputs = getattr(
+            self, "_reset_axis_digital_outputs", None)
+        if callable(reset_outputs):
+            reset_outputs(
                 str(detail or "Telemetry authority unavailable"))
         if hasattr(self, "status_monitor_model"):
             self._status_monitor_revoke(
@@ -11643,6 +11862,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "No current admitted connection snapshot")
             self._reset_axis_digital_inputs(
                 "No current admitted connection snapshot")
+            self._reset_axis_digital_outputs(
+                "No current admitted connection snapshot")
             for name in (
                     "chk_motion_operator", "chk_motion_estop",
                     "chk_motion_limits"):
@@ -11715,6 +11936,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_axis_refresh.setEnabled(on)
         if hasattr(self, "btn_axis_digital_inputs_refresh"):
             self.btn_axis_digital_inputs_refresh.setEnabled(
+                telemetry_trusted)
+        if hasattr(self, "btn_axis_digital_outputs_refresh"):
+            self.btn_axis_digital_outputs_refresh.setEnabled(
                 telemetry_trusted)
         if hasattr(self, "btn_motion_stop"):
             self.btn_motion_stop.setEnabled(on)

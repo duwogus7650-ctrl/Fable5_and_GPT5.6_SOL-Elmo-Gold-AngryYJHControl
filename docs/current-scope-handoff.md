@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert v2 + Digital Input Read v0.1 작업 인계서
+# Quick Tuning + Single Axis + Expert v2 + Digital I/O Read v0.1 작업 인계서
 
-상태: **DIGITAL INPUT READ v0.1 · CURRENT TARGET READBACK OBSERVED · PHYSICAL INPUT/EAS PARITY/OUTPUT/MOTION NOT VALIDATED**<br>
-기준 시각: **2026-07-19 05:46 KST**<br>
+상태: **DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
+기준 시각: **2026-07-19 11:30 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -33,6 +33,8 @@
   `0974ba061b2f616d9515f5eaa26b0f815055894c`
 - Single Axis Digital Inputs · Read-Only Snapshot v0.1:
   `8c2a955a0d11c63c691b77f8eeeb21aaa5a2d269`
+- Single Axis Digital Outputs · Read-Only Snapshot v0.1:
+  현재 working tree 구현·field readback 완료, 게시 commit은 아래 closeout에서 생성
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -89,6 +91,17 @@
   ACTIVE_HIGH · non-sticky / 0.000 ms`, acquisition **25.9 ms**였다.
   `IB`, assignment, output, mapping/filter mutation, Enable 또는 motion은
   실행하지 않았다.
+- Single Axis Digital Outputs v0.1은 별도 Motion frame과 pure decoder/reader,
+  observer transport/worker allowlist, operation catalog/test/docs로 구성됐다.
+  `OL[1..4]`, `GO[1..4]`, final `OP`만 같은 connection session에서 읽고
+  150 ms/query·2 s/snapshot으로 제한한다. Gold Twitter 매뉴얼 §4.6/§10.4.2로
+  OUT1/2 5 V logic, OUT3/4 3.3 V logic을 고정했다.
+- 새 Python 3.14 제어창의 현재 target `ONLINE · READ ONLY` snapshot은
+  Output 1–4 모두 `INACTIVE · DRIVE LOGICAL ACTIVATION / General purpose /
+  ACTIVE_HIGH / Function via OL[N]`, acquisition **18.1 ms**였다.
+  `OP/OL/GO` assignment, `OB/OC/XO`, 출력 토글/actuation, Enable 또는
+  motion은 실행하지 않았다. physical pin/load/brake/STO/EAS parity는
+  `NEED-DATA / NO-GO`다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -279,8 +292,9 @@
   - Brake: `OL[N]`, `BP[1]`, `BP[2]`, `VH[1]`
   - Settling: `TR[1]`, `TR[2]`, `TR[3]`, `TR[4]`
   - I/O: `IL[N]`, `IF[N]`, `IP + IB[N]`, `OL[N]`, `GO[N] + OP`
-- `IP + IB[N]`와 `GO[N] + OP`는 live status의 documentation semantics만
-  표시하고 **`unavailable · not sampled`**를 유지
+- 이 Expert static map의 `IP + IB[N]`와 `GO[N] + OP` 행 자체는
+  **`unavailable · not sampled`**를 유지한다. 실제 bounded readback은
+  Motion의 별도 Digital Input/Output read-only snapshot으로 분리했다.
 - authority는 `DOCUMENTED_APPLICATION_SETTINGS_MAP_ONLY`, model status는
   `PARTIAL_NEED_DATA`; local immutable catalog/UI inspect만 GREEN
 - 24개 frozen source identity, 9개 document conflict, 16개 persistent
@@ -553,6 +567,11 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | Digital Input 포함 전체 repository stdout | **1639 passed in 827.24s · 100% · stderr 0** | numeric exit watcher는 빈 값이어서 전체 숫자 exit만 `UNVERIFIED`; 통과 개수/summary/stderr와 focused exit 0은 직접 관찰 |
 | Digital Input current-target runtime | **6/6 CURRENT DRIVE READ ONLY · 25.9 ms** | 모두 ACTIVE logical/General purpose/ACTIVE_HIGH/non-sticky/0 ms; physical I/O/EAS parity/safety 아님 |
 | Digital Input 설치 source | **4 / 4 SHA-256 일치** | Single Axis help + `IP`/`IL`/`IF` command reference |
+| Digital Output pure/integration | **24 / 113 passed** | fail-closed decoder/reader, transport/worker allowlist, operation catalog, UI authority/geometry |
+| Digital I/O 최신 직접 영향 범위 | **276 passed in 53.27s · exit 0** | input/output decoder, transport/worker, catalog, UI, safety |
+| 최신 전체 repository | **1673 passed in 493.02s · exit 0** | current working tree 전체 회귀 |
+| Digital Output current-target runtime | **4/4 CURRENT DRIVE READ ONLY · 18.1 ms** | 모두 INACTIVE logical activation/General purpose/ACTIVE_HIGH/Function via OL[N]; physical pin/load/STO/EAS parity 아님 |
+| Digital Output 설치 source | **4 / 4 SHA-256 일치** | installed `OP`/`GO`/`OL` command pages + local Gold Twitter Installation Guide |
 
 유용한 실패 이력:
 
@@ -654,8 +673,9 @@ motor action과 hardware-safety 판정은 계속 **NEED-DATA**다.
 
 ## 8. 현장 상태와 `NEED-DATA`
 
-사용자가 현장에 복귀했고 Read Only admission과 bounded Digital Input snapshot 1회까지
-수행했다. 상태판의 field 6%는 이 host-observed read evidence만 가리키는 계획 지표다.
+사용자가 현장에 복귀했고 Read Only admission과 bounded Digital Input/Output
+snapshot을 수행했다. 상태판의 field 7%는 이 host-observed read evidence만
+가리키는 계획 지표다.
 현재 working tree로
 motor action은 아직 실행하지 않았으므로 **motor-action field validation은 0%**다.
 
@@ -682,14 +702,18 @@ motor action은 아직 실행하지 않았으므로 **motor-action field validat
 5. Digital Input은 EAS same-moment comparison과 known inactive/active
    physical stimulus 전까지 표시/진단용 readback으로만 사용하고 safety
    interlock authority를 부여하지 않음
-6. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
-7. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
-8. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
+6. Digital Output은 EAS same-moment comparison과 별도 계측/안전 부하를
+   포함한 출력 자극 계약 전까지 논리/config readback으로만 사용하고
+   physical pin·brake·STO·safety authority를 부여하지 않음
+7. 실기 조건과 exact 제한값을 고정한 개별 동작만 별도 확인 후 실행
+8. P1 → commutation signature → P2 → installed-gain Verify 순서로 raw transcript 보존
+9. Production gain Apply/Save와 finite PTP live는 별도 gate로 유지
 
 ## 10. 완료 의미
 
-현재 `READ ONLY FIELD ADMISSION + DIGITAL INPUT SNAPSHOT OBSERVED`는 host-observed
-연결/정지 telemetry와 한 번의 bounded logical-input readback을 보존했다는 뜻이다.
+현재 `READ ONLY FIELD ADMISSION + DIGITAL I/O SNAPSHOTS OBSERVED`는
+host-observed 연결/정지 telemetry와 bounded logical-input 및
+logical-output/config readback을 보존했다는 뜻이다.
 최신 리비전의 supervised hardware transcript, closeout, recovery,
 cold audit와 motion envelope가 없으면 `hardware safe`, `field complete`, `EAS parity`,
 `Gold-compatible`을 선언하지 않는다.

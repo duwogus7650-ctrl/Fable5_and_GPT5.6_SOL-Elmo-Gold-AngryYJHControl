@@ -7,6 +7,7 @@ import time
 from elmo_link import ElmoLink, TelemetrySnapshotError
 import persistence_audit
 import single_axis_digital_inputs
+import single_axis_digital_outputs
 import single_axis_motion
 
 
@@ -135,12 +136,14 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
     link.read_platform_clock()
     summary = single_axis_motion.read_axis_summary(link)
     inputs = single_axis_digital_inputs.read_digital_input_snapshot(link)
+    outputs = single_axis_digital_outputs.read_digital_output_snapshot(link)
     for registers in persistence_audit.PHASE_REGISTERS.values():
         for register in registers:
             link.command(register)
 
     assert summary["errors"] == {}
     assert inputs.state == single_axis_digital_inputs.CURRENT
+    assert outputs.state == single_axis_digital_outputs.CURRENT
     assert spy.commands
 
 
@@ -170,6 +173,35 @@ def test_observe_only_transport_admits_only_bounded_digital_input_queries(
         "IP",
         *(item for index in range(1, 7)
           for item in ("IL[%d]" % index, "IF[%d]" % index)),
+    ]
+
+
+def test_observe_only_transport_admits_only_bounded_digital_output_queries(
+        monkeypatch):
+    link = ElmoLink("COM_TEST")
+    spy = _CommandSpy({
+        "OP": 0,
+        **{"OL[%d]" % index: 1 for index in range(1, 5)},
+        **{"GO[%d]" % index: 0 for index in range(1, 5)},
+    })
+    link._comm = spy
+    link.enter_observe_only_session()
+
+    assert link.command("OP") == "0"
+    for index in range(1, 5):
+        assert link.command("OL[%d]" % index) == "1"
+        assert link.command("GO[%d]" % index) == "0"
+
+    for command in (
+            "OP=1", "OL[1]=1", "GO[1]=0", "OB[1]", "OC[1]", "XO[1]",
+            "OL[0]", "OL[5]", "GO[0]", "GO[5]"):
+        with pytest.raises(PermissionError, match="observe-only"):
+            link.command(command)
+
+    assert spy.commands == [
+        "OP",
+        *(item for index in range(1, 5)
+          for item in ("OL[%d]" % index, "GO[%d]" % index)),
     ]
 
 

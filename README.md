@@ -43,7 +43,7 @@ python -m pytest tests/ -q        # 전체 유닛/시뮬 회귀시험
 
 | 화면 | 내용 | 상태 |
 |---|---|---|
-| **Motion** | 실시간 텔레메트리(PX/VX/PE/IQ/MO) + generation-bound Session Zero + 제한형 finite PTP + Single Axis Controls 문서 권한 map + 6채널 Digital Input 명시적 읽기 | 텔레메트리/Soft Zero LIVE 이력 · finite PTP OFFLINE 및 live 잠금 · 권한 map은 inspect-only · 입력 읽기는 `IP/IL[1..6]/IF[1..6]` CURRENT DRIVE READ 1회 확인, 출력/설정 변경 없음 |
+| **Motion** | 실시간 텔레메트리(PX/VX/PE/IQ/MO) + generation-bound Session Zero + 제한형 finite PTP + Single Axis Controls 문서 권한 map + Digital Input 6채널/Digital Output 4채널 명시적 읽기 | 텔레메트리/Soft Zero LIVE 이력 · finite PTP OFFLINE 및 live 잠금 · 권한 map은 inspect-only · 입력 `IP/IL[1..6]/IF[1..6]`과 Gold Twitter 출력 `OP/OL[1..4]/GO[1..4]` CURRENT DRIVE READ를 확인; output assignment/actuation·physical-pin 판정 없음 |
 | **Motor Settings** | Peak/Cont 전류(√2 rms), MaxSpeed, 극쌍, Motor Type + durable 저장 transaction | 🟡 OFFLINE fault-injection; 최신 저장 흐름 실기 대기 |
 | **Feedback** | 23종 센서 동적 읽기 패널 + 별도 **Encoder Maintenance**; registry 전에는 명시적 Preview-only | 읽기/정비 LIVE 이력 · 설정 쓰기 fail-closed |
 | **Tuning** | Phase 1/2 식별·설계 후보, installed-gain Verify, connection-bound 커뮤테이션 서명 + no-I/O Expert P1→P2 MODEL/Evidence/Page Status/User Units formula/Limits·Protections/Application Settings/Hidden Verification–Bode/Verification–Time/Summary map | Expert v2와 로컬 inspector OFFLINE 검증 · 아홉 번째 Time과 열 번째 Summary static map 포함 · actual Bode/Time Current Verify는 ENERGY, V/P Verify는 MOTION `NEED-DATA`; actual Summary save/export/DB mutation도 `NEED-DATA` · 과거 hardware LIVE 이력과 분리 · production gain Apply/Save 잠금 |
@@ -389,6 +389,10 @@ EAS의 게인 알고리즘은 재현 불가지만, **드라이브 명령으로 R
 - `single_axis_digital_inputs.py` — identity-bound explicit refresh에서
   `IL[1..6]`, `IF[1..6]`, 최종 `IP`만 읽어 6개 Digital Input의 drive logical
   state/function/polarity/sticky/filter를 fail-closed snapshot으로 만드는 decoder/reader.
+- `single_axis_digital_outputs.py` — Gold Twitter identity-bound explicit
+  refresh에서 `OL[1..4]`, `GO[1..4]`, 최종 `OP`만 읽어 네 출력의 drive
+  logical activation/function/polarity/route를 표시하는 fail-closed
+  decoder/reader. 출력 assignment·actuation과 물리 핀/STO 판정은 없다.
 - `feedback_spec.py` — 23센서 EAS 패널 스펙.
 - `recorder_view.py` — 차트·요약·CSV가 공유하는 불변 capture evidence, 2-lane layout v3,
   full-capture FFT, full+A:B Signal Statistics/endpoint values와 축 표기 모델, 보조 SCREENING 감축 모델.
@@ -410,6 +414,9 @@ EAS의 게인 알고리즘은 재현 불가지만, **드라이브 명령으로 R
 - `docs/single-axis-digital-input-read-v0.1.md` — 6개 Digital Input의
   `IP/IL/IF` 읽기 순서, source hash, freshness/identity gate와
   output·sticky-clear·mapping/filter-write 제외 계약.
+- `docs/single-axis-digital-output-read-v0.1.md` — Gold Twitter Output 1..4의
+  `OL/GO/OP` 읽기 순서, source hash, 문서 충돌, 실제 read-only 관찰과
+  output assignment·actuation·physical-pin/STO 제외 계약.
 - `docs/expert-page-status-v0.1.md` — Expert local page 상태, 권한, EAS 비동등성 계약.
 - `docs/expert-user-units-v0.1.md` — DS-402 위치 식, MAN-G-CR guard mismatch,
   zero-I/O/zero-write 비범위.

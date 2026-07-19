@@ -446,6 +446,26 @@ def test_single_axis_digital_input_refresh_is_bounded_read_only():
     assert "no output" in spec.summary.lower()
 
 
+def test_single_axis_digital_output_refresh_is_bounded_read_only():
+    spec = catalog.operation_spec("axis.digital_outputs.refresh")
+
+    assert spec.risk is catalog.OperationRisk.DRIVE_READ
+    assert spec.status is catalog.OperationStatus.PARTIAL
+    assert spec.menu_enabled is False
+    assert spec.gates == frozenset((
+        "verified_identity",
+        "fresh_telemetry",
+        "bounded_read_allowlist",
+        "explicit_refresh",
+        "outputs_1_to_4_only",
+    ))
+    assert "OP" in spec.summary
+    assert "OL[1..4]" in spec.summary
+    assert "GO[1..4]" in spec.summary
+    assert "no assignment" in spec.summary.lower()
+    assert "no output actuation" in spec.summary.lower()
+
+
 def test_top_menu_can_only_execute_local_actions_or_show_disabled_need_data():
     for operation_ids in catalog.TOP_MENU_OPERATIONS.values():
         for operation_id in operation_ids:

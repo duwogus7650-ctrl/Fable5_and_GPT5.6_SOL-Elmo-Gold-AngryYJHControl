@@ -266,6 +266,19 @@ _SPECS = (
               "inputs_1_to_6_only",
           )),
           status=OperationStatus.PARTIAL),
+    _spec("axis.digital_outputs.refresh",
+          "Single Axis Digital Outputs · READ ONLY v0.1",
+          OperationRisk.DRIVE_READ,
+          "Explicitly read only OP, OL[1..4], and GO[1..4] for the current "
+          "identity-bound session; Gold Twitter outputs 1..4 only, OP is "
+          "read last, no assignment, no output actuation, no physical-pin or "
+          "STO-test claim, no enable, and no motion.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "bounded_read_allowlist",
+              "explicit_refresh",
+              "outputs_1_to_4_only",
+          )),
+          status=OperationStatus.PARTIAL),
     _spec("eas.single_axis.authority.evidence.inspect",
           "Single Axis Controls - Documented Authority Map",
           OperationRisk.LOCAL_UI,

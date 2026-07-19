@@ -13,6 +13,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 import main as app_main
 import single_axis_digital_inputs
+import single_axis_digital_outputs
 import theme as amber_theme
 import theme_angrybirds
 import theme_qdd
@@ -21,6 +22,7 @@ import theme_qdd
 class _AxisWorker(QtCore.QObject):
     axis_summary = QtCore.pyqtSignal(dict)
     axis_digital_inputs = QtCore.pyqtSignal(object)
+    axis_digital_outputs = QtCore.pyqtSignal(object)
 
     def __init__(self):
         super().__init__()
@@ -32,6 +34,9 @@ class _AxisWorker(QtCore.QObject):
 
     def refresh_axis_digital_inputs(self):
         self.calls.append(("refresh_axis_digital_inputs", (), {}))
+
+    def refresh_axis_digital_outputs(self):
+        self.calls.append(("refresh_axis_digital_outputs", (), {}))
 
     def __getattr__(self, name):
         def forbidden(*args, **kwargs):
@@ -79,6 +84,7 @@ def ui(qapp, monkeypatch):
     win._connection_shutdown_pending = False
     worker.axis_summary.connect(win._on_axis_summary)
     worker.axis_digital_inputs.connect(win._on_axis_digital_inputs)
+    worker.axis_digital_outputs.connect(win._on_axis_digital_outputs)
     yield SimpleNamespace(win=win, worker=worker)
     win.worker = None
     win.close()
@@ -103,6 +109,23 @@ def _digital_input_snapshot(**updates):
     raw.update(updates)
     return single_axis_digital_inputs.decode_digital_input_snapshot(
         raw, sample_duration_s=0.125)
+
+
+def _digital_output_snapshot(**updates):
+    raw = {
+        "OP": (1 << 0) | (1 << 3),
+        "OL[1]": 1,
+        "OL[2]": 4,
+        "OL[3]": 7,
+        "OL[4]": 11,
+        "GO[1]": 0,
+        "GO[2]": 1,
+        "GO[3]": 2,
+        "GO[4]": 7,
+    }
+    raw.update(updates)
+    return single_axis_digital_outputs.decode_digital_output_snapshot(
+        raw, sample_duration_s=0.075)
 
 
 def test_digital_input_panel_starts_unknown_and_exposes_no_write_surface(ui):
@@ -250,6 +273,160 @@ def test_worker_emits_only_the_typed_digital_input_snapshot(monkeypatch):
     link = object()
 
     worker._emit_axis_digital_inputs(link)
+
+    assert calls == [link]
+    assert observed == [expected]
+
+
+def test_digital_output_panel_starts_unknown_and_exposes_no_write_surface(ui):
+    assert ui.win.lbl_axis_digital_outputs_state.text() == "UNKNOWN"
+    assert ui.win.axis_digital_outputs_table.rowCount() == 4
+    assert all(
+        ui.win.axis_digital_outputs_table.item(row, column).text() == "—"
+        for row in range(4)
+        for column in range(1, 5))
+    contract = ui.win.lbl_axis_digital_outputs_contract.text().upper()
+    for phrase in (
+            "OP + OL[1..4] + GO[1..4]",
+            "OUTPUTS 1..4 ONLY",
+            "NOT PHYSICAL PIN",
+            "NOT STO TEST EVIDENCE",
+            "NO OUTPUT WRITE",
+            "NO OUTPUT ACTUATION"):
+        assert phrase in contract
+    assert ui.win.axis_digital_outputs_frame.findChildren(
+        QtWidgets.QCheckBox) == []
+    assert ui.win.axis_digital_outputs_frame.findChildren(
+        QtWidgets.QLineEdit) == []
+    assert tuple(
+        button.text()
+        for button in ui.win.axis_digital_outputs_frame.findChildren(
+            QtWidgets.QPushButton)
+    ) == ("Refresh Digital Outputs · READ ONLY",)
+    assert ui.win.btn_axis_digital_outputs_refresh.property(
+        "operationId") == "axis.digital_outputs.refresh"
+
+
+def test_current_digital_output_snapshot_renders_without_changing_authority(
+        ui, qapp):
+    before = (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    )
+
+    ui.worker.axis_digital_outputs.emit(_digital_output_snapshot())
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_digital_outputs_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+    assert ui.win.axis_digital_outputs_table.item(0, 0).text() == (
+        "Output 1 · 5 V logic")
+    assert ui.win.axis_digital_outputs_table.item(2, 0).text() == (
+        "Output 3 · 3.3 V logic")
+    assert ui.win.axis_digital_outputs_table.item(0, 1).text() == (
+        "ACTIVE · DRIVE LOGICAL ACTIVATION")
+    assert ui.win.axis_digital_outputs_table.item(1, 1).text() == (
+        "INACTIVE · DRIVE LOGICAL ACTIVATION")
+    assert ui.win.axis_digital_outputs_table.item(0, 2).text() == (
+        "General purpose")
+    assert ui.win.axis_digital_outputs_table.item(1, 3).text() == "ACTIVE_LOW"
+    assert ui.win.axis_digital_outputs_table.item(3, 4).text() == (
+        "STO status indication · NOT STO TEST")
+    assert "75.0 ms" in ui.win.lbl_axis_digital_outputs_detail.text()
+    assert "PHYSICAL LEVEL UNVERIFIED" in (
+        ui.win.lbl_axis_digital_outputs_detail.text().upper())
+    assert (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    ) == before
+
+
+def test_digital_output_refresh_queues_one_typed_read_job(ui, qapp):
+    ui.win.btn_axis_digital_outputs_refresh.setEnabled(True)
+    ui.win.btn_axis_digital_outputs_refresh.click()
+    qapp.processEvents()
+
+    assert ui.worker.calls == [
+        ("refresh_axis_digital_outputs", (), {}),
+    ]
+    assert ui.win.lbl_axis_digital_outputs_state.text() == "READING"
+    assert all(
+        ui.win.axis_digital_outputs_table.item(row, column).text() == "—"
+        for row in range(4)
+        for column in range(1, 5))
+
+
+def test_invalid_late_or_disconnected_digital_output_snapshot_stays_unknown(
+        ui, qapp):
+    ui.worker.axis_digital_outputs.emit(_digital_output_snapshot())
+    qapp.processEvents()
+    assert ui.win.lbl_axis_digital_outputs_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+
+    ui.win._telemetry_authoritative = False
+    ui.worker.axis_digital_outputs.emit(_digital_output_snapshot())
+    qapp.processEvents()
+    assert ui.win.lbl_axis_digital_outputs_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = True
+    ui.worker.axis_digital_outputs.emit(_digital_output_snapshot())
+    qapp.processEvents()
+    ui.win._set_connected_ui(False)
+    assert ui.win.lbl_axis_digital_outputs_state.text() == "UNKNOWN"
+    assert all(
+        ui.win.axis_digital_outputs_table.item(row, column).text() == "—"
+        for row in range(4)
+        for column in range(1, 5))
+
+
+def test_structurally_forged_current_digital_output_snapshot_fails_closed(
+        ui, qapp):
+    valid = _digital_output_snapshot()
+    forged = replace(valid, outputs=valid.outputs[:-1])
+
+    ui.worker.axis_digital_outputs.emit(forged)
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_digital_outputs_state.text() == "UNKNOWN"
+    assert all(
+        ui.win.axis_digital_outputs_table.item(row, column).text() == "—"
+        for row in range(4)
+        for column in range(1, 5))
+
+
+def test_worker_queues_exact_digital_output_read_job():
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+
+    worker.refresh_axis_digital_outputs()
+
+    assert worker._jobs == app_main.collections.deque((
+        ("axis_digital_outputs_read", None),
+    ))
+
+
+def test_worker_emits_only_the_typed_digital_output_snapshot(monkeypatch):
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+    expected = _digital_output_snapshot()
+    calls = []
+    observed = []
+    monkeypatch.setattr(
+        app_main.single_axis_digital_outputs,
+        "read_digital_output_snapshot",
+        lambda link: calls.append(link) or expected)
+    worker.axis_digital_outputs.connect(observed.append)
+    link = object()
+
+    worker._emit_axis_digital_outputs(link)
 
     assert calls == [link]
     assert observed == [expected]
@@ -429,6 +606,15 @@ def test_single_axis_authority_map_fits_1366x820_in_all_skins(ui, qapp):
             ) >= 4.5
             assert (
                 ui.win.axis_digital_inputs_table.horizontalScrollBar().maximum()
+                == 0)
+            outputs_palette = (
+                ui.win.axis_digital_outputs_table.viewport().palette())
+            assert contrast_ratio(
+                outputs_palette.color(QtGui.QPalette.ColorRole.Text),
+                outputs_palette.color(QtGui.QPalette.ColorRole.Base),
+            ) >= 4.5
+            assert (
+                ui.win.axis_digital_outputs_table.horizontalScrollBar().maximum()
                 == 0)
     finally:
         qapp.setPalette(previous_palette)
