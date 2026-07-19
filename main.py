@@ -82,6 +82,13 @@ _RECORDER_OFFLINE_TEST_CAPABILITY = object()
 # E-stop/STO evidence) is entered and verified.  Do not turn this into an
 # environment-variable bypass: activation must be a reviewed code/config change.
 FINITE_PTP_LIVE_ENABLED = False
+# Endless JV jog IS live (ported from the field-verified original), but is gated
+# at runtime by the same authority as finite motion: supervised access, a GREEN
+# commutation signature for this connection session, Session Zero, and the three
+# per-run field-safety confirmations.  The kernel adds a command-freshness
+# deadman, a max-duration timebox, ramp-aware overspeed + absolute ceiling, and a
+# two-tier stop chain (see single_axis_motion.run_jog).
+JOG_LIVE_ENABLED = True
 # Hardware RAM gain trials stay disabled until their write-ahead record can
 # coexist safely with the P2_LIMITS transaction used during verification.
 # Synthetic kernels opt in inside their domain modules; the desktop UI never
@@ -770,6 +777,7 @@ class DriveWorker(QtCore.QThread):
         "autotune", "velpos", "verify_vp", "p1_trial_begin",
         "p1_trial_restore", "p1_trial_commit", "vp_trial_begin",
         "vp_trial_restore", "vp_trial_commit", "soft_zero", "encoder_maint",
+        "jog",
     ))
 
     connected = QtCore.pyqtSignal(dict)      # {fw, pal, boot, target_type}
@@ -804,6 +812,8 @@ class DriveWorker(QtCore.QThread):
     axis_digital_outputs = QtCore.pyqtSignal(object)       # bounded OP/OL/GO snapshot
     motion_result = QtCore.pyqtSignal(str, object)         # action, MotionResult
     motion_authority = QtCore.pyqtSignal(bool, str)        # session signature authority
+    jog_result = QtCore.pyqtSignal(object)                 # MotionResult (jog exit)
+    jog_sample = QtCore.pyqtSignal(dict)                   # live jog telemetry sample
     recorder_signals_result = QtCore.pyqtSignal(object, str)  # names, error
     recorder_status_changed = QtCore.pyqtSignal(str, str)     # state, detail
     recorder_manifest = QtCore.pyqtSignal(object)             # immutable capture evidence
@@ -828,6 +838,11 @@ class DriveWorker(QtCore.QThread):
         self._motion_generation = 0           # STOP cannot be reordered behind a queued move
         self._motion_cancelled_through = 0
         self._motion_stop_requested = False
+        # Thread-shared endless-jog target streamed by the GUI; the kernel demotes
+        # a command older than the deadman window to stop.  Starts stopped.
+        self._jog_cmd = {"rpm": 0.0, "stop": True, "ts": 0.0}
+        self._jog_generation = 0
+        self._jog_cancelled_through = 0
         self._urgent_jobs = collections.deque()  # STOP escape path, ahead of normal jobs
         self._motion_config_unknown = False
         self._energy_closeout_unknown = False
@@ -1019,9 +1034,35 @@ class DriveWorker(QtCore.QThread):
         self._motion_cancel = True
         self._motion_stop_requested = True
         self._motion_cancelled_through = self._motion_generation
+        self._jog_cancelled_through = self._jog_generation
+        self._jog_cmd = {"rpm": 0.0, "stop": True, "ts": time.monotonic()}
         self._tune_cancelled_through = self._tune_job_generation
         self._cancel_at = True
         self._urgent_jobs.append(("motion_stop", None))
+
+    def run_jog(self, request):
+        """Queue an endless JV jog; the kernel always auto-disables on exit.
+
+        The GUI then streams live signed targets with ``jog_set_velocity`` (a
+        deadman re-stamp) and ends the session with ``jog_stop`` (gentle decel)
+        or the global DRIVE STOP (immediate torque-off via ``request_motion_stop``).
+        """
+        self._jog_generation += 1
+        token = self._jog_generation
+        if self._motion_stop_requested:
+            self._jog_cancelled_through = token
+        self._jog_cmd = {"rpm": 0.0, "stop": False, "ts": time.monotonic()}
+        self._jobs.append(("jog", (token, request)))
+        return token
+
+    def jog_set_velocity(self, rpm):
+        """Stream one fresh signed jog target (GUI thread; deadman re-stamps)."""
+        self._jog_cmd = {"rpm": float(rpm), "stop": False,
+                         "ts": time.monotonic()}
+
+    def jog_stop(self):
+        """Request the gentle jog stop (JV=0 -> BG decel -> settle -> MO=0)."""
+        self._jog_cmd = {"rpm": 0.0, "stop": True, "ts": time.monotonic()}
 
     def discover_recorder_signals(self):
         self._jobs.append(("recorder_discover", None))
@@ -1304,6 +1345,10 @@ class DriveWorker(QtCore.QThread):
             return False, (
                 "Finite Motion locked: verified Session Zero (PX=0) is required "
                 "for this connection")
+        if kind == "jog" and not self._session_zero_confirmed:
+            return False, (
+                "Jog locked: verified Session Zero (PX=0) is required for this "
+                "connection")
         phase = self._active_trial_phase()
         if phase == "CONFLICT":
             return False, ("워커 RAM 시험 상태 충돌(P1/P2 동시 활성) — 어떤 쓰기나 "
@@ -2110,6 +2155,41 @@ class DriveWorker(QtCore.QThread):
         self.motion_result.emit("move", result)
         self._emit_axis_summary(link)
 
+    def _run_jog(self, link, payload):
+        if (isinstance(payload, tuple) and len(payload) == 2
+                and isinstance(payload[0], int)):
+            token, request = payload
+        else:  # compatibility for direct offline probes
+            token, request = self._jog_generation + 1, payload
+            self._jog_generation = token
+        if not JOG_LIVE_ENABLED:
+            self.jog_result.emit(single_axis_motion.MotionResult(
+                single_axis_motion.RED, "Jog is disabled in this build"))
+            return
+        if token <= self._jog_cancelled_through:
+            self.jog_result.emit(single_axis_motion.MotionResult(
+                single_axis_motion.RED,
+                "STOP/cancel request superseded this jog before I/O"))
+            return
+        self._motion_ownership_requested = True
+        result = single_axis_motion.run_jog(
+            link,
+            request,
+            signature_green=self._commutation_signature_green,
+            jog_cmd_fn=lambda: dict(self._jog_cmd),
+            emit_fn=lambda sample: self.jog_sample.emit(dict(sample)),
+            sleep_fn=lambda seconds: self.msleep(
+                int(max(float(seconds), 0.0) * 1000)),
+            cancel_fn=lambda: (
+                token <= self._jog_cancelled_through or not self._run),
+        )
+        if result.status == single_axis_motion.UNKNOWN:
+            self._motion_config_unknown = True
+        if result.final_state.get("disabled_verified") is True:
+            self._motion_ownership_requested = False
+        self.jog_result.emit(result)
+        self._emit_axis_summary(link)
+
     def _drain_urgent_motion_jobs(self, link):
         while self._urgent_jobs:
             kind, _payload = self._urgent_jobs.popleft()
@@ -2485,6 +2565,8 @@ class DriveWorker(QtCore.QThread):
                         self._run_motion_stop(link)
                     elif kind == "motion_move":
                         self._run_position_move(link, payload)
+                    elif kind == "jog":
+                        self._run_jog(link, payload)
                     elif kind == "recorder_discover":
                         self._run_recorder_discover(link)
                     elif kind == "recorder_start":

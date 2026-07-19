@@ -61,6 +61,46 @@ _APPLY_ORDER = (
 _RESTORE_ORDER = (
     "SP", "AC", "DC", "SD", "FS", "SF[1]", "SF[2]", "PL[1]", "CL[1]")
 
+# --- Endless JV jog (fable-physics motion-safety review 2026-07-20) --------------
+# JV jog is an ENDLESS velocity motion that (per CR p175, command-reference.txt
+# :9453) ignores the software position limits VH[3]/VL[3] and the modulo range,
+# so the finite-move position-envelope guard gives ZERO protection here.  The
+# endless mode is bounded instead by: a command-freshness deadman, a mandatory
+# max-duration timebox, a ramp-aware overspeed guard with an absolute ceiling,
+# the reused current-vector cap, and a two-tier stop chain.  JOG_MAX defaults
+# conservative (rated 3600 rpm = the drive voltage-limit speed with zero torque
+# margin, so continuous jog stays well below it) and is always re-clamped to the
+# live VH[2] speed limit at runtime.
+JOG_MAX_RPM_DEFAULT = 300.0        # 8.3% of rated; runaway trips in 1-2 polls
+JOG_MAX_RPM_CEILING = 3000.0       # -17% of the 3600 rpm voltage limit
+JOG_MIN_RPM = 1.0
+JOG_ACCEL_RPM_S = 30.0
+JOG_MAX_ACCEL_RPM_S = 600.0
+JOG_POLL_S = 0.03                  # 30 ms tick (>=1-2 poll runaway detection)
+JOG_DEADMAN_AGE_S = 0.25           # stale jog command -> demote to stop
+JOG_TIMEBOX_DEFAULT_S = 60.0       # PX int32 headroom 0.92% at 300 rpm / 60 s
+JOG_TIMEBOX_HARD_S = 180.0
+JOG_OVERSPEED_FACTOR = 1.25
+JOG_OVERSPEED_FLOOR_RPM = 15.0     # low-speed false-positive floor
+JOG_STOP_SETTLE_TIMEOUT_S = 2.0    # operator stop: wait |VX|~0 before disable
+JOG_STOP_RPM = 1.0                 # |VX| below this (rpm) counts as stopped
+JOG_PROFILE_VELOCITY_MODE = 3      # OV[2] during a JV jog (CR :9450), not 1
+
+
+@dataclass(frozen=True)
+class JogRequest:
+    """One endless JV jog session; the kernel always auto-disables on exit.
+
+    ``max_speed_rpm`` is the per-session ceiling the operator may command in
+    either direction; the live signed jog target is supplied per-tick by the
+    command hook and clamped to +-this value (and to the live VH[2]).
+    """
+
+    max_speed_rpm: float = JOG_MAX_RPM_DEFAULT
+    accel_rpm_s: float = JOG_ACCEL_RPM_S
+    current_cap_a: float = 1.30
+    timebox_s: float = JOG_TIMEBOX_DEFAULT_S
+
 
 @dataclass(frozen=True)
 class PositionMoveRequest:
@@ -319,7 +359,8 @@ def read_axis_summary(link: Any) -> dict[str, Any]:
     }
 
 
-def _preflight(link: Any, values: Mapping[str, Any]) -> dict[str, float]:
+def _preflight(link: Any, values: Mapping[str, Any], *,
+               require_target: bool = True) -> dict[str, float]:
     names = (
         "UM", "RM", "MO", "SO", "MF", "PS", "SR", "PX", "VX", "PE", "ID", "IQ", "MS",
         "CA[18]", "VH[2]", "VL[3]", "VH[3]", "XM[1]", "XM[2]",
@@ -373,13 +414,15 @@ def _preflight(link: Any, values: Mapping[str, Any]) -> dict[str, float]:
     if not non_modulo:
         raise _MotionRejected("position modulo mode is not supported by finite-motion v1")
 
-    target_counts = _target_from_px(state["PX"], values, state)
+    if require_target:
+        target_counts = _target_from_px(state["PX"], values, state)
     requested_speed_counts = values["speed_rpm"] * ca18 / 60.0
     if state["VH[2]"] <= 0 or requested_speed_counts > state["VH[2]"]:
         raise _MotionRejected("requested speed exceeds drive VH[2] limit")
     if state["SD"] <= 0:
         raise _MotionRejected("existing SD stop deceleration is invalid")
-    state["target_counts"] = float(target_counts)
+    if require_target:
+        state["target_counts"] = float(target_counts)
     state["ca18"] = ca18
     return state
 
@@ -796,3 +839,306 @@ def run_position_move(
         final_state=stop_result.final_state,
         evidence=evidence,
     )
+
+
+def _validate_jog_request(request: JogRequest) -> dict[str, float]:
+    max_speed = _finite(request.max_speed_rpm, "max_speed_rpm")
+    accel = _finite(request.accel_rpm_s, "accel_rpm_s")
+    current_cap = _finite(request.current_cap_a, "current_cap_a")
+    timebox = _finite(request.timebox_s, "timebox_s")
+    if not JOG_MIN_RPM <= max_speed <= JOG_MAX_RPM_CEILING:
+        raise _MotionRejected(
+            "max_speed_rpm must be in [%.1f, %.1f]"
+            % (JOG_MIN_RPM, JOG_MAX_RPM_CEILING))
+    if not 0.0 < accel <= JOG_MAX_ACCEL_RPM_S:
+        raise _MotionRejected(
+            "accel_rpm_s must be >0 and <= %.1f" % JOG_MAX_ACCEL_RPM_S)
+    if not MIN_CURRENT_CAP_A <= current_cap <= MAX_CURRENT_CAP_A:
+        raise _MotionRejected(
+            "current_cap_a must be in [%.2f, %.2f]"
+            % (MIN_CURRENT_CAP_A, MAX_CURRENT_CAP_A))
+    if not 0.0 < timebox <= JOG_TIMEBOX_HARD_S:
+        raise _MotionRejected(
+            "timebox_s must be >0 and <= %.1f" % JOG_TIMEBOX_HARD_S)
+    return {"speed_rpm": max_speed, "accel_rpm_s": accel,
+            "current_cap_a": current_cap, "timebox_s": timebox}
+
+
+_JOG_SAMPLE_READS = (
+    "VX", "MF", "PS", "SR", "ID", "IQ", "OV[2]", "MO", "SO", "MS")
+
+
+def run_jog(
+        link: Any,
+        request: JogRequest,
+        *,
+        signature_green: bool,
+        jog_cmd_fn: Callable[[], Mapping[str, Any]],
+        emit_fn: Optional[Callable[[Mapping[str, Any]], None]] = None,
+        sleep_fn: Callable[[float], None] = time.sleep,
+        clock_fn: Callable[[], float] = time.monotonic,
+        cancel_fn: Callable[[], bool] = lambda: False,
+        sample_clock_fn: Callable[[], float] = time.monotonic,
+) -> MotionResult:
+    """Endless JV jog under host supervision; always auto-disable and restore.
+
+    ``jog_cmd_fn()`` returns a mapping ``{"rpm": signed float, "stop": bool,
+    "ts": monotonic timestamp}``.  The signed rpm is the live jog target
+    (+/- for the two directions), clamped to +-``request.max_speed_rpm`` and to
+    the live VH[2].  A command older than ``JOG_DEADMAN_AGE_S`` (host stalled)
+    is demoted to stop -- this deadman replaces the finite move's PX envelope,
+    since a JV jog is endless and ignores VH[3]/VL[3] (CR p175).  Guard set per
+    the 2026-07-20 fable-physics motion-safety review.
+    """
+    evidence: dict[str, Any] = {
+        "temporary_ram_only": True,
+        "sv_sent": False,
+        "settings_restored": None,
+        "current_convention": dict(CURRENT_CONVENTION),
+    }
+    try:
+        if cancel_fn():
+            raise _MotionRejected("STOP/cancel superseded jog before I/O")
+        values = _validate_jog_request(request)
+        if not signature_green:
+            raise _MotionRejected("session commutation signature is not GREEN")
+        if _persistence_unknown(link):
+            raise _MotionRejected("persistence state UNKNOWN blocks enable/motion")
+        token = _session_token(link)
+        if token is None:
+            raise _MotionRejected("live connection session identity is unavailable")
+        state = _preflight(link, values, require_target=False)
+        if cancel_fn():
+            raise _MotionRejected("STOP/cancel request during preflight sample")
+    except Exception as exc:
+        return MotionResult(RED, str(exc), evidence=evidence)
+
+    ca18 = state["ca18"]
+    idle_speed = ca18 / 60.0
+    max_counts_per_s = values["speed_rpm"] * ca18 / 60.0
+    # PX must not risk signed-32-bit overflow across the whole timebox (jog is
+    # endless and does not stop at software limits).
+    projected = abs(state["PX"]) + max_counts_per_s * values["timebox_s"]
+    if projected >= 0.5 * (2 ** 31):
+        return MotionResult(
+            RED, "jog max-speed x timebox risks PX int32 overflow; reduce "
+            "speed/timebox or Set Session Zero first", evidence=evidence)
+
+    originals = {name: state[name] for name in TEMPORARY_SETTING_ORDER}
+    cap = min(values["current_cap_a"], originals["PL[1]"], originals["CL[1]"])
+    if cap < MIN_CURRENT_CAP_A:
+        return MotionResult(
+            RED, "existing PL[1]/CL[1] is below the supported current floor",
+            evidence=evidence)
+    speed_counts = max(1, int(round(max_counts_per_s)))
+    accel_counts = max(10, int(round(values["accel_rpm_s"] * ca18 / 60.0)))
+    stop_decel_counts = max(100, int(round(
+        min(values["accel_rpm_s"], MAX_STOP_DECEL_RPM_S) * ca18 / 60.0)))
+    if speed_counts > 2_000_000_000 or accel_counts > 2_000_000_000:
+        return MotionResult(RED, "SP/AC exceeds drive numeric range",
+                            evidence=evidence)
+    abs_ceiling = min(JOG_OVERSPEED_FACTOR * speed_counts, state["VH[2]"])
+    overspeed_floor = max(JOG_OVERSPEED_FLOOR_RPM * idle_speed, idle_speed)
+    overspeed_margin = idle_speed  # ~1 rpm
+
+    applied = {
+        "PL[1]": cap, "CL[1]": cap, "SP": speed_counts,
+        "AC": accel_counts, "DC": accel_counts, "SD": stop_decel_counts,
+        "FS": 0, "SF[1]": SMOOTHING_MS, "SF[2]": 0,
+    }
+    evidence.update({
+        "original_settings": dict(originals),
+        "applied_settings": dict(applied),
+        "current_cap_a": cap,
+        "abs_ceiling_counts": abs_ceiling,
+        "jog_max_rpm": values["speed_rpm"],
+        "timebox_s": values["timebox_s"],
+        "session_token_present": True,
+    })
+
+    motion_started = False
+    moved = False
+    aborted = False
+    reason = ""
+    try:
+        for name in _APPLY_ORDER:
+            if cancel_fn():
+                raise _MotionAborted("operator cancel while preparing RAM profile")
+            _write_verified(link, name, applied[name], token)
+        if not (applied["AC"] <= applied["SD"] and applied["DC"] <= applied["SD"]):
+            raise _MotionAborted("profile invariant AC/DC <= SD was not satisfied")
+        if cancel_fn():
+            raise _MotionAborted("operator cancel before enable")
+        _assert_same_session(link, token)
+        link.command("MO=1", allow_motion=True)
+        enable_deadline = clock_fn() + 1.5
+        while True:
+            es, _age = _read_active_sample(
+                link, ("MO", "SO", "MF", "PS", "SR", "VX", "ID", "IQ"),
+                sample_clock_fn=sample_clock_fn)
+            if cancel_fn():
+                raise _MotionAborted("operator cancel during enable sample")
+            sr = int(es["SR"])
+            if int(es["MF"]) != 0:
+                raise _MotionAborted("drive fault while enabling")
+            if int(es["PS"]) == 1:
+                raise _MotionAborted("user program started while enabling (PS=1)")
+            if sr & _UNSAFE_SR_MASK:
+                raise _MotionAborted("unsafe SR status while enabling (SR=%s)" % sr)
+            if not (sr & (1 << 14)) or not (sr & (1 << 15)):
+                raise _MotionAborted("STO permission dropped while enabling")
+            if (abs(es["VX"]) > idle_speed
+                    or _current_vector_a(es["ID"], es["IQ"]) > (
+                        cap * (1.0 + CURRENT_LIMIT_REL_MARGIN)
+                        + CURRENT_LIMIT_ABS_MARGIN_A)):
+                raise _MotionAborted("unintended motion/current while enabling")
+            if (int(es["MO"]) == 1 and int(es["SO"]) == 1
+                    and bool(sr & (1 << 4))):
+                break
+            if clock_fn() >= enable_deadline:
+                raise _MotionAborted("MO=1 issued but SO=1 was not observed")
+            sleep_fn(0.02)
+
+        last_jv = 0
+        grace_prev_jv = 0
+        jv_change_at = clock_fn()
+        timebox_deadline = clock_fn() + values["timebox_s"]
+        while True:
+            now = clock_fn()
+            if now >= timebox_deadline:
+                reason = ("jog max-duration timebox (%.0f s) reached"
+                          % values["timebox_s"])
+                break
+            if cancel_fn():
+                raise _MotionAborted("operator STOP / DRIVE STOP")
+            cmd = jog_cmd_fn() or {}
+            ts = cmd.get("ts")
+            fresh = (isinstance(ts, (int, float))
+                     and (now - float(ts)) <= JOG_DEADMAN_AGE_S)
+            stop_req = bool(cmd.get("stop")) or not fresh
+            raw_rpm = 0.0 if stop_req else float(cmd.get("rpm") or 0.0)
+            target_rpm = max(-values["speed_rpm"],
+                             min(values["speed_rpm"], raw_rpm))
+            target_jv = int(round(target_rpm * ca18 / 60.0))
+            if target_jv != last_jv:
+                if cancel_fn():
+                    raise _MotionAborted("operator STOP / DRIVE STOP")
+                _assert_same_session(link, token)
+                _write_verified(link, "JV", target_jv, token, allow_motion=True)
+                link.command("BG", allow_motion=True)
+                motion_started = True
+                grace_prev_jv = last_jv
+                jv_change_at = now
+                last_jv = target_jv
+            sample, _age = _read_active_sample(
+                link, _JOG_SAMPLE_READS, sample_clock_fn=sample_clock_fn)
+            if int(sample["MF"]) != 0:
+                raise _MotionAborted(
+                    "drive fault during jog (MF=0x%X)" % int(sample["MF"]))
+            if int(sample["PS"]) == 1:
+                raise _MotionAborted("user program started during jog (PS=1)")
+            sr = int(sample["SR"])
+            if sr & _UNSAFE_SR_MASK:
+                raise _MotionAborted("unsafe SR status during jog (SR=%s)" % sr)
+            if not (sr & (1 << 14)) or not (sr & (1 << 15)):
+                raise _MotionAborted("STO permission dropped during jog")
+            if (last_jv != 0
+                    and int(sample.get("OV[2]", JOG_PROFILE_VELOCITY_MODE))
+                    != JOG_PROFILE_VELOCITY_MODE):
+                raise _MotionAborted(
+                    "actual motion mode OV[2] is not velocity (3) while jogging")
+            current_vector_a = _current_vector_a(sample["ID"], sample["IQ"])
+            if current_vector_a > (cap * (1.0 + CURRENT_LIMIT_REL_MARGIN)
+                                   + CURRENT_LIMIT_ABS_MARGIN_A):
+                raise _MotionAborted(
+                    "current vector exceeded bounded jog cap "
+                    "(sqrt(ID^2+IQ^2)=%.3f A, cap=%.3f A; native drive amperes)"
+                    % (current_vector_a, cap))
+            # Ramp-aware overspeed reference: |JV_target|*1.25 alone false-trips
+            # during a downshift, so widen the reference to the larger of the old
+            # and new target for the decel transient window only.
+            t_grace = (abs(target_jv - grace_prev_jv)
+                       / max(1.0, float(accel_counts))
+                       + SMOOTHING_MS / 1000.0 + 2.0 * JOG_POLL_S)
+            ref = (max(abs(last_jv), abs(grace_prev_jv))
+                   if now < jv_change_at + t_grace else abs(last_jv))
+            overspeed_limit = max(
+                JOG_OVERSPEED_FACTOR * ref + overspeed_margin, overspeed_floor)
+            vx = float(sample["VX"])
+            if abs(vx) > overspeed_limit or abs(vx) > abs_ceiling:
+                raise _MotionAborted(
+                    "overspeed abort: |VX|=%.0f cnt/s > limit %.0f / ceiling %.0f"
+                    % (abs(vx), overspeed_limit, abs_ceiling))
+            if abs(vx) > JOG_STOP_RPM * idle_speed:
+                moved = True
+            if emit_fn is not None:
+                try:
+                    emit_fn(dict(sample))
+                except Exception:
+                    pass
+            if (stop_req and last_jv == 0
+                    and abs(vx) <= JOG_STOP_RPM * idle_speed):
+                reason = reason or "stopped"
+                break
+            sleep_fn(JOG_POLL_S)
+    except _MotionAborted as exc:
+        aborted = True
+        reason = str(exc)
+    except Exception as exc:  # noqa: BLE001 - any drive error must still disable
+        aborted = True
+        reason = "jog exception: %s" % exc
+
+    # Two-tier stop chain: a fault/runaway cannot trust JV=0 deceleration (a bad
+    # commutation makes the velocity loop positive feedback), so it goes straight
+    # to torque-off; an operator/timebox stop decelerates gently first.
+    if aborted:
+        stop_result = safe_stop_disable(link, sleep_fn=sleep_fn, clock_fn=clock_fn)
+    else:
+        try:
+            _write_verified(link, "JV", 0, token, allow_motion=True)
+            link.command("BG", allow_motion=True)
+        except Exception:
+            pass
+        settle_deadline = clock_fn() + JOG_STOP_SETTLE_TIMEOUT_S
+        while clock_fn() < settle_deadline:
+            try:
+                s, _a = _read_active_sample(
+                    link, ("VX",), sample_clock_fn=sample_clock_fn)
+                if abs(float(s["VX"])) <= JOG_STOP_RPM * idle_speed:
+                    break
+            except Exception:
+                break
+            sleep_fn(0.02)
+        stop_result = safe_stop_disable(link, sleep_fn=sleep_fn, clock_fn=clock_fn)
+
+    evidence["stop_result"] = {
+        "status": stop_result.status, "reason": stop_result.reason,
+        "final_state": dict(stop_result.final_state)}
+    evidence["motion_started"] = motion_started
+    evidence["moved"] = moved
+
+    # Restore ONLY after torque disable is GREEN-verified (never raise caps while
+    # disable is unverified).
+    if stop_result.final_state.get("disabled_verified") is True:
+        restored_ok, restore_errors = _restore_settings(link, originals, token)
+        evidence["settings_restored"] = restored_ok
+        evidence["restore_errors"] = restore_errors
+        if aborted:
+            return MotionResult(RED, reason,
+                                final_state=stop_result.final_state,
+                                evidence=evidence)
+        if motion_started and not moved:
+            return MotionResult(
+                UNKNOWN,
+                "jog commanded but no rotation observed; current cap %.2f A may "
+                "be below breakaway. Drive disabled and settings restored." % cap,
+                final_state=stop_result.final_state, evidence=evidence)
+        return MotionResult(
+            GREEN, reason or "jog session ended; auto-disabled and restored",
+            final_state=stop_result.final_state, evidence=evidence)
+    evidence["settings_restored"] = False
+    return MotionResult(
+        UNKNOWN,
+        "jog exit could not verify MO=0/SO=0; kept bounded caps and did not "
+        "restore (%s)" % reason, final_state=stop_result.final_state,
+        evidence=evidence)
