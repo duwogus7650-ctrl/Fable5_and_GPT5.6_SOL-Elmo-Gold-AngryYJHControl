@@ -1,6 +1,6 @@
 # Quick Tuning + Single Axis + Expert v2 작업 인계서
 
-상태: **EAS LIVE PARITY AUDIT IN PROGRESS · 기존 slice 완료는 full EAS parity가 아님**<br>
+상태: **NON-HARDWARE AUDIT COMPLETE · FIELD NEED-DATA ONLY · full EAS parity는 미주장**<br>
 
 2026-07-19 실제 EAS 재대조 결과와 현재 우선순위는
 [`eas-live-parity-audit-2026-07-19.md`](eas-live-parity-audit-2026-07-19.md)를

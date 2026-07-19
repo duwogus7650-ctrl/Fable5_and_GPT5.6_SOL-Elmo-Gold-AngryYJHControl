@@ -1,11 +1,11 @@
 <!-- scope_progress: 100 -->
-<!-- offline_progress: 98 -->
+<!-- offline_progress: 100 -->
 <!-- field_progress: 43 -->
 <!-- progress_basis: Planning indicators, not safety scores. Scope means the implemented feature inventory is enumerated. Offline means code/tests/documents reviewed. Field means bounded live EAS and read-only drive comparisons only; it excludes motion, protection efficacy, STO/E-stop, write transactions, and Gold-family compatibility. -->
 
 # EAS LIVE PARITY AUDIT · PX/PU + CURRENT LIVE RECHECK · SR23 FIX
 
-상태: **READ ONLY 재검증 완료 · SR23 수정 · 전체 회귀 GREEN · EAS 기능 대조 완료 · 게시 진행 중**
+상태: **비실기 잔여 0 · SR23 수정/검증/게시 완료 · FIELD NEED-DATA ONLY**
 
 업데이트: **2026-07-19 KST**
 
@@ -13,7 +13,7 @@
 
 - 이번 범위는 **비실기 잔여 작업 0개**가 될 때까지 자동 진행한다.
 - 사용자에게 중간 단계 승인을 다시 묻지 않는다.
-- 현재 자동 순서:
+- 완료한 자동 순서:
   `전체 회귀 → EAS 화면·설치 도움말·기능 의미 대조 →
   문서/모니터 실측값 확정 → 최신 오프라인 UI 확인 →
   변경 범위·secret 검증 → commit → private Draft PR push/update`.
@@ -24,7 +24,7 @@
 - 마지막에 남을 수 있는 항목은 장비 구동·현장 측정으로만 닫히는
   `FIELD NEED-DATA`뿐이다.
 
-## 예상 잔여시간 · 2026-07-19 23:00 KST
+## 예상 잔여시간 · 2026-07-19 23:05 KST
 
 | 단계 | 현재 상태 | 예상 잔여 |
 |---|---|---:|
@@ -32,12 +32,12 @@
 | EAS 화면/설치 도움말/기능 의미 최종 대조 | **완료** | 0분 |
 | 문서·handoff·모니터 실측값 확정 | **완료** | 0분 |
 | 최신 오프라인 UI/정적 검증 | **완료** | 0분 |
-| diff/secret/범위 검증 + commit + private PR push/update | 범위/secret GREEN · 게시 진행 중 | 약 5–10분 |
-| **비실기 전체** | 자동 진행 | **약 5–10분** |
+| diff/secret/범위 검증 + commit + private PR push/update | **완료 · PRIVATE** | 0분 |
+| **비실기 전체** | **완료** | **0분** |
 
 전체 회귀 실제값은 `1964 passed in 636.67 s`, exit 0이다.
-실패가 발견되어 수정·전체 재실행이 필요하면 늘어나며, 각 단계 완료 때
-모니터에서 실제 결과와 새 잔여시간으로 교체한다. 실기 시간은 포함하지 않는다.
+표의 0분은 현재 승인된 감사·수정·게시 범위의 비실기 잔여를 뜻한다.
+아래 `FIELD NEED-DATA`를 닫는 현장 시간은 포함하지 않는다.
 
 ## 감사 범위
 
@@ -76,6 +76,7 @@
 - `NEED-DATA`: `PU-PX=2^25`의 firmware-internal 좌표 원점.
 - `DOC_ONLY`: User Units, Limits/Protections, Application Settings,
   hidden Bode, Verification-Time, Summary의 기존 로컬 inspector 대부분.
+  현재 비실기 구현/문서화 상태이며 live EAS 동등성으로 승격하려면 현장 실행이 필요함.
 - `NOT_EXECUTED_NEED_DATA`: 실제 Automatic/Expert tuning, Commutation,
   Verification, Recorder acquisition, motion, Apply/SV.
 
@@ -122,14 +123,16 @@
 - live SR23 Qt 핵심 경로 재실행: **1 passed in 1.06s**.
 - 전체 출력에 skip/xfail 요약 없음.
 
-## 다음 작업
+## 남은 FIELD NEED-DATA · 비실기 작업 없음
 
-1. private Draft PR #2를 이번 PX/PU + Current preset revision으로 갱신한다.
-2. `PU-PX=2^25` firmware-internal 좌표 원점을 독립적으로 규명한다.
-3. `DOC_ONLY`와 `NOT_EXECUTED_NEED_DATA` 항목을 EAS 기능 단위로 하나씩
-   구현·검증한다.
-4. Current 출력은 현장 current/thermal/torque envelope와 독립 stop evidence가
+1. `PU-PX=2^25`의 firmware-internal 좌표 원점은 vendor-authoritative 정의나
+   통제된 현장 readback으로만 승격한다.
+2. 실제 Automatic/Expert tuning, Commutation, Verification, Recorder acquisition,
+   motion, Apply/SV는 현장 안전 조건과 실행 승인이 있어야 한다.
+3. Current 출력은 현장 current/thermal/torque envelope와 독립 stop evidence가
    생길 때까지 계속 잠근다.
+4. 다른 Gold 제품 호환성은 대상별 identity, I/O, firmware, feedback,
+   protection과 구동 시험 없이는 주장하지 않는다.
 
 ## 계속 잠긴 기능
 
