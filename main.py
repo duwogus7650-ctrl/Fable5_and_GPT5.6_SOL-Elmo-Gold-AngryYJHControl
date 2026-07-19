@@ -3964,7 +3964,27 @@ class MainWindow(QtWidgets.QMainWindow):
         groups.addStretch(1)
 
         scroll.setWidget(body)
+        # EAS-style always-visible DEVICE group with the app's REAL, safe
+        # device actions only.  EAS's Drive Load/Save/Reset/Force Up-Down and
+        # Import/Export map to a parameter-file transaction model this app does
+        # not implement, so those (non-functional here) buttons are omitted.
+        dev_group, dev_layout = self._ribbon_group("DEVICE")
+        self.btn_ribbon_refresh = QtWidgets.QPushButton("Refresh Ports")
+        self.btn_ribbon_refresh.clicked.connect(self.refresh_ports)
+        self.btn_ribbon_refresh.setToolTip(
+            "Re-enumerate serial ports (read-only, no drive I/O).")
+        self.btn_ribbon_audit = QtWidgets.QPushButton("Persistence Audit")
+        self.btn_ribbon_audit.setEnabled(False)
+        self.btn_ribbon_audit.setToolTip(
+            "Read-only drive persistence-ledger audit (SN[4]/VR/VP/VB/MO/SO/VX/"
+            "PS/MF). No SV/LD/RS or writes. Enabled only while connected with an "
+            "active locked record.")
+        self.btn_ribbon_audit.clicked.connect(self._persistence_audit_clicked)
+        dev_layout.addWidget(self.btn_ribbon_refresh)
+        dev_layout.addWidget(self.btn_ribbon_audit)
+        dev_group.setFixedHeight(108)
         ribbon_row = QtWidgets.QHBoxLayout(); ribbon_row.setSpacing(7)
+        ribbon_row.addWidget(dev_group, 0)
         ribbon_row.addStretch(0)
         ribbon_row.addWidget(scroll, 1)
         ribbon_row.addWidget(activation, 0)
@@ -11839,6 +11859,9 @@ class MainWindow(QtWidgets.QMainWindow):
             connected and locked
             and bool(summary.get("record_id"))
             and not bool(summary.get("ledger_error")))
+        if hasattr(self, "btn_ribbon_audit"):
+            self.btn_ribbon_audit.setEnabled(
+                self.btn_persistence_audit.isEnabled())
 
     def _on_persistence_audit_status(self, payload):
         source = self.sender()
@@ -11929,6 +11952,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if answer != QtWidgets.QMessageBox.StandardButton.Yes:
             return
         self.btn_persistence_audit.setEnabled(False)
+        if hasattr(self, "btn_ribbon_audit"):
+            self.btn_ribbon_audit.setEnabled(False)
         self.worker.audit_persistence_after_reset()
         self._flash("전원 재인가 서명 접수 · query-only persistence audit 대기 중…")
 
