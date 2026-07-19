@@ -6,7 +6,7 @@
 # Gold Twitter · Quick + Single Axis + Expert v2 + Single Axis UM/Digital I/O Read
 
 상태: **UM/DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · OFFLINE CONTRACT GREEN · MODE CHANGE/PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
-업데이트: **2026-07-19 12:31 KST**
+업데이트: **2026-07-19 12:35 KST**
 
 ## 현재 기준
 
@@ -50,10 +50,11 @@
   구현 HEAD `667c19eb8bd44d1a7d838772753e7fc6d709fb94`
   (private Draft PR #2 게시 대상)
 - Single Axis Drive Mode · Read-Only Snapshot v0.1:
-  구현·current target readback·전체 repository 회귀 완료, 게시 closeout 중
+  구현 HEAD `d84d7b87495c1725d2fa615a9beb9218a45c60f8`
+  (current target readback·전체 repository 회귀·private Draft PR #2 게시 완료)
 - 현재 작업 대상:
   Motion page `DRIVE MODE (UM) · READ-ONLY SNAPSHOT v0.1` 구현·현재 target
-  readback·직접 영향범위·runtime·전체 repository 회귀 완료, 게시 closeout 중.
+  readback·runtime·전체 repository 회귀·private Draft PR 게시 closeout 완료.
   `UM` 한 건만 읽었고 `UM=` assignment, mode change, Enable/Disable,
   `TC/JV/PA/PR/BG`, reference, PTP/Jog/Current/Sine/Homing/Stepper,
   Terminal command, Recorder config/acquisition은 실행하지 않음
@@ -114,6 +115,9 @@
   `UM=5 · Position`, acquisition **2.1 ms**를 관찰했다. 이는 current
   drive report이며 EAS parity, persistence state, control performance,
   family compatibility 또는 safety 증거가 아니다.
+- `OBSERVED` exact 게시 commit `d84d7b8`로 제어창을 재시작한 뒤
+  `ONLINE · READ ONLY / MOTOR DISABLED / UM=5 · Position`을 acquisition
+  **2.3 ms**로 재관찰했다. 제어창은 이 상태로 열려 있다.
 - `OBSERVED` installed Gold `UM – Unit Mode` HTML SHA-256 **1/1 일치**.
   문서상 UM은 non-volatile R/W이고 assignment에는 motor-off 제한이 있으므로
   `axis.drive_mode.change`는 exact readback/persistence recovery/rollback
@@ -504,7 +508,7 @@
 | Expert Verification – Time · Documented Map v0.1 | **완료 · focused 40 / 영향범위 99 / 전체 1567 passed + runtime/독립 재검토 · `91d6ee4` · private Draft PR #2 · motor action not run** |
 | Single Axis Digital Inputs · Read-Only Snapshot v0.1 | **구현·current target readback·focused 133·전체 1639 passed + runtime 완료 · `8c2a955` · private Draft PR #2 게시 중 · physical I/O/EAS parity 미검증** |
 | Single Axis Digital Outputs · Read-Only Snapshot v0.1 | **구현·current target readback·pure 24·integration 113·직접 영향 276·전체 1673 passed + runtime 완료 · `667c19e` · private Draft PR #2 게시 대상 · physical output/EAS parity/actuation 미검증** |
-| Single Axis Drive Mode · Read-Only Snapshot v0.1 | **구현·current target `UM=5 · Position` readback·pure 24·integration 261·latest focused 53+287·3-skin UI 32·전체 1717 passed + runtime 완료 · 게시 closeout 중 · UM change 미구현/NEED-DATA** |
+| Single Axis Drive Mode · Read-Only Snapshot v0.1 | **구현·current target `UM=5 · Position` readback·pure 24·integration 261·latest focused 53+287·3-skin UI 32·전체 1717 passed + exact `d84d7b8` runtime 재확인 · private Draft PR #2 게시 완료 · UM change 미구현/NEED-DATA** |
 | 실제 Current Bode / V·P Bode 실행 | **NEED-DATA · ENERGY/MOTION 별도 gate · 신뢰 가능한 ETA 없음** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 

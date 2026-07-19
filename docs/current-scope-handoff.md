@@ -1,7 +1,7 @@
 # Quick Tuning + Single Axis + Expert v2 + UM/Digital I/O Read v0.1 작업 인계서
 
 상태: **UM/DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · MODE CHANGE/PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
-기준 시각: **2026-07-19 12:31 KST**<br>
+기준 시각: **2026-07-19 12:35 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -37,7 +37,8 @@
   `667c19eb8bd44d1a7d838772753e7fc6d709fb94`
   (field readback·회귀 완료, private Draft PR #2 게시 대상)
 - Single Axis Drive Mode · Read-Only Snapshot v0.1:
-  working tree closeout 중
+  `d84d7b87495c1725d2fa615a9beb9218a45c60f8`
+  (field readback·전체 회귀·private Draft PR #2 게시 완료)
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -117,6 +118,9 @@
   Enable/Disable, `TC/JV/PA/PR/BG`, reference, energization, motion, `SV`는
   실행하지 않았다. UM은 문서상 non-volatile이고 assignment에 motor-off
   제한이 있으므로 change operation은 별도 `NEED-DATA`로 잠겼다.
+- exact 게시 commit `d84d7b8`로 제어창을 재시작한 뒤 같은
+  `UM=5 · Position / CURRENT · DRIVE READ ONLY`를 acquisition **2.3 ms**로
+  다시 관찰했다. 제어창은 COM3 Read Only 연결 상태로 열어 두었다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해

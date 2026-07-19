@@ -16,6 +16,10 @@ Motion 화면에 현재 Gold drive의 `UM`을 한 번만 조회하는 명시적
 EAS same-moment parity, control-loop performance, 저장 상태, 안전성 또는 다른
 Gold 제품 호환성을 증명하지 않는다.
 
+게시 후 closeout에서 exact implementation commit `d84d7b8`의 Python 3.14
+제어창을 재시작해 같은 Read Only 상태와 `UM=5 · Position`을 다시 관찰했다.
+두 번째 acquisition은 `2.3 ms`였다.
+
 ## Frozen installed source
 
 | Source | Location | SHA-256 |
