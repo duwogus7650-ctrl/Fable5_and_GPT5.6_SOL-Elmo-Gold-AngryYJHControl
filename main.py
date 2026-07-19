@@ -57,6 +57,7 @@ import single_axis_current_reference
 import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
+import single_axis_position_velocity_reference
 import recorder_control
 import recorder_view
 import operation_catalog
@@ -743,6 +744,7 @@ class DriveWorker(QtCore.QThread):
     _QUIESCENT_ADMISSION_REGISTERS = ("MO", "SO", "VX", "PS", "MF")
     _OBSERVE_ONLY_JOB_ALLOWLIST = frozenset((
         "axis_read", "axis_drive_mode_read", "axis_current_reference_read",
+        "axis_position_velocity_reference_read",
         "axis_digital_inputs_read", "axis_digital_outputs_read",
         "persistence_audit",
         "motion_stop", "recorder_stop",
@@ -751,6 +753,7 @@ class DriveWorker(QtCore.QThread):
         "VR", "VP", "VB", "SN[4]", "PX", "VX", "PE", "IQ",
         "MO", "SO", "MS", "MF", "SR", "ID", "UM", "RM",
         "TC", "CL[1]", "PL[1]", "LC", "MC",
+        "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]", "DC", "SD",
     ))
     _TRIAL_JOB_ALLOWLIST = {
         "P1": frozenset(("p1_trial_restore", "p1_trial_commit")),
@@ -791,6 +794,7 @@ class DriveWorker(QtCore.QThread):
     soft_zero_result = QtCore.pyqtSignal(bool, str, object)  # ok, message, telemetry
     axis_summary = QtCore.pyqtSignal(dict)                 # read-only Quick Axis snapshot
     axis_current_reference = QtCore.pyqtSignal(object)    # bounded current-reference snapshot
+    axis_position_velocity_reference = QtCore.pyqtSignal(object)
     axis_drive_mode = QtCore.pyqtSignal(object)            # bounded UM snapshot
     axis_digital_inputs = QtCore.pyqtSignal(object)        # bounded IP/IL/IF snapshot
     axis_digital_outputs = QtCore.pyqtSignal(object)       # bounded OP/OL/GO snapshot
@@ -980,6 +984,10 @@ class DriveWorker(QtCore.QThread):
     def refresh_axis_current_reference(self):
         """Queue one bounded current-reference read-only snapshot."""
         self._jobs.append(("axis_current_reference_read", None))
+
+    def refresh_axis_position_velocity_reference(self):
+        """Queue one bounded position/velocity read-only snapshot."""
+        self._jobs.append(("axis_position_velocity_reference_read", None))
 
     def refresh_axis_digital_inputs(self):
         """Queue one bounded IP/IL[1..6]/IF[1..6] read-only snapshot."""
@@ -1220,6 +1228,7 @@ class DriveWorker(QtCore.QThread):
                 "software shutdown only")
         persistence_allowlist = frozenset((
             "axis_read", "axis_drive_mode_read", "axis_current_reference_read",
+            "axis_position_velocity_reference_read",
             "axis_digital_inputs_read",
             "axis_digital_outputs_read", "persistence_audit",
             "motion_stop", "recorder_stop"))
@@ -1233,6 +1242,7 @@ class DriveWorker(QtCore.QThread):
             if kind in (
                     "axis_read", "axis_drive_mode_read",
                     "axis_current_reference_read",
+                    "axis_position_velocity_reference_read",
                     "axis_digital_inputs_read",
                     "axis_digital_outputs_read", "motion_stop",
                     "recorder_stop"):
@@ -1245,6 +1255,7 @@ class DriveWorker(QtCore.QThread):
         if kind in (
                 "axis_read", "axis_drive_mode_read",
                 "axis_current_reference_read",
+                "axis_position_velocity_reference_read",
                 "axis_digital_inputs_read",
                 "axis_digital_outputs_read", "motion_stop", "recorder_stop",
                 "recorder_upload"):
@@ -1650,6 +1661,12 @@ class DriveWorker(QtCore.QThread):
         snapshot = (
             single_axis_current_reference.read_current_reference_snapshot(link))
         self.axis_current_reference.emit(snapshot)
+
+    def _emit_axis_position_velocity_reference(self, link):
+        snapshot = (
+            single_axis_position_velocity_reference
+            .read_position_velocity_snapshot(link))
+        self.axis_position_velocity_reference.emit(snapshot)
 
     def _emit_axis_digital_outputs(self, link):
         snapshot = single_axis_digital_outputs.read_digital_output_snapshot(link)
@@ -2454,6 +2471,8 @@ class DriveWorker(QtCore.QThread):
                         self._emit_axis_drive_mode(link)
                     elif kind == "axis_current_reference_read":
                         self._emit_axis_current_reference(link)
+                    elif kind == "axis_position_velocity_reference_read":
+                        self._emit_axis_position_velocity_reference(link)
                     elif kind == "axis_digital_inputs_read":
                         self._emit_axis_digital_inputs(link)
                     elif kind == "axis_digital_outputs_read":
@@ -4155,6 +4174,7 @@ class MainWindow(QtWidgets.QMainWindow):
         v.addWidget(self._build_axis_enable_contract_frame())
         v.addWidget(self._build_axis_drive_mode_frame())
         v.addWidget(self._build_axis_current_reference_frame())
+        v.addWidget(self._build_axis_position_velocity_reference_frame())
         v.addWidget(self._build_axis_digital_inputs_frame())
         v.addWidget(self._build_axis_digital_outputs_frame())
 
@@ -4851,6 +4871,236 @@ class MainWindow(QtWidgets.QMainWindow):
             "ENABLE / MOTION" % (
                 1000.0 * snapshot.sample_duration_s,
                 snapshot.limit_relation,
+            ))
+
+    def _build_axis_position_velocity_reference_frame(self):
+        """Build the bounded position/velocity-reference read-only panel."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.axis_position_velocity_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel(
+            "POSITION / VELOCITY REFERENCES - READ-ONLY SNAPSHOT v0.1")
+        title.setProperty("role", "field")
+        head.addWidget(title)
+        head.addStretch(1)
+        self.lbl_axis_position_velocity_state = QtWidgets.QLabel("UNKNOWN")
+        self.lbl_axis_position_velocity_state.setObjectName("pill")
+        self.lbl_axis_position_velocity_state.setProperty("on", "false")
+        self.lbl_axis_position_velocity_state.setProperty(
+            "status", "neutral")
+        head.addWidget(self.lbl_axis_position_velocity_state)
+        layout.addLayout(head)
+
+        self.lbl_axis_position_velocity_contract = QtWidgets.QLabel(
+            single_axis_position_velocity_reference.EVIDENCE_LABEL
+            + " / EXPLICIT REFRESH ONLY / "
+              + single_axis_position_velocity_reference.REFERENCE_SEMANTICS
+            + " / COMMAND LOCKED / NEED-DATA / "
+              "NO PA/PR/JV ASSIGNMENT OR BG")
+        self.lbl_axis_position_velocity_contract.setProperty("role", "hint")
+        self.lbl_axis_position_velocity_contract.setWordWrap(True)
+        self.lbl_axis_position_velocity_contract.setMinimumWidth(0)
+        self.lbl_axis_position_velocity_contract.setMinimumHeight(112)
+        layout.addWidget(self.lbl_axis_position_velocity_contract)
+
+        self.lbl_axis_position_velocity_motor = QtWidgets.QLabel("—")
+        self.lbl_axis_position_velocity_motor.setProperty("role", "value")
+        self.lbl_axis_position_velocity_motor.setWordWrap(True)
+        layout.addWidget(self.lbl_axis_position_velocity_motor)
+
+        rows = (
+            ("PA[1]", "Absolute target readback; effective on a future BG"),
+            ("PR[1]", "Relative target readback; effective on a future BG"),
+            ("JV", "Jog target velocity; effective on a future BG"),
+            ("SP[1]", "Main PTP profile speed limit"),
+            ("AC[1]", "Main profiler acceleration; capped by SD"),
+            ("DC", "Main profiler deceleration; capped by SD"),
+            ("SD", "Stop deceleration and profiler acceleration limit"),
+            ("PX", "Live main-feedback position in counts"),
+            ("VX", "Live main-feedback velocity in counts per second"),
+        )
+        self.axis_position_velocity_table = QtWidgets.QTableWidget(
+            len(rows), 3)
+        self.axis_position_velocity_table.setObjectName(
+            "expertEvidenceTable")
+        self.axis_position_velocity_table.setStyleSheet(
+            "QTableWidget { font-family: 'Segoe UI'; font-size: 11px; }")
+        self.axis_position_velocity_table.setHorizontalHeaderLabels((
+            "DRIVE ITEM",
+            "CURRENT READBACK",
+            "DOCUMENTED MEANING",
+        ))
+        self.axis_position_velocity_table.setEditTriggers(
+            QtWidgets.QAbstractItemView.EditTrigger.NoEditTriggers)
+        self.axis_position_velocity_table.setSelectionMode(
+            QtWidgets.QAbstractItemView.SelectionMode.NoSelection)
+        self.axis_position_velocity_table.setFocusPolicy(
+            QtCore.Qt.FocusPolicy.NoFocus)
+        self.axis_position_velocity_table.setAlternatingRowColors(True)
+        self.axis_position_velocity_table.verticalHeader().setVisible(False)
+        header = self.axis_position_velocity_table.horizontalHeader()
+        header.setSectionResizeMode(
+            0, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            1, QtWidgets.QHeaderView.ResizeMode.ResizeToContents)
+        header.setSectionResizeMode(
+            2, QtWidgets.QHeaderView.ResizeMode.Stretch)
+        self.axis_position_velocity_table.setMinimumWidth(0)
+        self.axis_position_velocity_table.setMinimumHeight(420)
+        for row, (item_name, meaning) in enumerate(rows):
+            for column, value in enumerate((item_name, "—", meaning)):
+                item = QtWidgets.QTableWidgetItem(value)
+                item.setToolTip(value)
+                self.axis_position_velocity_table.setItem(row, column, item)
+        self.axis_position_velocity_table.resizeRowsToContents()
+        layout.addWidget(self.axis_position_velocity_table)
+
+        actions = QtWidgets.QHBoxLayout()
+        self.btn_axis_position_velocity_refresh = QtWidgets.QPushButton(
+            "Refresh Position / Velocity References - READ ONLY")
+        self.btn_axis_position_velocity_refresh.setEnabled(False)
+        self.btn_axis_position_velocity_refresh.clicked.connect(
+            self._refresh_axis_position_velocity_clicked)
+        self._decorate_operation_control(
+            self.btn_axis_position_velocity_refresh,
+            "axis.position_velocity_reference.refresh")
+        actions.addWidget(self.btn_axis_position_velocity_refresh)
+        actions.addStretch(1)
+        layout.addLayout(actions)
+
+        self.lbl_axis_position_velocity_detail = QtWidgets.QLabel(
+            "OFFLINE - no current identity-bound position/velocity snapshot")
+        self.lbl_axis_position_velocity_detail.setProperty("role", "hint")
+        self.lbl_axis_position_velocity_detail.setWordWrap(True)
+        self.lbl_axis_position_velocity_detail.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_position_velocity_detail)
+        self._reset_axis_position_velocity_reference(
+            "OFFLINE - no current identity-bound position/velocity snapshot")
+        return frame
+
+    def _reset_axis_position_velocity_reference(self, reason):
+        """Blank position/velocity readback without changing authority."""
+        self._axis_position_velocity_snapshot = None
+        if not hasattr(self, "lbl_axis_position_velocity_state"):
+            return
+        self.lbl_axis_position_velocity_state.setText("UNKNOWN")
+        self.lbl_axis_position_velocity_state.setProperty("on", "false")
+        self.lbl_axis_position_velocity_state.setProperty(
+            "status", "neutral")
+        self._restyle(self.lbl_axis_position_velocity_state)
+        self.lbl_axis_position_velocity_motor.setText("—")
+        for row in range(self.axis_position_velocity_table.rowCount()):
+            self.axis_position_velocity_table.item(row, 1).setText("—")
+        self.lbl_axis_position_velocity_detail.setText(
+            str(reason or "Position/velocity snapshot unavailable"))
+
+    def _refresh_axis_position_velocity_clicked(self):
+        """Request only the typed, bounded position/velocity read job."""
+        current = bool(
+            self.worker
+            and self.worker.isRunning()
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and not getattr(self, "_connection_shutdown_pending", False))
+        if not current:
+            self._reset_axis_position_velocity_reference(
+                "Current identity/telemetry authority is unavailable")
+            return
+        self._reset_axis_position_velocity_reference(
+            "Reading bounded position/velocity query set in the worker")
+        self.lbl_axis_position_velocity_state.setText("READING")
+        self.worker.refresh_axis_position_velocity_reference()
+
+    def _on_axis_position_velocity_reference(self, snapshot):
+        """Render only a canonical current-session read-only snapshot."""
+        source = self.sender()
+        if source is not None and source is not self.worker:
+            return
+        canonical = None
+        if isinstance(
+                snapshot,
+                single_axis_position_velocity_reference
+                .PositionVelocitySnapshot):
+            canonical = (
+                single_axis_position_velocity_reference
+                .decode_position_velocity_snapshot(
+                    snapshot.raw,
+                    sample_duration_s=snapshot.sample_duration_s,
+                ))
+        current_source = bool(
+            not getattr(self, "_connection_shutdown_pending", False)
+            and getattr(self, "_connection_admitted", False)
+            and getattr(self, "_ui_connected", False)
+            and getattr(self, "_telemetry_authoritative", False)
+            and not getattr(self, "_energizing_state", False)
+            and self.worker
+            and self.worker.isRunning())
+        if (
+                not current_source
+                or not isinstance(
+                    snapshot,
+                    single_axis_position_velocity_reference
+                    .PositionVelocitySnapshot)
+                or snapshot.state != (
+                    single_axis_position_velocity_reference.CURRENT)
+                or canonical is None
+                or canonical.state != (
+                    single_axis_position_velocity_reference.CURRENT)
+                or snapshot != canonical):
+            reason = (
+                getattr(snapshot, "reason", "")
+                or "Noncanonical or non-current position/velocity snapshot")
+            self._reset_axis_position_velocity_reference(reason)
+            return
+
+        snapshot = canonical
+        self._axis_position_velocity_snapshot = snapshot
+        self.lbl_axis_position_velocity_state.setText(
+            "CURRENT - DRIVE READ ONLY")
+        self.lbl_axis_position_velocity_state.setProperty("on", "false")
+        self.lbl_axis_position_velocity_state.setProperty(
+            "status", "neutral")
+        self._restyle(self.lbl_axis_position_velocity_state)
+        self.lbl_axis_position_velocity_motor.setText(
+            "%s - UM=%d %s" % (
+                snapshot.motor_state,
+                snapshot.mode_value,
+                snapshot.mode_name,
+            ))
+        values = (
+            "{:,d} cnt".format(snapshot.absolute_target_count),
+            "{:,d} cnt".format(snapshot.relative_target_count),
+            "{:,d} cnt/s".format(snapshot.jog_velocity_count_per_s),
+            "{:,d} cnt/s".format(snapshot.profile_speed_count_per_s),
+            "{:,d} cnt/s^2".format(snapshot.acceleration_count_per_s2),
+            "{:,d} cnt/s^2".format(snapshot.deceleration_count_per_s2),
+            "{:,d} cnt/s^2".format(
+                snapshot.stop_deceleration_count_per_s2),
+            "{:,d} cnt".format(snapshot.feedback_position_count),
+            "{:,.3f} cnt/s".format(
+                snapshot.feedback_velocity_count_per_s),
+        )
+        for row, value in enumerate(values):
+            item = self.axis_position_velocity_table.item(row, 1)
+            item.setText(value)
+            item.setToolTip(value)
+        self.lbl_axis_position_velocity_detail.setText(
+            "Identity-bound query-only snapshot - acquisition %.1f ms - "
+            "%s - effective AC=%d / DC=%d cnt/s^2 - %s - "
+            "COMMAND LOCKED / NEED-DATA - NO ASSIGNMENT / BG / ENABLE / "
+            "MOTION" % (
+                1000.0 * snapshot.sample_duration_s,
+                snapshot.limit_relation,
+                snapshot.effective_acceleration_count_per_s2,
+                snapshot.effective_deceleration_count_per_s2,
+                snapshot.reference_semantics,
             ))
 
     def _build_axis_digital_inputs_frame(self):
@@ -11604,6 +11854,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.axis_summary.connect(self._on_axis_summary)
         self.worker.axis_current_reference.connect(
             self._on_axis_current_reference)
+        self.worker.axis_position_velocity_reference.connect(
+            self._on_axis_position_velocity_reference)
         self.worker.axis_drive_mode.connect(self._on_axis_drive_mode)
         self.worker.axis_digital_inputs.connect(self._on_axis_digital_inputs)
         self.worker.axis_digital_outputs.connect(self._on_axis_digital_outputs)
@@ -11894,6 +12146,11 @@ class MainWindow(QtWidgets.QMainWindow):
             self, "_reset_axis_current_reference", None)
         if callable(reset_current_reference):
             reset_current_reference(
+                str(detail or "Telemetry authority unavailable"))
+        reset_position_velocity = getattr(
+            self, "_reset_axis_position_velocity_reference", None)
+        if callable(reset_position_velocity):
+            reset_position_velocity(
                 str(detail or "Telemetry authority unavailable"))
         reset_outputs = getattr(
             self, "_reset_axis_digital_outputs", None)
@@ -12464,6 +12721,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 "No current admitted connection snapshot")
             self._reset_axis_current_reference(
                 "No current admitted connection snapshot")
+            self._reset_axis_position_velocity_reference(
+                "No current admitted connection snapshot")
             self._reset_axis_digital_inputs(
                 "No current admitted connection snapshot")
             self._reset_axis_digital_outputs(
@@ -12546,6 +12805,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 telemetry_trusted)
         if hasattr(self, "btn_axis_current_reference_refresh"):
             self.btn_axis_current_reference_refresh.setEnabled(
+                telemetry_trusted)
+        if hasattr(self, "btn_axis_position_velocity_refresh"):
+            self.btn_axis_position_velocity_refresh.setEnabled(
                 telemetry_trusted)
         if hasattr(self, "btn_axis_digital_outputs_refresh"):
             self.btn_axis_digital_outputs_refresh.setEnabled(

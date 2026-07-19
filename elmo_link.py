@@ -262,9 +262,15 @@ _NON_MO_MOTION_PREFIXES = tuple(
 _OBSERVE_ONLY_SCALAR_QUERIES = frozenset((
     # Connection identity and the exact telemetry/safety/axis-summary reads
     # used by the observe-only worker.  Unknown two-letter tokens fail closed.
-    "AC", "DC", "FS", "ID", "IP", "IQ", "LC", "MC", "MF", "MO", "MS", "OP",
+    "AC", "DC", "FS", "ID", "IP", "IQ", "JV", "LC", "MC", "MF", "MO", "MS", "OP",
     "PE", "PS", "PX", "RM", "SD", "SO", "SP", "SR", "TC", "TS", "UM", "VB",
     "VP", "VR", "VX",
+))
+_OBSERVE_ONLY_POSITION_VELOCITY_QUERIES = frozenset((
+    # Only the main-profiler rows used by the bounded Position / Velocity
+    # Reference snapshot.  Other indices remain blocked instead of granting
+    # family-wide access.
+    "PA[1]", "PR[1]", "SP[1]", "AC[1]",
 ))
 _OBSERVE_ONLY_INDEXED_QUERY_BASES = frozenset((
     # Finite register families used by Motor/Feedback/Tuning/Axis summaries
@@ -305,10 +311,10 @@ def _validate_single_vendor_command(cmd: str) -> None:
 
 def _is_motion_command(core: str) -> bool:
     """Fail-closed classification for power-enable and motion commands."""
-    # Bare TC is the documented read-only query.  Every other TC-prefixed
-    # spelling remains motion-gated and observe-only classification separately
-    # admits only this exact token.
-    if core == "TC":
+    # These exact spellings are documented read-only queries.  Assignments,
+    # other indices, and lookalikes remain motion-gated; observe-only
+    # classification separately admits only the frozen query set.
+    if core in {"TC", "JV", "PA[1]", "PR[1]"}:
         return False
     if core.startswith("MO="):
         raw_value = core[3:]
@@ -338,7 +344,9 @@ def _is_safe_deenergizing_command(core: str) -> bool:
 
 def _is_observe_only_query(core: str) -> bool:
     """Recognize only the finite register families this app reads."""
-    if core in _OBSERVE_ONLY_SCALAR_QUERIES:
+    if (
+            core in _OBSERVE_ONLY_SCALAR_QUERIES
+            or core in _OBSERVE_ONLY_POSITION_VELOCITY_QUERIES):
         return True
     match = _OBSERVE_ONLY_INDEXED_QUERY.fullmatch(core)
     if match and match.group(1) in {"IF", "IL"}:

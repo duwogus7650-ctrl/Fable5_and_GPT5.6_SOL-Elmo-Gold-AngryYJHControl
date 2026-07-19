@@ -28,6 +28,15 @@
 [`single-axis-current-reference-read-v0.1.md`](single-axis-current-reference-read-v0.1.md)를
 따른다.
 
+같은 날 `Position / Velocity`의 **조회 부분만** 별도
+`POSITION / VELOCITY REFERENCES - READ ONLY` panel로 구현했다. `PA[1]`,
+`PR[1]`, `JV`는 configured/queued readback일 뿐 활성 command나 실제 motion의
+증거가 아니며, `SP[1]`, `AC[1]`, `DC`, `SD`, `PX`, `VX`도 모두 조회만 한다.
+이 static map의 `can_inspect` capability와 command 잠금은 그대로이고,
+Position/Velocity command는 계속 `MOTION / NEED_DATA`다. 상세 계약은
+[`single-axis-position-velocity-reference-read-v0.1.md`](single-axis-position-velocity-reference-read-v0.1.md)를
+따른다.
+
 이 페이지는 모터나 드라이브를 제어하지 않는다. 실제 Single Axis 기능이
 구현됐거나 안전하다는 판정도 아니다.
 
@@ -154,9 +163,12 @@ Homing/Stepper, Terminal command, Recorder config/acquisition, Apply/SV는
 5. `PARTIAL IMPLEMENTED`: Current Reference exact read-only snapshot.
    `TC=` command는 current/thermal/torque envelope, independent protection,
    watchdog와 `ST -> MO=0` closeout 전까지 잠금
-6. bounded Sine/Homing/Stepper watchdog·abort·rollback
-7. restricted Terminal grammar/allowlist 또는 계속 미지원
-8. Recorder trigger/ownership/upload/provenance와 motion synchronization
+6. `PARTIAL IMPLEMENTED`: Position/Velocity exact read-only snapshot.
+   `PA[1]`, `PR[1]`, `JV`는 configured/queued value로만 표시하고, command
+   실행은 motion envelope, limit/stop, watchdog와 rollback이 검증될 때까지 잠금
+7. bounded Sine/Homing/Stepper watchdog·abort·rollback
+8. restricted Terminal grammar/allowlist 또는 계속 미지원
+9. Recorder trigger/ownership/upload/provenance와 motion synchronization
 9. Gold Twitter 외 Gold family에서 firmware/personality별 반복 검증
 
 이 gate를 통과하기 전에는 문서 map의 row를 실행 control로 바꾸지 않는다.

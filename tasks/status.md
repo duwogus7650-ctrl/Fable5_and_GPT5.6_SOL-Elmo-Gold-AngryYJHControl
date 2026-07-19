@@ -1,590 +1,65 @@
-<!-- scope_progress: 99 -->
-<!-- offline_progress: 99 -->
-<!-- field_progress: 8 -->
-<!-- progress_basis: scope/offline/field are planning indicators, not safety scores; offline 99 includes the zero-new-I/O Enable/Disable state contract and query-only Current Reference contract but not standalone Enable or TC execution; field 8 records host-observed read-only admission plus bounded UM, Digital Input, Digital Output and Current Reference snapshots, not mode change, physical I/O, output actuation, TC assignment, energization, motion, or safety validation -->
+<!-- scope_progress: 100 -->
+<!-- offline_progress: 100 -->
+<!-- field_progress: 10 -->
+<!-- progress_basis: Planning indicators, not safety scores. Field progress records bounded read-only observations only; it does not represent motion, protection, STO, or EAS parity validation. -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + UM/Digital I/O + Current Reference
+# Gold Twitter · Quick + Single Axis + Expert v2
 
-상태: **CURRENT REFERENCE READ v0.1 · CURRENT DRIVE READ ONLY · AFFECTED 286 + FULL 1781 PASS · TC COMMAND LOCKED/NEED-DATA · NO ENERGIZATION/MOTION**<br>
-업데이트: **2026-07-19 18:16 KST**
+상태: **POSITION / VELOCITY REFERENCE READ v0.1 · CURRENT DRIVE READ ONLY**
 
-## 현재 진행 슬라이스
+업데이트: **2026-07-19 KST**
 
-- `single_axis_current_reference.py`: `MO/SO/MF/SR` pre/post와
-  `UM/TC/IQ/ID/CL[1]/PL[1]/LC/MC`만 읽는 16-query identity-bound
-  snapshot을 구현했다.
-- `SR↔MO/SO/LC`, pre/post state, `TC↔PL[1]`,
-  `CL[1]/PL[1]↔MC`, motor-off `IQ=ID=0`을 교차검증하고 하나라도
-  불명확하면 전체 `UNKNOWN`으로 blank한다.
-- 첫 field refresh는 transport의 bare `TC/LC` 조회 누락으로 vendor I/O
-  전에 안전하게 실패했다. exact RED 3건을 만든 뒤 bare `TC/LC`만
-  허용했고 `TC=0.1`, `LC=1`, `TC[1]` 차단은 보존했다.
-- `OBSERVED`: transport/telemetry safety **64 passed**.
-- `OBSERVED`: Current Reference·UI·catalog·main safety·transport 영향 범위
-  **286 passed in 108.92s / exit 0**.
-- `OBSERVED`: 최신 전체 repository
-  **1781 passed in 1269.31s (0:21:09) / exit 0**.
-- `OBSERVED`: installed Gold `TC/CL/PL/LC/MC/ID-IQ/UM/MO-SO/SR`
-  source SHA-256 **9/9 일치**.
-- `OBSERVED`: 최신 Python 3.14 제어창 `COM3 / ONLINE · READ ONLY`,
-  `DISABLED REPORTED`, `UM=5 · Position`, `TC/IQ/ID=0 A`,
-  `CL[1]=21.2132 A`, `PL[1]=70.7107 A`, `LC=OFF`,
-  `MC=140.0000 A`, acquisition **32.2 ms**.
-- executable `TC=` control은 없고 operation catalog에서
-  `ENERGIZING / NEED_DATA`로 잠겨 있다. 다음 gate는 문서·PR closeout이다.
+## 이번 진행 결과
 
-## 현재 기준
+- `Position / Velocity References · Read-Only Snapshot v0.1` 구현 완료.
+- 정확히 18개 query만 사용:
+  `MO/SO/MF/SR` pre/post,
+  `UM`, `PA[1]`, `PR[1]`, `JV`, `SP[1]`, `AC[1]`, `DC`, `SD`, `PX`, `VX`.
+- assignment, `BG`, `MO=1`, 모드 변경, enable, energization, motion은 실행하지 않음.
+- PA/PR/JV는 **configured / queued readback**이며 active command 또는 motion proof가 아님.
+- transport는 위 exact query만 허용하고 assignment, 다른 index, lookalike를 계속 차단.
+- UI에는 편집 control이 없고 `Refresh ... READ ONLY` 버튼 하나만 존재.
+- 실제 화면 검증에서 숨겨졌던 `VX` 9번째 행을 발견해 표 높이를 수정하고 재검증 완료.
 
-- 브랜치: `codex/quick-single-axis-handoff`
-- 작업 시작 기준 HEAD: `1c12808e2d035ae202ee83013f397d52a420eae2`
-- Single Axis 구현 HEAD: `6f1250ffbdd558e65499e4193d69a1872269c729`
-  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert v2 검증·게시 HEAD: `dfda7fef1a63ab05a26691c5b793a6bf62cb3cd2`
-  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Filter/Scheduling evidence inspector 검증·구현 HEAD:
-  `540877ea2b65866bb45aeaad4fc88cd836258e0a`
-  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert Local Page Status / Errors v0.1 검증·구현 HEAD:
-  `a20e19a0d28bc66b91572ad93d4cd2da4f032672`
-  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert User Units · Documented Formula Preview v0.1 검증·구현 HEAD:
-  `0472ee5ae881aabd5a813ea7c176f7c520880d9c`
-  (`origin/codex/quick-single-axis-handoff`, Draft PR #2에 포함)
-- Expert Limits / Protections · Documented Parameter Map v0.1 검증·구현 HEAD:
-  `baa2841bac35ed93cfffd8a9dcbe2dd8bcd83395`
-  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
-- Expert Application Settings · Documented Map v0.1 검증·구현 HEAD:
-  `e577f790f6b15c418f1cd6a8fd9bd55da9a46d1f`
-  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
-- Expert Hidden Verification – Bode · Documented Map v0.1 검증·구현 HEAD:
-  `80731767b0f0b591d4330d6fabd461a1244537bd`
-  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
-- Expert Verification – Time · Documented Map v0.1 검증·구현 HEAD:
-  `91d6ee40d866a4626891a094e51c5561a122a63f`
-  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
-- Expert Summary · Documented Transaction Map v0.1 검증·구현 HEAD:
-  `9ed565eb5ee40a768876e4c192505fd65bb121a7`
-  (`origin/codex/quick-single-axis-handoff`, private Draft PR #2에 포함)
-- Single Axis Controls · Documented Authority Map v0.1 검증·구현 HEAD:
-  `0974ba061b2f616d9515f5eaa26b0f815055894c`
-  (private Draft PR #2 게시 closeout 대상)
-- Single Axis Digital Inputs · Read-Only Snapshot v0.1 구현 HEAD:
-  `8c2a955a0d11c63c691b77f8eeeb21aaa5a2d269`
-  (private Draft PR #2 게시 대상)
-- Single Axis Digital Outputs · Read-Only Snapshot v0.1:
-  구현 HEAD `667c19eb8bd44d1a7d838772753e7fc6d709fb94`
-  (private Draft PR #2 게시 대상)
-- Single Axis Drive Mode · Read-Only Snapshot v0.1:
-  구현 HEAD `d84d7b87495c1725d2fa615a9beb9218a45c60f8`
-  (current target readback·전체 repository 회귀·private Draft PR #2 게시 완료)
-- Single Axis Current Reference · Read-Only Snapshot v0.1:
-  current working tree 구현·current target readback·영향 범위/전체 repository
-  회귀 완료, private Draft PR #2 게시 closeout 대상
-- 현재 작업 대상:
-  Motion page `CURRENT REFERENCE · READ-ONLY SNAPSHOT v0.1`의 전체
-  repository 회귀·private Draft PR 게시 closeout.
-  exact query set만 읽었고 `UM=`/`TC=` assignment, mode change,
-  Enable/Disable, `JV/PA/PR/BG`, PTP/Jog/Sine/Homing/Stepper,
-  Terminal command, Recorder config/acquisition은 실행하지 않음
-- 사용자 제공 현장 상태: 드라이버 전원 연결. 이는 `UNVERIFIED` 현장 진술이며
-  drive 연결, Enable, parameter download, Verify, recorder 시작, 통전·모션
-  승인으로 사용하지 않는다. 제어창은 화면 확인만 수행한다.
-- Gold/SimplIQ 설치 문서에서 Current §8.2.8.3과 V/P §8.2.13.4를 다음
-  bounded slice로 동결했다. Current Verify는 통전과 비의도 이동/twitch 가능성이
-  있고 V/P Profiler·Sine/Step·편집 가능한 Current와 control parameters는
-  MOTION/전류·토크 변경 위험이 있으므로 문서 열람만 구현하고 실행 권한은 잠갔다.
-- Hidden Bode 구현은 private `origin`의 게시 HEAD다. 여덟 번째
-  `BODE DOC MAP` page에 Tuner Settings 8 / Current Bode 8 /
-  Velocity·Position Bode 8개 immutable documentation row, 7 frozen source
-  identity, 4 conflicts, 12 warnings, 8 missing-evidence를 고정했다.
-- authority는 `DOCUMENTED_HIDDEN_BODE_MAP_ONLY`, status는
-  `PARTIAL_NEED_DATA`; local catalog/UI inspect만 GREEN이다. 실제 Current
-  Verify는 ENERGY, V/P Verify는 MOTION이지만 이 page는 drive read/current
-  state/acquisition/evaluation/Verify/EAS setting change/recording/command/
-  write/Apply/Revert/SV/energization/motion을 제공하지 않는다.
-- 독립 검토의 LOW 표현 지적에 따라 실제 실행처럼 읽히던 `VERIFY BODE`를
-  `BODE DOC MAP`으로, `MODEL STATUS`를 `EVIDENCE STATUS`로 바꿨다.
-- runtime 구조 smoke는 Python 3.14, 1366×820, **OFFLINE**에서 8/8/8개 행,
-  action/edit widget 0, 수평 scroll 0을 확인했다. cosmetic label 수정 뒤에는
-  해당 권한/UI와 세 테마 geometry 테스트를 현재 트리에서 재통과했다.
-  Connect·읽기·쓰기·Verify·설정 변경·통전·구동은 실행하지 않았다.
-- Page Status runtime smoke: 네 번째 `STATUS / ERRORS` 단계에서
-  `OVERALL PARTIAL · LOCAL STATUS ONLY`, P1 `MISSING`, P2 `BLOCKED`,
-  Evidence `DOCUMENTED PARTIAL · 5 unresolved document conflicts`를 관찰.
-  `NOT EAS ENTER/APPLY STATE · NOT INSTALLED · NO DRIVE I/O`와
-  Apply/Save `LOCKED`가 동시에 유지됨
-- User Units runtime smoke: 다섯 번째 `USER UNITS` 단계에서 blank 수동 입력,
-  `DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA`, `NO FC/OF WRITE · NO DRIVE I/O`를
-  관찰. NetHelp 예제는 정확히 `1/100 = 0.01 µm/count`, `100 count = 1 µm`였고,
-  `FC[7]` 편집 뒤 `STALE · previous documented preview retained as historical only`로
-  강등되는 것을 확인한 뒤 기준값으로 복원·재계산
-- Expert runtime smoke: P1은 `fc=430.129 Hz · PM=55.69 deg`, P2는
-  `K_a=5.794e6 cnt/s²/A_peak · B=1e-7 A_peak/(cnt/s)`에서
-  `MODEL GATE PASS · D=0.5794 1/s · bandwidth=457.500 rad/s`.
-  입력을 `5.8e6`으로 바꿨을 때 `STALE` 전환을 관찰한 뒤 기준값으로 복원·재계산
-- EAS: 설치본을 실행해 **drive 미연결** 상태에서 Quick Automatic Tuning,
-  Expert Tuning tree, Motion - Single Axis 화면 구조를 직접 관찰. Connect/Enable/Run/Apply/Save는
-  누르지 않았고 직접 장비 식별자는 문서에서 제외
-- 사용자 현장 복귀: 실기 준비는 가능하지만, 현재 working tree로 모터 동작은 아직 실행하지 않음
-- Read Only 입장: 펌웨어/PAL/boot/target-class 표시와 `MO=0`, `SO=0`, `MF=0`,
-  `VX=0`, active current `0 A`, position error `0`을 현재 세션에서 관찰
+## 현재 검증
 
-## 검증 상태
+- `OBSERVED` pure decoder/reader: **56 passed**.
+- `OBSERVED` transport + pure: **144 passed**.
+- `OBSERVED` authority/UI/catalog/transport 직접 영향 범위: **244 passed**.
+- `OBSERVED` closeout 영향 범위(모니터 포함): **270 passed in 104.51s**.
+- `OBSERVED` 설치 Gold command source SHA-256: **13 / 13 일치**.
+- `OBSERVED` 전체 repository 회귀: **1868 passed in 735.79s (12:15)**.
+- `git diff --check`: **exit 0**.
 
-- `OBSERVED` Single Axis Current Reference v0.1 pure/transport/UI/catalog/
-  main safety 영향 범위 **286 passed in 108.92s / exit 0**,
-  observe-only transport safety **64 passed**.
-- `OBSERVED` Current Reference 포함 최신 전체 repository:
-  **1781 passed in 1269.31s / exit 0**, skip/xfail summary 없음.
-- `OBSERVED` 첫 current-target refresh는 exact bare `TC`/`LC`가 transport
-  allowlist에 없어 vendor I/O 전에 실패했다. query allow RED 2건과
-  composed-reader RED 1건을 재현하고 exact query만 허용한 뒤 실제
-  `CURRENT · DRIVE READ ONLY`로 닫았다.
-- `OBSERVED` 수정된 Python 3.14 제어창의 현재 Gold Twitter
-  `ONLINE · READ ONLY` session: `DISABLED REPORTED`, `UM=5 · Position`,
-  `TC/IQ/ID=0 A`, `CL[1]=21.2132 A`, `PL[1]=70.7107 A`,
-  `LC=0 · OFF`, `MC=140.0000 A`, acquisition **32.2 ms**.
-  assignment, enable, loop change, energization, motion은 실행하지 않았다.
-- `OBSERVED` installed Gold current-reference source SHA-256 **9/9 일치**.
-  이는 current drive parameter/readback이지 physical current, torque,
-  RMS conversion, thermal limit, EAS parity 또는 safety 증거가 아니다.
-- `OBSERVED` Single Axis Drive Mode v0.1 pure contract **24 passed**,
-  decoder/worker/catalog/UI/transport/safety integration
-  **261 passed in 88.22s**, 최신 focused split **53 + 287 passed**,
-  3-skin Motion UI **32 passed in 57.09s**. Axis Summary도 동일한
-  canonical `Speed` / `Stepper open/closed loop` 명칭을 재사용한다.
-- `OBSERVED` Drive Mode 포함 최신 전체 repository:
-  **1717 passed in 1012.58s / numeric exit 0**.
-- `OBSERVED` 수정된 Python 3.14 제어창의 현재 Gold Twitter
-  `ONLINE · READ ONLY` session에서 motor `DISABLED`, velocity/current 0,
-  `UM=5 · Position`, acquisition **2.1 ms**를 관찰했다. 이는 current
-  drive report이며 EAS parity, persistence state, control performance,
-  family compatibility 또는 safety 증거가 아니다.
-- `OBSERVED` exact 게시 commit `d84d7b8`로 제어창을 재시작한 뒤
-  `ONLINE · READ ONLY / MOTOR DISABLED / UM=5 · Position`을 acquisition
-  **2.3 ms**로 재관찰했다. 제어창은 이 상태로 열려 있다.
-- `OBSERVED` installed Gold `UM – Unit Mode` HTML SHA-256 **1/1 일치**.
-  문서상 UM은 non-volatile R/W이고 assignment에는 motor-off 제한이 있으므로
-  `axis.drive_mode.change`는 exact readback/persistence recovery/rollback
-  authority가 고정될 때까지 `NEED-DATA`다.
-- `OBSERVED` Single Axis Digital Outputs v0.1 pure contract **24 passed**,
-  transport/worker/catalog/UI 포함 integration slice **113 passed in 46.12s**.
-- `OBSERVED` Digital I/O 최신 직접 영향 범위
-  **276 passed in 53.27s / exit 0**; 전체 repository
-  **1673 passed in 493.02s / exit 0**.
-- `OBSERVED` 수정된 Python 3.14 제어창과 현재 Gold Twitter
-  `ONLINE · READ ONLY` session: `CURRENT · DRIVE READ ONLY`; Output 1–4 모두
-  `INACTIVE · DRIVE LOGICAL ACTIVATION / General purpose / ACTIVE_HIGH /
-  Function via OL[N]`, acquisition **18.1 ms**, final `OP` read. 이는 physical
-  pin voltage/current, external load/brake behavior, STO test 또는 EAS parity
-  증거가 아니다.
-- `OBSERVED` installed Gold `OP/GO/OL` HTML과 local Gold Twitter Installation
-  Guide source SHA-256 **4/4 일치**. 매뉴얼 page 62–63을 렌더링해 OUT1/2
-  5 V logic, OUT3/4 3.3 V logic을 시각 대조했다.
-- `OBSERVED` Single Axis Digital Inputs v0.1 최신 직접 영향 범위:
-  **133 passed in 96.03s**, 숫자 종료코드 **0**.
-- `OBSERVED` 이전 Digital Input closeout의 전체 repository stdout:
-  **1639 passed in 827.24s**, 100%, stderr **0 bytes**. 별도 exit watcher가
-  빈 파일을 남겨 전체 suite의 숫자 exit code는 **UNVERIFIED**로 분리하며,
-  이를 `exit 0`이라고 기록하지 않는다.
-- `OBSERVED` 첫 Read Only field refresh는 transport query allowlist를
-  통과했지만 worker observer-job allowlist가 `axis_digital_inputs_read`를
-  거부했다. query-only guard test에 새 허용 case를 추가해 **RED 1 / 5**를
-  재현하고, 이 read job 하나만 allowlist에 추가한 뒤 관련 gate
-  **6 passed / exit 0**과 위 133/1639 회귀를 완료했다.
-- `OBSERVED` 수정된 Python 3.14 새 제어창과 현재 Gold Twitter Read Only session:
-  `CURRENT · DRIVE READ ONLY`; Input 1–6 모두
-  `ACTIVE · DRIVE LOGICAL / General purpose / ACTIVE_HIGH · non-sticky /
-  0.000 ms`, acquisition **25.9 ms**, final `IP` read. 이는 raw pin voltage,
-  wiring correctness, safety input 또는 EAS parity 증거가 아니다.
-- `OBSERVED` installed source SHA-256 **4/4 일치**, `py_compile`과
-  `git diff --check` 통과, 세 skin table contrast ≥4.5:1·horizontal scroll 0.
-  사용자 소유 `media/smoke_main.png` SHA-256
-  `05C2A71B0D1A44EA83359994B02D88183D14ADC70172E5FD5396BEE76305C8D3`
-  불변이며 stage/commit에서 제외했다.
-- `OBSERVED` Single Axis Controls immutable model/UI/catalog:
-  exact 3 sections/12 grouped rows(4/4/4), frozen singleton, strict lookup,
-  fail-closed capabilities, fresh import/build file·socket·subprocess I/O poison,
-  worker/connection/telemetry/commutation/Session Zero/PTP/STOP authority 불변,
-  inspector action/edit widget 0을 **53 passed in 45.33s**로 확인했다.
-- `OBSERVED` 관련 Motion·menu·safety·Recorder·status/system/tool 영향 범위:
-  **560 passed**.
-- `OBSERVED` 최신 전체 repository:
-  **1604 passed in 478.69s**, 종료코드 **0**, stderr **0 bytes**.
-- `OBSERVED` 새 Python 3.14 제어창 runtime:
-  1366×820 `OFFLINE · READ ONLY`; QDD dark high-contrast table에서
-  `Status & I/O`, `Mode & Reference`, `Activation & Tools`가 각각
-  **4 documented groups**로 전환됨을 확인했다. 세 skin geometry test는
-  수평 scroll 0과 table contrast **≥4.5:1**을 고정한다.
-- `OBSERVED` 설치 Gold UM HTML + Single Axis overview/areas image SHA-256:
-  **3/3 일치**.
-- 이 `GREEN`은
-  `DOCUMENTED_SINGLE_AXIS_AUTHORITY_MAP_ONLY · PARTIAL_NEED_DATA`의
-  로컬 문서 catalog/UI에만 적용된다. live state, Digital Output write,
-  UM transaction, Enable/Disable, PTP/Jog/Current/Sine/Homing/Stepper,
-  Terminal command, Recorder config/acquisition과 Gold family/EAS parity는
-  모두 **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` Summary immutable model/UI/catalog 영향범위:
-  **276 passed in 62.86s**. exact 3 sections/12 grouped rows(4/4/4),
-  frozen singleton, 3 source identity, strict lookup, fail-closed capability,
-  fresh import/build file·socket·subprocess I/O poison, actual Save/SV/file/
-  DB control 부재, 기존 Expert/connection/persistence/safety authority 불변,
-  세 테마 1366×820 contrast/header/no-horizontal-scroll을 확인했다.
-- `OBSERVED` Summary를 포함한 최신 전체 repository suite:
-  **1587 passed in 266.87s**, 직접 `pytest` 실행의 숫자 종료코드 **0**.
-- `OBSERVED` 새 Python 3.14 제어창 runtime:
-  1366×820, `OFFLINE · READ ONLY`; 열 번째 `SUMMARY DOC MAP` page와
-  `Recommended Actions`, `Save Transaction`, `Authority Split` 각
-  **4 documented groups**, Summary page action/edit widget **0**을 확인했다.
-  Connect, drive read/upload, Summary Save, SV, file dialog/export,
-  design export, DB import/mutation, Apply, energization/motion은 실행하지 않았다.
-- `OBSERVED` 설치 Gold UM HTML + before/after image SHA-256:
-  **3/3 일치**.
-- 이 GREEN은 `DOCUMENTED_SUMMARY_TRANSACTION_MAP_ONLY · PARTIAL_NEED_DATA`
-  로컬 문서 열람 계약에만 적용된다. actual drive/file/design/DB transaction,
-  saved/complete claim, atomicity/rollback과 field behavior는 모두
-  **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` Verification–Time immutable model/UI/catalog 영향범위:
-  핵심 계약 **40 passed in 22.68s**, Expert 전체 영향범위 **99 passed in
-  98.84s**. exact 3 sections/24 grouped rows(8/8/8), frozen singleton,
-  8 source identity/path suffix, strict lookup, fail-closed capability,
-  worker/link/dispatch/recorder/file action poison, late Axis/Recorder 비전파와
-  세 테마 1366×820 contrast/header/no-horizontal-scroll을 확인했다.
-- `OBSERVED` 독립 검토에서 발견한 V/P editable Current, Current Verify의
-  motor-movement warning, field weakening/friction의 current·torque 위험,
-  `can_energize/can_revert=false`, recorder poison coverage와 UI 표시 단일
-  truth-source 누락을 RED로 재현한 뒤 수정했다.
-- `OBSERVED` Verification–Time을 포함한 최신 전체 repository suite:
-  **1567 passed in 524.64s**, 직접 `pytest` 실행의 숫자 종료코드 **0**.
-- `OBSERVED` 새 제어창 runtime smoke:
-  Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 아홉 번째
-  `TIME DOC MAP` page와 selector 3개 section, section별 8개 documented
-  group, action/edit widget **0**을 확인했다. Connect, drive/Recorder read,
-  Verify, Enable, PTP, Jog, Sine/Step, recording, Apply/SV, 통전·모션은
-  실행하지 않았다.
-- `OBSERVED` Verification–Time 독립 read-only 재검토:
-  **잔여 HIGH/MEDIUM/LOW 없음**. 8개 설치 source location을 독립적으로
-  다시 해시해 SHA-256 **8/8 일치**를 확인했다.
-- 이 GREEN은 `DOCUMENTED_TIME_VERIFICATION_MAP_ONLY · PARTIAL_NEED_DATA`
-  로컬 문서 열람 계약에만 적용된다. actual Current Verification–Time은
-  `ENERGY + possible motion`, V/P Verification–Time은 `MOTION`; 둘 다
-  별도 envelope/recorder provenance/abort/restore/acceptance 전에는
-  **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` Hidden Bode immutable model contract:
-  **14 passed**. exact 3 sections/24 rows(8/8/8), frozen singleton,
-  strict lookup, 7 sources, 4 conflicts, 12 warnings, 8 missing-evidence,
-  file/process/network I/O poison과 inspect만 true인 fail-closed capability를 확인했다.
-- `OBSERVED` LOW 표현 개선 뒤 Hidden Bode Expert 영향범위 회귀:
-  **211 passed in 65.06s**. 기존 P1/P2 MODEL과 다른 Expert inspector,
-  operation catalog, late Axis/model 비전파, 8-step UI zero-I/O/authority,
-  세 테마 1366×820 geometry/contrast를 재확인했다.
-- `OBSERVED` 직전 Hidden Bode 게시 트리의 전체 repository suite:
-  **1547 passed in 503.66s**, 직접 `pytest` 실행의 숫자 종료코드 **0**
-- `OBSERVED` Hidden Bode 독립 read-only 검토:
-  **HIGH/MEDIUM 없음**. 7개 설치 source SHA-256을 원본에서 독립 재계산해
-  전부 동결값과 일치했고, LOW UI 표현 2건은 `BODE DOC MAP`과
-  `EVIDENCE STATUS`로 수정한 뒤 영향범위·전체 회귀를 다시 통과했다.
-- 이 GREEN은 immutable documentation catalog/UI의 열람 계약에만 적용된다.
-  실제 EAS Bode 측정, current/position/velocity 응답, tuning 적합성,
-  model/measurement parity, 정량 acceptance와 hardware safety는
-  **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` 첫 Hidden Bode 전체 실행은 기존 Status Monitor GUI 테스트의
-  Qt native access violation으로 비정상 종료했다. 같은 시각 오래 실행 중이던
-  별도 pytest process가 관찰됐지만 직접 원인인지는 `UNVERIFIED`다.
-  해당 단일 테스트 **1 passed**, 후속 전체 실행 **1547 passed / exit 0**,
-  LOW 표현 개선 뒤 최신 전체 재실행도 **1547 passed / exit 0**이었다.
-- `OBSERVED` Application Settings 모델·UI·operation catalog·authority focused 회귀:
-  **85 passed**. immutable 3 sections/13 rows(4/4/5), 24 source identity,
-  9 conflicts, 16 warnings, 6 missing-evidence, strict lookup/digest,
-  file/process/network/worker/link/drive I/O poison, 기존 Expert/installed/
-  dispatch/connection/safety와 Run/Verify/Apply/Restore/Save authority 불변,
-  late Axis Summary 비전파, 세 테마 1366×820 geometry/contrast를 확인했다.
-- 이 85-pass 결과에서 **로컬 immutable catalog/UI만 GREEN**이다.
-  current drive config/I/O state, exact B01G output electrical/brake capability,
-  current/default 판정, transaction/readback/rollback, output actuation,
-  brake/safety efficacy와 field behavior는 **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` Application Settings를 포함한 최신 전체 repository suite:
-  **1529 passed in 476.14s**, 직접 `pytest` 실행의 숫자 종료코드 **0**
-- `OBSERVED` Application Settings 독립 closeout:
-  **잔여 HIGH/MEDIUM/LOW 없음**. 독립 재계산한 24개 source SHA-256 전부
-  동결값과 일치했고 미검증 Gold Twitter 설치/하드웨어 PDF는 제외됨
-- `OBSERVED` Application Settings runtime GUI smoke:
-  Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 4/4/5개 행, 24개 frozen
-  identity, 짧은 표 헤더와 app inspect-only를 확인. Connect,
-  drive/worker/command/output/motion I/O 없음
-- `OBSERVED` Limits/Protections 모델·UI·operation catalog·authority focused 회귀:
-  **69 passed**. canonical frozen snapshot, 27개 command row, 9개 문서 충돌,
-  danger warning, strict lookup, 20개 source hash, zero file/process/network/worker/link/job/query/write,
-  기존 P1/P2/Evidence/Page Status/User Units/installed/dispatch/connection/safety 권한 불변,
-  세 테마 1366×820 geometry를 확인
-- 이 69-pass 결과에서 **로컬 immutable documented catalog만 GREEN**이다.
-  current drive config, active protection state, firmware/EAS parity, 값 유효성·추천,
-  protection efficacy, read/write/Apply/Revert/SV와 field safety는
-  **`NEED-DATA / NO-GO`**다.
-- `OBSERVED` 직전 Limits/Protections 기준 전체 오프라인 suite:
-  **1513 passed in 698.16s**. 출력은 100%와 passed summary까지 완료됐고 stderr는
-  비어 있으며, 별도 capture-completeness 검사는 exit 0이다. 백그라운드 launcher가
-  원 pytest process의 숫자 exit code를 보존하지 않은 한계는 남긴다.
-- `OBSERVED` Limits/Protections 독립 closeout:
-  SimplIQ source, mutation digest, documented/app access 구분, fresh-import poison,
-  connection/safety authority snapshot과 세 테마 contrast를 재확인해
-  **잔여 HIGH/MEDIUM/LOW 없음**. 독립 focused 실행도 **69 passed**
-- `OBSERVED` Limits/Protections runtime smoke:
-  Python 3.14, 1366×820, `OFFLINE · READ ONLY`; 세 section 7/9/11 row,
-  20 frozen identities, dark high-contrast table, action control 없음,
-  Apply/Save `LOCKED`; drive/worker/command I/O와 motor action 없음
-- `OBSERVED` 최초 runtime table palette 결함:
-  흰 배경/밝은 글자를 RED로 재현한 뒤 `expertEvidenceTable` 전용 세 테마 스타일과
-  text/base contrast `>=4.5` 회귀로 수정
-- `OBSERVED` 직전 게시 기준 전체 오프라인 suite:
-  **1498 passed, 0 failed in 275.50s**. Limits/Protections 추가 전 기준선
-- `OBSERVED` 직전 게시 기준 Expert P1/P2·filter/scheduling evidence·Page Status·User Units·UI·catalog
-  집중 회귀: **162 passed, 0 failed in 59.11s**. 새 Limits/Protections working tree는 포함하지 않음
-- `OBSERVED` User Units 모델·UI·catalog·authority 집중 회귀:
-  **51 passed, 0 failed in 10.09s**
-- `OBSERVED` User Units 독립 검토 3회 결과:
-  로컬 `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` 범위에서
-  **잔여 HIGH/MEDIUM/LOW 없음**. 현재 drive config, EAS 수치 parity,
-  operational suitability와 field safety는 계속 `NO-GO / NEED-DATA`
-- `OBSERVED` Page Status 순수 projection 직접 회귀: **10 passed**
-- `OBSERVED` 독립 리뷰에서 P2 stale가 변조 candidate를 가리는 경로,
-  forged evidence가 `DOCUMENTED PARTIAL`로 보이는 경로, P2 MISSING 직접 대조 누락,
-  hidden page text-edit별 고비용 재계산을 발견. RED 5건으로 재현해
-  coherence-before-stale, canonical snapshot 전체 동등성, 명시 MISSING,
-  hidden-page dirty/visible-page one-shot refresh로 수정; 최종 잔여 HIGH/MEDIUM/LOW 없음
-- `OBSERVED` MAN-G-CR 1.406에서 filter type `0..6`, KV controller slots,
-  KG table blocks와 `GS[2]=0..66` category만 immutable topology evidence로 고정
-- `OBSERVED` KG `1..504/1..945`, scheduled position `KV[45]/KV[50]`,
-  KV `1..90/KV[91..95]`, position boundary `GS[18,20]/GS[19],GS[20]`,
-  speed scheduling `GS[1,6,8,10]`/`GS[6],GS[7],GS[8] Reserved`
-  문서 충돌 5건을 정규화하지 않는 음성 대조가 GREEN
-- `OBSERVED` inspector는 DriveWorker/ElmoLink/job/command를 만들지 않고,
-  P1/P2 candidate·installed readback·Verify/Apply/Save·dispatch authority를 바꾸지 않음
-- `OBSERVED` 최신 source runtime smoke:
-  `OFFLINE · READ ONLY`, filter type `4 · Notch`, `Scheduled position filter`,
-  `GS[2]=64 · SPEED`, 다섯 문서 충돌과 `NO MODEL · NO EMULATION · NO WRITE ·
-  NO DRIVE I/O`; Apply/Save는 계속 `LOCKED`
-- `OBSERVED` Expert v2 수치 모델·UI·operation catalog·palette 격리 집중 회귀:
-  **74 passed, 0 failed in 44.40s**
-- `OBSERVED` P2 동결 기준점, 대수 관계, malformed delegate mutation,
-  invalid-input atomic preservation, worker/link/job 0개, installed readback/Verify/Apply/Save
-  authority 불변, qdd/amber/angrybirds 1366×820 무수평스크롤을 고정
-- `OBSERVED` 독립 리뷰 HIGH 1건(P1 plant provenance/delegate self-pass)과
-  MEDIUM 1건(input edit 뒤 stale PASS)을 RED 5건으로 재현한 뒤 수정; 해당 5건 GREEN
-- `OBSERVED` Single Axis snapshot·connection generation·session log·motion 집중 회귀:
-  **346 passed, 0 failed in 127.18s**
-- `OBSERVED` 집중 연결·텔레메트리·모니터·테마 회귀: **204 passed**
-- `OBSERVED` 1366×820 세 테마 레이아웃 회귀: **33 passed**
-- `OBSERVED` 독립 리뷰의 access-mode 증거 누락·복구 잠금·자기서명 경로 3건:
-  RED 재현 후 수정, 음성 대조 **3 passed**
-- `OBSERVED` 실패 이력: 강화된 access-mode 계약 직후 **1285 passed / 44 failed**였고,
-  생산 경계를 완화하지 않은 채 기존 test double에 의도 모드를 명시하여 위 전체 GREEN으로 복구
-- `OBSERVED` `git diff --check`: exit 0. 출력은 기존 LF→CRLF 변환 경고뿐
-- `OBSERVED` 현재 working tree Read Only 최종 세션 로그: **12 events · 0 dropped**,
-  마지막 이벤트 `connection.closed · worker stopped`,
-  `evidence_class=HOST_OBSERVED_NOT_DRIVE_HISTORY`,
-  SHA-256 `C8E818BBF8690A14DC88503E3A2838EE448D3B336A18FE57E7C8E3BC8025CF7A`
-- `OBSERVED` 위 세션에서 telemetry authority가 비활성 상태로 잠시 해제된 뒤 복구됨.
-  당시 `energizing=false`; 복구 후 `motor_enabled=false`
-- `OBSERVED/DERIVED` sequence 690–694는 host-source age가
-  `1514.2 / 1295.3 / 1077.4 / 859.9 / 639.8 ms`로 모두 0.5 s source-age gate를
-  초과해 fail-closed 거부됨. 약 1.5 s UI queue backlog의 직접 유발 동작은 `UNVERIFIED`
-- `OBSERVED` 페이지 전환 뒤 공용 스크롤 값 `923` 잔류를 RED로 재현하고,
-  실제 페이지가 바뀔 때만 새 페이지 원점으로 초기화. 집중 회귀 **67 passed**
-- `OBSERVED` Disconnect/창 닫기 즉시 authority를 폐기하고 late
-  telemetry/connected/failed에도 `DISCONNECTING`과 선택기 잠금을 유지하도록 수정.
-  직접 영향 **169 passed**, 추가 UI/safety **182 passed**, 독립 재검토 **102 passed**
-- `OBSERVED` 최신 runtime smoke: Expert Candidate Lab v2에서 P1과 P2를 순서대로
-  계산했고 위 기준점에서 각각 PASS. K_a 편집 시 기존 immutable 결과는 보존되지만
-  상태가 `STALE · recalculation required`로 바뀌었고, 기준값 복원·재계산 뒤 PASS.
-  전체 과정은 `OFFLINE MODEL · NO DRIVE / WORKER / COMMAND I/O`,
-  Apply/Save `LOCKED`; hardware Run/Verify는 OFFLINE disabled
-- `OBSERVED` EAS 미연결 UI baseline:
-  Quick 6단계, Expert의 Limits/Protections·Current·Commutation·Velocity/Position·Scheduling,
-  Single Axis의 I/O·STO·UM·Current/Stepper/Sine·PTP·Terminal·Recorder 구조를 직접 매핑
+## COM3 read-only 관찰
 
-## 구현된 범위
+- 상태: `ONLINE · READ ONLY`, `DISABLED REPORTED`, `UM=5 Position`.
+- `PA[1]=0 cnt`, `PR[1]=0 cnt`, `JV=0 cnt/s`.
+- `SP[1]=4,444,444 cnt/s`.
+- `AC[1]=DC=SD=1,000,000 cnt/s²`; `AC/DC WITHIN SD`.
+- `PX=-2,038,379,934 cnt`, `VX=0.000 cnt/s`.
+- acquisition: **35.6 ms**.
+- `PX=0` 또는 다른 쓰기는 실행하지 않음.
 
-- **Read Only 기본 연결**
-  - link 생명주기 단방향 observe-only latch
-  - allowlisted query + software safe-shutdown만 허용
-  - `MO=SO=VX=MF=0`, `PS=-2/-1` 정지상태 2회 일치 입장
-  - requested / transport / returned access mode 3방향 일치
-- **Supervised Control 연결**
-  - 연결별 1회 확인, 기본값 Cancel
-  - 연결 자체는 Enable·모션·커뮤테이션·튜닝·`PX=0`·쓰기·`SV` 승인이 아님
-  - mutation UI는 fresh telemetry + supervised mode + `MO=0` 필요
-- **Quick Tuning**
-  - P1 / commutation signature / P2 / Verify / Abort가 Quick과 Expert에서 공통 표시
-  - Apply/Save는 계속 `NEED-DATA` 잠금
-- **Single Axis**
-  - finite-PTP 오프라인 backend는 MODEL 검증
-  - 기존 Axis Summary의 `MO/SO/MF/PS/SR/MS`만 소비하는
-    `DRIVE-REPORTED · MODEL · NOT STO TEST EVIDENCE` safety snapshot 구현
-  - 누락·NaN/Inf·bool·비정수·초대형 정수·reserved SR bit·문서 밖 amplifier/profiler code는
-    전체 model authority `UNKNOWN`
-  - SO/SR4 또는 PS/SR12 불일치는 `INCONSISTENT · AUTHORITY UNKNOWN`
-  - 신규 query/job/link 호출 없이 current worker generation만 처리하고 disconnect 즉시 blank
-  - telemetry authority 상실·energizing 중에는 snapshot만 blank하되 current-worker
-    `motion_config_unknown` fail-safe latch는 계속 수용
-  - Digital Input 1–6은 explicit refresh에서 `IL[1..6]`, `IF[1..6]`,
-    final `IP`만 동일 session·2 s bounded snapshot으로 읽음
-  - missing/invalid/reserved/session-change/timing 오류와 forged partial
-    `CURRENT` object는 전체 blank; `IB`, assignment, Digital Output,
-    mapping/filter 변경, enable/motion surface 0
-  - current target 1회 readback은 관찰했지만 physical pin/wiring response,
-    EAS same-moment parity와 polarity/filter/sticky timing은 `NEED-DATA`
-  - live PTP는 기계 envelope·limit·정지거리·독립 E-stop/STO 근거 전까지 `NEED-DATA`
-- **Expert Candidate Lab v2**
-  - 두 단계 Current P1 → Velocity/Position P2 immutable LOCAL MODEL
-  - explicit phase-to-phase R/L/TS, count/s·peak-A `K_a/B` basis
-  - P1 성공 시 종속 P2 폐기, invalid 입력 시 이전 완전한 모델 보존
-  - P2 KP[2]/KI[2]/KP[3]와 modeled PM/GM 표시; `I_c`는 선형 모델에서 제외
-  - candidate/installed readback/`_vp_result` 권한 분리, drive/worker/command I/O 0
-  - `MODEL GATE`, `SINGLE-POINT`, `GS[2]=0 ONLY`, `FILTER NEED-DATA`를 UI에 고정
-  - EAS 전체 패리티·filter·gain scheduling·vendor 비공개 알고리즘 복제는 잔여
-- **Expert Filter / Scheduling Evidence v0.1**
-  - Expert 세 번째 단계에서 공개 문서의 filter type·KV location·KG block·
-    `GS[2]` mode category를 읽기 전용으로 탐색
-  - `DOCUMENTED TOPOLOGY ONLY · LOCAL INSPECTOR · NO MODEL · NO EMULATION ·
-    NO WRITE · NO DRIVE I/O`
-  - 공개 command reference의 충돌 5건과 누락 근거를 그대로 표시
-  - exact transfer/discretization/range/cascade/quantization/saturation/
-    anti-windup/interpolation/boundary는 `NEED-DATA`
-  - filter response·coefficient synthesis·KV/KG/GS write는 구현하지 않음
-- **Expert Local Page Status / Errors v0.1**
-  - Expert 네 번째 단계에서 현재 P1/P2/evidence immutable 상태만 분류
-  - `MISSING / BLOCKED / STALE / INVALID / CURRENT LOCAL MODEL /
-    DOCUMENTED PARTIAL`; 전체는 항상 `PARTIAL`
-  - exact P1↔P2 object binding, 재계산 coherence, canonical evidence 전체 동등성 검증
-  - hidden page에서는 dirty만 기록하고 실제 page 진입 때 한 번 갱신
-  - `LOCAL STATUS ONLY · NOT EAS ENTER/APPLY STATE · NOT INSTALLED ·
-    NO CALCULATION · NO WRITE · NO DRIVE I/O`
-  - EAS icon/Enter/Apply/Revert/last-page/Summary recommendation은 `NEED-DATA`
-- **Expert User Units · Documented Formula Preview v0.1**
-  - Expert 다섯 번째 단계에서 명시적 `FC[1], FC[2], FC[5], FC[6], FC[7], FC[8]`
-    정수 입력만 받아 NetHelp 위치 식을 exact `Fraction`으로 계산
-  - MAN-G-CR의 두 `2^63` product guard는 문서 그대로 별도 적용하고,
-    식과 guard의 index 묶음 차이는 `DOCUMENTED GROUPING MISMATCH · PURPOSE NEED-DATA`
-    로 항상 표시
-  - blank/no-auto-fill, current/stale/invalid historical retention과
-    `DOCUMENTED_FORMULA_PREVIEW / PARTIAL_SCREENING` authority를 고정
-  - `NOT CURRENT DRIVE CONFIG · NO FC/OF WRITE · NO APPLY/SV · NO DRIVE I/O`
-  - Motion/Recorder/Status 단위 전파, drive readback, EAS parity와 안전 적합성은 비범위
-- **Expert Limits / Protections · Documented Parameter Map v0.1**
-  - Expert 여섯 번째 단계에서 `Current Limits`, `Motion Limits and Modulo`,
-    `Protections`의 27개 명령 row를 frozen static catalog로 표시
-  - authority `DOCUMENTED_PARAMETER_MAP_ONLY`, status `PARTIAL_NEED_DATA`
-  - `US[2]`, `ER[5]`, `CL[2..4]`, `XA[4]`, `CL[1]/PL[1]`, `LL[3]/HL[3]`,
-    `XM[1]/XM[2]`, FC-based unit 등 9개 문서 충돌을 임의 정규화하지 않음
-  - `CL[2] < 2`, `XA[4]` bypass, all-zero no-limit 조합과
-    `LL[3]=HL[3]=0`/`HL[2]=0` disable 경고를 항상 표시
-  - 로컬 inspect만 GREEN. current config/active protection/추천/검증/command/write/
-    Apply/SV/unit propagation/field safety는 `NEED-DATA / NO-GO`
-  - focused 69 passed, 전체 1513 passed, runtime smoke와 독립 closeout 완료;
-    private Draft PR #2에 `baa2841`로 게시
-- **Expert Application Settings · Documented Map v0.1**
-  - Expert 일곱 번째 단계에서 `Brake`, `Settling Window`,
-    `Inputs and Outputs`의 4/4/5개 row를 frozen static catalog로 표시
-  - authority `DOCUMENTED_APPLICATION_SETTINGS_MAP_ONLY`, status
-    `PARTIAL_NEED_DATA`; 24 sources, 9 conflicts, 16 warnings, 6 missing
-  - `IP + IB[N]`, `GO[N] + OP`는 live status의 문서상 semantics만 표시하고
-    `unavailable · not sampled`를 유지
-  - local inspect만 GREEN. current config/I/O/brake/default, validation/
-    evaluation/command/write/Apply/Revert/SV/output actuation/motion/safety는
-    `NEED-DATA / NO-GO`
-  - focused 85 passed, 전체 1529 passed, 독립 closeout과 runtime GUI smoke 완료
-  - private Draft PR #2에 구현 commit `e577f79`로 게시
-- **Expert Hidden Verification – Bode · Documented Map v0.1**
-  - Expert 여덟 번째 `BODE DOC MAP` 단계에서 `Tuner Verification Settings`,
-    `Current Verification – Bode`, `Velocity / Position Verification – Bode`를
-    각 8개 row의 frozen static catalog로 표시
-  - authority `DOCUMENTED_HIDDEN_BODE_MAP_ONLY`, status
-    `PARTIAL_NEED_DATA`; 7 sources, 4 conflicts, 12 warnings, 8 missing
-  - hidden-page visibility는 authority가 아니며 actual `Verify`,
-    EAS settings reset/change와 recording control을 제공하지 않음
-  - 기존 P1 Bode preview는 OFFLINE MODEL, 이 page는 field experiment의
-    documentation map으로 분리. model/measurement parity와 pass/fail을 주장하지 않음
-  - local inspect만 GREEN. actual Current ENERGY와 V/P MOTION verification,
-    target parity, envelope, recorder provenance, abort/closeout와 quantitative
-    acceptance는 `NEED-DATA / NO-GO`
-  - pure 14 passed, 영향범위 211 passed in 65.06s, 전체
-    1547 passed in 503.66s / exit 0, 독립 source hash 7/7 일치
-  - private Draft PR #2에 구현 commit `8073176`로 게시
-- **UI lifecycle 안전 보완**
-  - 탭 전환 시 공용 workspace 스크롤을 새 페이지 원점으로 복귀
-  - shutdown-pending 동안 연결·텔레메트리·access-mode authority 폐기
-  - 현재 worker의 `stopped` 뒤에만 `OFFLINE`과 연결 선택기 복구
-- **EAS 미연결 UI inventory**
-  - Quick 6단계 명칭/순서가 현재 guided flow와 일치
-  - Expert User Units는 documented 위치 식 preview만 부분 구현
-  - limits/protection은 static documented map만 부분 구현; 값 read/validation/write와
-    protection efficacy는 미구현
-  - Application Settings의 Brake/Settling/I/O는 static documented map만
-    부분 구현; current readback/write/transaction/actuation은 잔여
-  - Hidden Current/V/P Bode는 static documented map만 부분 구현;
-    actual Verify와 setting mutation/recording은 잔여 `NEED-DATA`
-  - Verification–Time은 static documented map만 구현; 실제 Current/V·P
-    Verify, Recorder 구성·acquisition과 정량 acceptance는 잔여 `NEED-DATA`
-  - User Units의 drive readback/write와 EAS page icon/Enter/Apply·Summary
-    recommendation은 잔여
-  - Single Axis의 STO drive-reported snapshot과 Digital Input 1–6 explicit
-    read-only snapshot은 부분 구현
-  - Digital Output·input mutation·mode별 수동 구동·Terminal·docked Recorder
-    parity는 잔여 `NEED-DATA`
-- **Elmo 자료 인벤토리**
-  - 신규 폴더 59개 파일과 SHA-256 기록
-  - `Version 1.1.16.0 B01 for customers.zip` 안의 `NGDrive 01.01.16.00 08Mar2020B01G.gabs` 파일명 일치 확인
-  - B01/B01G 의미와 flashing 적합성은 `NEED-DATA`; flashing 승인 아님
+이 값은 현재 Gold Twitter drive readback이다. EAS same-moment parity,
+physical motion capability, safe travel envelope, stopping distance,
+independent STO/E-stop, Gold family compatibility를 증명하지 않는다.
 
-## 남은 예상 시간
+## 현재 slice closeout
 
-| 작업 | 남은 예상 |
-|---|---:|
-| Expert v2 로컬 구현·전체 회귀·독립 재검토·runtime smoke | **완료** |
-| Expert v2 private Draft PR 게시 | **완료 · `dfda7fe`** |
-| Filter/Scheduling 문서 topology inspector | **완료 · `540877e` · private Draft PR #2** |
-| Expert Local Page Status / Errors v0.1 | **완료 · `a20e19a` · private Draft PR #2** |
-| Expert User Units · Documented Formula Preview v0.1 | **완료 · `0472ee5` · private Draft PR #2** |
-| Expert Limits / Protections · Documented Parameter Map v0.1 | **완료 · focused 69 / 전체 1513 passed + runtime/독립 closeout · `baa2841` · private Draft PR #2** |
-| Expert Application Settings · Documented Map v0.1 | **완료 · focused 85 / 전체 1529 passed + runtime/독립 검토 · `e577f79` · private Draft PR #2** |
-| Application Settings private Draft PR 게시 | **완료 · `e577f79`** |
-| Expert Hidden Verification – Bode · Documented Map v0.1 | **완료 · pure 14 / 영향범위 211 / 전체 1547 passed + runtime/독립 검토 · `8073176` · private Draft PR #2** |
-| Expert Verification – Time · Documented Map v0.1 | **완료 · focused 40 / 영향범위 99 / 전체 1567 passed + runtime/독립 재검토 · `91d6ee4` · private Draft PR #2 · motor action not run** |
-| Single Axis Digital Inputs · Read-Only Snapshot v0.1 | **구현·current target readback·focused 133·전체 1639 passed + runtime 완료 · `8c2a955` · private Draft PR #2 게시 중 · physical I/O/EAS parity 미검증** |
-| Single Axis Digital Outputs · Read-Only Snapshot v0.1 | **구현·current target readback·pure 24·integration 113·직접 영향 276·전체 1673 passed + runtime 완료 · `667c19e` · private Draft PR #2 게시 대상 · physical output/EAS parity/actuation 미검증** |
-| Single Axis Drive Mode · Read-Only Snapshot v0.1 | **구현·current target `UM=5 · Position` readback·pure 24·integration 261·latest focused 53+287·3-skin UI 32·전체 1717 passed + exact `d84d7b8` runtime 재확인 · private Draft PR #2 게시 완료 · UM change 미구현/NEED-DATA** |
-| Single Axis Current Reference · Read-Only Snapshot v0.1 | **구현·current target `TC/IQ/ID=0 A · CL=21.2132 A · PL=70.7107 A · LC=OFF · MC=140 A` readback·transport 64·영향 범위 286·전체 1781 passed + runtime 완료 · PR closeout 진행 중 · `TC=` 미구현/NEED-DATA** |
-| 실제 Current Bode / V·P Bode 실행 | **NEED-DATA · ENERGY/MOTION 별도 gate · 신뢰 가능한 ETA 없음** |
-| Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
+- 구현, 문서, runtime readback, source identity, 영향 범위 및 전체 회귀 완료.
+- private branch commit/push와 Draft PR #2 갱신 준비 완료.
+- 다음 기능은 command surface가 아니라 Recorder/Single Axis의 남은
+  read-only 또는 documented-map 범위에서 별도 계약으로 시작한다.
 
-Hidden Bode, Verification–Time, Summary static map의 로컬 closeout은 완료됐다.
-이는 근거가 있는 LOCAL/READ-ONLY 계약의 완료이며 모든 EAS 페이지 구현 완료를 뜻하지 않는다.
-Actual Bode/Time Verify, exact evaluator와 전체 EAS 패리티, vendor 비공개 알고리즘의
-동일 복제는 근거 부족으로 현재 신뢰 가능한 ETA를 제시하지 않는다.
+## 계속 잠긴 기능
 
-## 다음 자동 진행
+- PA/PR/JV assignment와 `BG` 실행.
+- standalone `MO=1`, Drive Mode 변경, Current command `TC=`.
+- endless Jog, Run Held, Sine/Homing/Stepper.
+- unrestricted Terminal.
+- 실제 Expert Bode/Time Verify, Apply/SV.
 
-1. Current Reference는 EAS same-moment parity와 독립 전류 계측,
-   current/thermal/torque envelope, independent protection, watchdog,
-   abort/closeout 전까지 query-only readback으로 유지하고 `TC=`를 열지 않음
-2. Digital Input은 EAS same-moment parity와 known inactive/active physical
-   stimulus 전까지 readback 관찰로만 유지하고 safety gate로 사용하지 않음
-3. Digital Output은 EAS same-moment parity와 별도 계측·안전 부하를 갖춘
-   자극 계약 전까지 logical/config readback으로만 유지하고 출력하지 않음
-4. Drive Mode는 EAS same-moment parity와 non-volatile transaction,
-   disabled/stationary precondition, exact readback, persistence recovery,
-   rollback 근거 전까지 one-query readback으로만 유지하고 변경하지 않음
-5. 잔여 무구동 EAS 세부 페이지를 evidence-first로 비교해 다음 bounded slice를 선정
-6. actual Bode는 exact target/config, excitation·travel·thermal envelope,
-   recorder provenance, abort/closeout와 quantitative oracle 전까지 잠금
-7. exact current config·EAS transaction·output electrical/brake capability 근거 전까지
-   evaluator/recommendation/read/write/Apply/SV/actuation은 `NEED-DATA / NO-GO`
-
-## 현장 안전 규칙
-
-1. 우리 앱과 EAS를 동시에 같은 드라이브에 연결하지 않음
-2. 연결은 모터 동작 승인이 아님
-3. 실제 Enable·커뮤테이션·튜닝·영점·PTP·쓰기·저장은 해당 단계 직전의 별도 확인 필요
-4. software STOP은 독립 STO/E-stop이 아니며 현장 E-stop/STO가 즉시 사용 가능해야 함
-5. field 결과는 exact revision·identity·조건·raw transcript가 있을 때만 계산
+이 기능들은 단순 UI 구현 문제가 아니라 단위·방향·travel/speed/acceleration,
+current/thermal/torque envelope, watchdog, 독립 abort/STO, readback,
+`ST -> MO=0` closeout이 필요한 `NEED-DATA / NO-GO` 범위다.

@@ -821,3 +821,32 @@ Installed source identities와 상태 전이 근거는
 - executable `TC=` command: `NEED-DATA`, UI control 없음
 - physical current/torque/thermal behavior와 EAS parity: `NEED-DATA`
 - independent E-stop/STO와 field safety: `NEED-DATA`
+
+## 13. Single Axis Position / Velocity References · Read-Only Snapshot v0.1
+
+상세 구현·source·runtime 근거:
+[`single-axis-position-velocity-reference-read-v0.1.md`](single-axis-position-velocity-reference-read-v0.1.md)
+
+현재 판정:
+
+- exact 18-query same-session read: 구현 및 current target 관찰 완료.
+- 설치 Gold source identity: `13/13` SHA-256 일치.
+- pure decoder/reader: `56 passed`.
+- transport + pure: `144 passed`.
+- authority/UI/catalog/transport 직접 영향 범위: `244 passed`.
+- `PA[1]/PR[1]/JV`는 configured/queued readback이며 active command나
+  motion proof가 아님.
+- COM3 Read Only: motor disabled, `UM=5 Position`, PA/PR/JV=0,
+  SP=4,444,444 cnt/s, AC/DC/SD=1,000,000 cnt/s²,
+  PX=-2,038,379,934 cnt, VX=0.000 cnt/s, acquisition 35.6 ms.
+- 1366×820 최초 runtime에서 9번째 VX 행 clipping을 발견해 table 높이를
+  360→420 px로 수정하고 VX 접근성/표시를 재검증.
+- assignment, `BG`, `MO=1`, `PX=0`, mode change, energization, motion:
+  실행하지 않음.
+- executable PA/PR/JV + BG: `MOTION / NEED-DATA`, UI control 없음.
+- EAS same-moment parity, user-unit/direction, coordinate validity,
+  motion envelope, stopping distance, limit input, independent STO/E-stop:
+  `NEED-DATA / NO-GO`.
+- closeout 영향 범위(모니터 포함): `270 passed in 104.51s`.
+- full repository regression: `1868 passed in 735.79s (12:15)`.
+- `git diff --check`: exit 0.

@@ -276,6 +276,20 @@ _SPECS = (
               "exact_current_reference_query_set",
           )),
           status=OperationStatus.PARTIAL),
+    _spec("axis.position_velocity_reference.refresh",
+          "Single Axis Position / Velocity References - READ ONLY v0.1",
+          OperationRisk.DRIVE_READ,
+          "Explicitly read only MO/SO/MF/SR pre+post and "
+          "UM/PA[1]/PR[1]/JV/SP[1]/AC[1]/DC/SD/PX/VX for the current "
+          "identity-bound session. PA/PR/JV are configured or queued "
+          "readbacks, not active command or motion proof; no assignment, "
+          "no BG, no enable, and no motion.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "bounded_read_allowlist",
+              "explicit_refresh",
+              "exact_position_velocity_query_set",
+          )),
+          status=OperationStatus.PARTIAL),
     _spec("axis.digital_inputs.refresh",
           "Single Axis Digital Inputs · READ ONLY v0.1",
           OperationRisk.DRIVE_READ,
@@ -414,6 +428,15 @@ _SPECS = (
           "current loop, and remains locked until an independent current/"
           "thermal/torque envelope, watchdog, abort, and software STOP "
           "(ST) -> MO=0 closeout contract are verified.",
+          status=OperationStatus.NEED_DATA),
+    _spec("axis.position_velocity_reference.command",
+          "Single Axis Position / Velocity Command - NEED-DATA",
+          OperationRisk.MOTION,
+          "PA/PR/JV assignment and BG execution require MO=1 and observed "
+          "SO=1. They remain locked until units and direction, travel/speed/"
+          "acceleration limits, restrained load, watchdog, independent "
+          "abort, exact readback, and software STOP (ST) -> MO=0 closeout "
+          "are verified.",
           status=OperationStatus.NEED_DATA),
     _spec("eas.single_axis.manual_references",
           "Single Axis Current/Stepper/Sine References · NEED-DATA",

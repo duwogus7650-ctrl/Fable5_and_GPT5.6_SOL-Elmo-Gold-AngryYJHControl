@@ -213,7 +213,7 @@ SECTIONS = (
                 "Requires a site motion envelope, limits, stopping distance, "
                 "watchdogs, fresh telemetry and independent stop evidence.",
                 "MOTION",
-                "DOCUMENTED CONTROL - EXECUTION NEED_DATA",
+                "READBACK PARTIAL IMPLEMENTED - COMMAND EXECUTION NEED_DATA",
             ),
             _item(
                 "current_reference",
@@ -224,7 +224,7 @@ SECTIONS = (
                 "Requires verified phase/current conventions, current and "
                 "time bounds, thermal limits, watchdog and closeout.",
                 "ENERGIZING",
-                "DOCUMENTED CONTROL - EXECUTION NEED_DATA",
+                "READBACK PARTIAL IMPLEMENTED - COMMAND EXECUTION NEED_DATA",
             ),
             _item(
                 "sine_homing_stepper",

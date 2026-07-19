@@ -16,6 +16,7 @@ import single_axis_current_reference
 import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
+import single_axis_position_velocity_reference
 import theme as amber_theme
 import theme_angrybirds
 import theme_qdd
@@ -24,6 +25,7 @@ import theme_qdd
 class _AxisWorker(QtCore.QObject):
     axis_summary = QtCore.pyqtSignal(dict)
     axis_current_reference = QtCore.pyqtSignal(object)
+    axis_position_velocity_reference = QtCore.pyqtSignal(object)
     axis_drive_mode = QtCore.pyqtSignal(object)
     axis_digital_inputs = QtCore.pyqtSignal(object)
     axis_digital_outputs = QtCore.pyqtSignal(object)
@@ -47,6 +49,10 @@ class _AxisWorker(QtCore.QObject):
 
     def refresh_axis_current_reference(self):
         self.calls.append(("refresh_axis_current_reference", (), {}))
+
+    def refresh_axis_position_velocity_reference(self):
+        self.calls.append(
+            ("refresh_axis_position_velocity_reference", (), {}))
 
     def __getattr__(self, name):
         def forbidden(*args, **kwargs):
@@ -94,6 +100,8 @@ def ui(qapp, monkeypatch):
     win._connection_shutdown_pending = False
     worker.axis_summary.connect(win._on_axis_summary)
     worker.axis_current_reference.connect(win._on_axis_current_reference)
+    worker.axis_position_velocity_reference.connect(
+        win._on_axis_position_velocity_reference)
     worker.axis_drive_mode.connect(win._on_axis_drive_mode)
     worker.axis_digital_inputs.connect(win._on_axis_digital_inputs)
     worker.axis_digital_outputs.connect(win._on_axis_digital_outputs)
@@ -287,6 +295,35 @@ def _current_reference_snapshot(*, duration=0.08):
         },
         sample_duration_s=duration,
     )
+
+
+def _position_velocity_snapshot(*, duration=0.09):
+    sr = (1 << 14) | (1 << 15)
+    return (
+        single_axis_position_velocity_reference
+        .decode_position_velocity_snapshot(
+            {
+                "MO_PRE": 0,
+                "SO_PRE": 0,
+                "MF_PRE": 0,
+                "SR_PRE": sr,
+                "UM": 5,
+                "PA[1]": 12000,
+                "PR[1]": -500,
+                "JV": 2500,
+                "SP[1]": 10000,
+                "AC[1]": 20000,
+                "DC": 18000,
+                "SD": 15000,
+                "PX": 11500,
+                "VX": 12.5,
+                "MO_POST": 0,
+                "SO_POST": 0,
+                "MF_POST": 0,
+                "SR_POST": sr,
+            },
+            sample_duration_s=duration,
+        ))
 
 
 def test_digital_input_panel_starts_unknown_and_exposes_no_write_surface(ui):
@@ -863,6 +900,158 @@ def test_worker_emits_only_the_typed_current_reference_snapshot(monkeypatch):
     link = object()
 
     worker._emit_axis_current_reference(link)
+
+    assert calls == [link]
+    assert observed == [expected]
+
+
+def test_position_velocity_panel_starts_unknown_and_has_no_command_surface(ui):
+    assert ui.win.lbl_axis_position_velocity_state.text() == "UNKNOWN"
+    assert ui.win.axis_position_velocity_table.rowCount() == 9
+    assert ui.win.axis_position_velocity_table.minimumHeight() >= 410
+    assert tuple(
+        ui.win.axis_position_velocity_table.item(row, 0).text()
+        for row in range(9)
+    ) == (
+        "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]",
+        "DC", "SD", "PX", "VX",
+    )
+    contract = ui.win.lbl_axis_position_velocity_contract.text().upper()
+    for phrase in (
+            "QUERY ONLY",
+            "CONFIGURED",
+            "NOT ACTIVE COMMAND",
+            "NO ASSIGNMENT",
+            "NO BG",
+            "COMMAND LOCKED",
+            "NEED-DATA"):
+        assert phrase in contract
+    for widget_type in (
+            QtWidgets.QComboBox,
+            QtWidgets.QSpinBox,
+            QtWidgets.QDoubleSpinBox,
+            QtWidgets.QCheckBox,
+            QtWidgets.QLineEdit,
+            QtWidgets.QSlider):
+        assert (
+            ui.win.axis_position_velocity_frame.findChildren(widget_type)
+            == [])
+    assert tuple(
+        button.text()
+        for button in ui.win.axis_position_velocity_frame.findChildren(
+            QtWidgets.QPushButton)
+    ) == ("Refresh Position / Velocity References - READ ONLY",)
+    assert ui.win.btn_axis_position_velocity_refresh.property(
+        "operationId") == "axis.position_velocity_reference.refresh"
+
+
+def test_position_velocity_snapshot_renders_without_granting_authority(
+        ui, qapp):
+    before = (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    )
+
+    ui.worker.axis_position_velocity_reference.emit(
+        _position_velocity_snapshot())
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_position_velocity_state.text() == (
+        "CURRENT - DRIVE READ ONLY")
+    assert ui.win.lbl_axis_position_velocity_motor.text() == (
+        "DISABLED REPORTED - UM=5 Position")
+    assert ui.win.axis_position_velocity_table.item(0, 1).text() == (
+        "12,000 cnt")
+    assert ui.win.axis_position_velocity_table.item(1, 1).text() == (
+        "-500 cnt")
+    assert ui.win.axis_position_velocity_table.item(2, 1).text() == (
+        "2,500 cnt/s")
+    assert ui.win.axis_position_velocity_table.item(4, 1).text() == (
+        "20,000 cnt/s^2")
+    assert ui.win.axis_position_velocity_table.item(8, 1).text() == (
+        "12.500 cnt/s")
+    detail = ui.win.lbl_axis_position_velocity_detail.text().upper()
+    assert "90.0 MS" in detail
+    assert "LIMITED BY SD" in detail
+    assert "NOT ACTIVE COMMAND" in detail
+    assert "COMMAND LOCKED" in detail
+    assert (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    ) == before
+
+
+def test_position_velocity_refresh_queues_one_typed_read_job(ui, qapp):
+    ui.win.btn_axis_position_velocity_refresh.setEnabled(True)
+    ui.win.btn_axis_position_velocity_refresh.click()
+    qapp.processEvents()
+
+    assert ui.worker.calls == [
+        ("refresh_axis_position_velocity_reference", (), {}),
+    ]
+    assert ui.win.lbl_axis_position_velocity_state.text() == "READING"
+
+
+def test_late_or_forged_position_velocity_snapshot_fails_closed(ui, qapp):
+    valid = _position_velocity_snapshot()
+    forged = replace(valid, reference_semantics="FORGED")
+
+    ui.worker.axis_position_velocity_reference.emit(forged)
+    qapp.processEvents()
+    assert ui.win.lbl_axis_position_velocity_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = False
+    ui.worker.axis_position_velocity_reference.emit(valid)
+    qapp.processEvents()
+    assert ui.win.lbl_axis_position_velocity_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = True
+    ui.worker.axis_position_velocity_reference.emit(valid)
+    qapp.processEvents()
+    ui.win._set_connected_ui(False)
+    assert ui.win.lbl_axis_position_velocity_state.text() == "UNKNOWN"
+
+
+def test_worker_queues_exact_position_velocity_read_job():
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+
+    worker.refresh_axis_position_velocity_reference()
+
+    assert worker._jobs == app_main.collections.deque((
+        ("axis_position_velocity_reference_read", None),
+    ))
+    assert (
+        "axis_position_velocity_reference_read"
+        in worker._OBSERVE_ONLY_JOB_ALLOWLIST)
+    assert {
+        "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]",
+        "DC", "SD", "PX", "VX",
+    } <= worker._READ_ONLY_QUERY_ALLOWLIST
+
+
+def test_worker_emits_only_the_typed_position_velocity_snapshot(monkeypatch):
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+    expected = _position_velocity_snapshot()
+    calls = []
+    observed = []
+    monkeypatch.setattr(
+        app_main.single_axis_position_velocity_reference,
+        "read_position_velocity_snapshot",
+        lambda link: calls.append(link) or expected)
+    worker.axis_position_velocity_reference.connect(observed.append)
+    link = object()
+
+    worker._emit_axis_position_velocity_reference(link)
 
     assert calls == [link]
     assert observed == [expected]

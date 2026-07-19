@@ -456,3 +456,27 @@ production Apply/Save를 drive I/O 전에 잠근다. P1은 real session-bound on
 **무인 통전 금지.**
 
 [Fable5-SDD-Control-Program]: https://github.com/duwogus7650-ctrl/Fable5-SDD-Control-Program
+
+## Latest read-only slice · Position / Velocity References v0.1
+
+Motion page에 `PA[1]`, `PR[1]`, `JV`, `SP[1]`, `AC[1]`, `DC`, `SD`,
+`PX`, `VX`를 한 번에 조회하는 identity-bound panel을 추가했다.
+`PA/PR/JV`는 **configured / queued readback**으로만 표시하며 active command
+또는 motion proof로 해석하지 않는다. 이 panel에는 편집 control이 없고
+exact 18-query refresh 하나만 있다.
+구현은 `single_axis_position_velocity_reference.py`, UI/worker wiring은
+`main.py`, transport guard는 `elmo_link.py`에 있다.
+
+2026-07-19 현재 Gold Twitter COM3 `ONLINE · READ ONLY`에서 motor disabled,
+`UM=5 Position`, PA/PR/JV=0, SP=4,444,444 cnt/s,
+AC/DC/SD=1,000,000 cnt/s², PX=-2,038,379,934 cnt,
+VX=0.000 cnt/s를 35.6 ms에 관찰했다. assignment, `BG`, `MO=1`,
+energization, motion, `PX=0`은 실행하지 않았다.
+
+상세 계약과 source identity는
+[`docs/single-axis-position-velocity-reference-read-v0.1.md`](docs/single-axis-position-velocity-reference-read-v0.1.md)에 있다.
+최신 closeout은 직접 영향 범위 244 tests, 모니터 포함 270 tests,
+전체 repository **1868 passed in 735.79s**로 통과했다.
+PA/PR/JV assignment와 `BG`는 travel/speed/acceleration/current envelope,
+independent stop/STO, watchdog, readback, closeout을 확보할 때까지
+`MOTION / NEED-DATA`로 잠겨 있다.

@@ -613,3 +613,34 @@ def test_single_axis_current_reference_read_and_command_are_separate():
     for phrase in (
             "mo=1", "so=1", "current loop", "watchdog", "stop", "mo=0"):
         assert phrase in command.summary.lower()
+
+
+def test_single_axis_position_velocity_read_and_command_are_separate():
+    read = catalog.operation_spec(
+        "axis.position_velocity_reference.refresh")
+    command = catalog.operation_spec(
+        "axis.position_velocity_reference.command")
+
+    assert read.risk is catalog.OperationRisk.DRIVE_READ
+    assert read.status is catalog.OperationStatus.PARTIAL
+    assert read.menu_enabled is False
+    assert {
+        "verified_identity",
+        "fresh_telemetry",
+        "bounded_read_allowlist",
+        "explicit_refresh",
+        "exact_position_velocity_query_set",
+    } <= read.gates
+    for phrase in (
+            "pa[1]", "pr[1]", "jv", "sp[1]", "ac[1]", "dc", "sd",
+            "px", "vx", "configured", "no assignment", "no bg"):
+        assert phrase in read.summary.lower()
+
+    assert command.risk is catalog.OperationRisk.MOTION
+    assert command.status is catalog.OperationStatus.NEED_DATA
+    assert command.menu_enabled is False
+    assert command.gates == frozenset()
+    for phrase in (
+            "pa/pr/jv", "bg", "mo=1", "so=1", "limits", "watchdog",
+            "stop", "mo=0"):
+        assert phrase in command.summary.lower()

@@ -11,6 +11,7 @@ import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
 import single_axis_motion
+import single_axis_position_velocity_reference
 
 
 class _CommandSpy:
@@ -83,6 +84,7 @@ def _observe_only_link(monkeypatch):
 @pytest.mark.parametrize("query", [
     "VR", "SN[4]", "CA[18]", "KP[1]", "PX", "MO", "SO", "VX", "PS", "MF",
     "UM", "TC", "LC", "CL[1]", "PL[1]",
+    "PA[1]", "PR[1]", "JV", "SP[1]", "AC[1]",
 ])
 def test_observe_only_transport_allows_bare_queries(monkeypatch, query):
     link, spy = _observe_only_link(monkeypatch)
@@ -93,7 +95,11 @@ def test_observe_only_transport_allows_bare_queries(monkeypatch, query):
 
 @pytest.mark.parametrize("command", [
     "UM=5", "CA[28]=0", "PX=0", "LD", "RS", "XQ", "SV",
-    "MO=1", "BG", "JV=1", "PA=1", "TC=0.1", "TC[1]", "LC=1",
+    "MO=1", "BG", "JV=1", "PA=1", "PR=1", "TC=0.1", "TC[1]", "LC=1",
+    "PA[1]=1", "PR[1]=1", "SP[1]=1", "AC[1]=1",
+    "PA", "PR", "PA[0]", "PA[2]", "PR[0]", "PR[2]",
+    "SP[0]", "SP[2]", "AC[0]", "AC[2]",
+    "JV[1]", "JVX", "PA[1]X", "PR[1]X",
     "TW[80]=1",
     "BG[1]", "XQ[1]", "ZZ",
     "BT", "CP", "DF", "DL", "EI", "EO", "HP", "KL", "KR", "PB", "XC",
@@ -137,6 +143,14 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
         "LC": 0,
         "MC": 10,
         "SR": 0,
+        "PA[1]": 12000,
+        "PR[1]": -500,
+        "JV": 2500,
+        "SP[1]": 10000,
+        "AC[1]": 20000,
+        "DC": 18000,
+        "SD": 15000,
+        "PX": 11500,
     })
     link._comm = spy
     monkeypatch.setattr(link, "persistence_unknown_latched", lambda: False)
@@ -151,6 +165,9 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
     drive_mode = single_axis_drive_mode.read_drive_mode_snapshot(link)
     current_reference = (
         single_axis_current_reference.read_current_reference_snapshot(link))
+    position_velocity = (
+        single_axis_position_velocity_reference
+        .read_position_velocity_snapshot(link))
     inputs = single_axis_digital_inputs.read_digital_input_snapshot(link)
     outputs = single_axis_digital_outputs.read_digital_output_snapshot(link)
     for registers in persistence_audit.PHASE_REGISTERS.values():
@@ -160,6 +177,8 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
     assert summary["errors"] == {}
     assert drive_mode.state == single_axis_drive_mode.CURRENT
     assert current_reference.state == single_axis_current_reference.CURRENT
+    assert position_velocity.state == (
+        single_axis_position_velocity_reference.CURRENT)
     assert inputs.state == single_axis_digital_inputs.CURRENT
     assert outputs.state == single_axis_digital_outputs.CURRENT
     assert spy.commands

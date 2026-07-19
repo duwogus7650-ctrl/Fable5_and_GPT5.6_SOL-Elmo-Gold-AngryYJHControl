@@ -102,7 +102,11 @@ def test_documented_controls_preserve_mode_and_mutation_boundaries():
         "Drive Mode: Position / Velocity / Current / Stepper"
     )
     assert modes["position_velocity"].risk_class == "MOTION"
+    assert modes["position_velocity"].evidence_status == (
+        "READBACK PARTIAL IMPLEMENTED - COMMAND EXECUTION NEED_DATA")
     assert modes["current_reference"].risk_class == "ENERGIZING"
+    assert modes["current_reference"].evidence_status == (
+        "READBACK PARTIAL IMPLEMENTED - COMMAND EXECUTION NEED_DATA")
     assert modes["sine_homing_stepper"].risk_class == "MOTION / ENERGIZING"
     assert tools["enable_disable"].risk_class == "ENERGIZING"
     assert tools["stop_controls"].risk_class == "SOFTWARE STOP"
