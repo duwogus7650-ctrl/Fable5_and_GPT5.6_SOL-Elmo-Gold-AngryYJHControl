@@ -6047,7 +6047,22 @@ class MainWindow(QtWidgets.QMainWindow):
         nav_col.setLayout(nav); nav_col.setFixedWidth(180)
         nav.setContentsMargins(10, 12, 10, 12)
         self._workspace_nav_col = nav_col
-        row.addWidget(nav_col, 0); row.addWidget(self.workspace_scroll, 1)
+        # EAS-style page header strip: breadcrumb (context > page) on the left,
+        # Drive01 target label on the right, above the stacked content pages.
+        bc_bar = QtWidgets.QFrame(); bc_bar.setObjectName("card")
+        bc = QtWidgets.QHBoxLayout(bc_bar)
+        bc.setContentsMargins(16, 7, 16, 7); bc.setSpacing(10)
+        self.lbl_breadcrumb = QtWidgets.QLabel("Drive Quick Tuner")
+        self.lbl_breadcrumb.setProperty("role", "celltitle")
+        self.lbl_drive_id = QtWidgets.QLabel("Drive01")
+        self.lbl_drive_id.setObjectName("pill")
+        bc.addWidget(self.lbl_breadcrumb); bc.addStretch(1)
+        bc.addWidget(self.lbl_drive_id)
+        content_col = QtWidgets.QVBoxLayout()
+        content_col.setContentsMargins(0, 0, 0, 0); content_col.setSpacing(10)
+        content_col.addWidget(bc_bar, 0)
+        content_col.addWidget(self.workspace_scroll, 1)
+        row.addWidget(nav_col, 0); row.addLayout(content_col, 1)
         self._nav_to(0)
         return wrap
 
@@ -6175,6 +6190,19 @@ class MainWindow(QtWidgets.QMainWindow):
                     scroll_bar.setValue(scroll_bar.minimum())
         for i, b in enumerate(self._nav_btns):
             b.setChecked(i == ix)
+        if hasattr(self, "lbl_breadcrumb"):
+            _bc = {
+                "motion": "Motion   ·   Single Axis",
+                "motor": "Drive Quick Tuner   ▸   Motor Settings",
+                "feedback": "Drive Quick Tuner   ▸   Feedback Settings",
+                "tuning": "Drive Quick Tuner   ▸   Automatic Tuning",
+                "axis": "Drive Quick Tuner   ▸   Axis Configurations",
+                "recorder": "Recording   ▸   Recorder",
+                "status": "Status   ·   Session Log",
+                "system": "System Configuration",
+            }
+            tool_id = self._page_index_to_tool_id.get(ix)
+            self.lbl_breadcrumb.setText(_bc.get(tool_id, "Drive Quick Tuner"))
         recorder_visible = ix == 5
         if hasattr(self, "recorder_ribbon_menu"):
             # Application menus are global; only the Recorder context/lifecycle
