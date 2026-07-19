@@ -8422,8 +8422,10 @@ class MainWindow(QtWidgets.QMainWindow):
     def _build_feedback_page(self):
         f = theme.HudCard()
         outer = QtWidgets.QVBoxLayout(f); outer.setContentsMargins(16, 14, 16, 10); outer.setSpacing(8)
+        # EAS 2-column feedback: "Feedback on Motor" (primary, scrollable) on
+        # the left, "Feedback on Load" (None for this single-feedback unit) on
+        # the right — mirrors EAS III's Feedback Settings two-column layout.
         title = QtWidgets.QLabel("FEEDBACK ON MOTOR"); title.setProperty("role", "celltitle")
-        outer.addWidget(title)
         # scrollable body — EAS panels have up to ~20 rows in 3-4 groups
         scroll = QtWidgets.QScrollArea(); scroll.setWidgetResizable(True)
         scroll.setFrameShape(QtWidgets.QFrame.Shape.NoFrame)
@@ -8474,7 +8476,26 @@ class MainWindow(QtWidgets.QMainWindow):
         self._fb_group_titles = []
         v.addLayout(self._fb_dyn_box)
         v.addStretch(1)
-        outer.addWidget(scroll, 1)
+        motor_col = QtWidgets.QVBoxLayout()
+        motor_col.setContentsMargins(0, 0, 0, 0); motor_col.setSpacing(8)
+        motor_col.addWidget(title); motor_col.addWidget(scroll, 1)
+        load_title = QtWidgets.QLabel("FEEDBACK ON LOAD")
+        load_title.setProperty("role", "celltitle")
+        load_panel = theme.HudCard()
+        load_v = QtWidgets.QVBoxLayout(load_panel)
+        load_v.setContentsMargins(14, 12, 14, 12); load_v.setSpacing(6)
+        load_sel = QtWidgets.QLabel("None"); load_sel.setProperty("role", "field")
+        load_hint = QtWidgets.QLabel(
+            "이 유닛은 단일 피드백(Single Feedback) 구성입니다 — Load 피드백 없음.\n"
+            "EAS: Feedback on Load = None. Dual-feedback는 NEED-DATA.")
+        load_hint.setProperty("role", "hint"); load_hint.setWordWrap(True)
+        load_v.addWidget(load_sel); load_v.addWidget(load_hint); load_v.addStretch(1)
+        load_col = QtWidgets.QVBoxLayout()
+        load_col.setContentsMargins(0, 0, 0, 0); load_col.setSpacing(8)
+        load_col.addWidget(load_title); load_col.addWidget(load_panel, 1)
+        columns = QtWidgets.QHBoxLayout(); columns.setSpacing(12)
+        columns.addLayout(motor_col, 3); columns.addLayout(load_col, 1)
+        outer.addLayout(columns, 1)
         outer.addWidget(self._hline())
         row = QtWidgets.QHBoxLayout()
         self.btn_fb_write = QtWidgets.QPushButton(
