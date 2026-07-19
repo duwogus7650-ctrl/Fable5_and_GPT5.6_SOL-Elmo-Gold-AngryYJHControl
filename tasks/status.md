@@ -47,7 +47,8 @@
   `8c2a955a0d11c63c691b77f8eeeb21aaa5a2d269`
   (private Draft PR #2 게시 대상)
 - Single Axis Digital Outputs · Read-Only Snapshot v0.1:
-  current working tree 구현·현재 target readback 완료, closeout commit/PR 갱신 중
+  구현 HEAD `667c19eb8bd44d1a7d838772753e7fc6d709fb94`
+  (private Draft PR #2 게시 대상)
 - 현재 작업 대상:
   Motion page `DIGITAL OUTPUTS · READ-ONLY SNAPSHOT v0.1` 구현·현재 target
   readback·직접 영향범위·runtime closeout 완료, 전체 repository 회귀 진행 중.
@@ -484,7 +485,7 @@
 | Expert Hidden Verification – Bode · Documented Map v0.1 | **완료 · pure 14 / 영향범위 211 / 전체 1547 passed + runtime/독립 검토 · `8073176` · private Draft PR #2** |
 | Expert Verification – Time · Documented Map v0.1 | **완료 · focused 40 / 영향범위 99 / 전체 1567 passed + runtime/독립 재검토 · `91d6ee4` · private Draft PR #2 · motor action not run** |
 | Single Axis Digital Inputs · Read-Only Snapshot v0.1 | **구현·current target readback·focused 133·전체 1639 passed + runtime 완료 · `8c2a955` · private Draft PR #2 게시 중 · physical I/O/EAS parity 미검증** |
-| Single Axis Digital Outputs · Read-Only Snapshot v0.1 | **구현·current target readback·pure 24·integration 113·직접 영향 276·전체 1673 passed + runtime 완료 · closeout commit/PR 갱신 중 · physical output/EAS parity/actuation 미검증** |
+| Single Axis Digital Outputs · Read-Only Snapshot v0.1 | **구현·current target readback·pure 24·integration 113·직접 영향 276·전체 1673 passed + runtime 완료 · `667c19e` · private Draft PR #2 게시 대상 · physical output/EAS parity/actuation 미검증** |
 | 실제 Current Bode / V·P Bode 실행 | **NEED-DATA · ENERGY/MOTION 별도 gate · 신뢰 가능한 ETA 없음** |
 | Exact filter·gain scheduling evaluator/emulator | **NEED-DATA · 신뢰 가능한 ETA 없음** |
 

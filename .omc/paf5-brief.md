@@ -275,6 +275,8 @@ EAS의 게인계산 알고리즘은 재현 불가(EAS 내부)지만, **드라이
   직접 영향 범위 `276 passed in 53.27s / exit 0`, 전체 repository
   `1673 passed in 493.02s / exit 0`, source SHA-256 `4/4`;
   세 skin contrast ≥4.5:1, horizontal scroll 0.
+- 구현 HEAD:
+  `667c19eb8bd44d1a7d838772753e7fc6d709fb94`.
 - physical pin voltage/current, external load/brake, EAS same-moment parity,
   output compare/STO indication 자극과 write/readback/rollback은
   `NEED-DATA / NO-GO`; 이 readback을 safety authority로 사용하지 않는다.

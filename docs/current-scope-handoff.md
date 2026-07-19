@@ -34,7 +34,8 @@
 - Single Axis Digital Inputs · Read-Only Snapshot v0.1:
   `8c2a955a0d11c63c691b77f8eeeb21aaa5a2d269`
 - Single Axis Digital Outputs · Read-Only Snapshot v0.1:
-  현재 working tree 구현·field readback 완료, 게시 commit은 아래 closeout에서 생성
+  `667c19eb8bd44d1a7d838772753e7fc6d709fb94`
+  (field readback·회귀 완료, private Draft PR #2 게시 대상)
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
