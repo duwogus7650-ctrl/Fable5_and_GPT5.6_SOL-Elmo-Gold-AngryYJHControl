@@ -1,13 +1,43 @@
 <!-- scope_progress: 100 -->
-<!-- offline_progress: 92 -->
-<!-- field_progress: 40 -->
+<!-- offline_progress: 98 -->
+<!-- field_progress: 43 -->
 <!-- progress_basis: Planning indicators, not safety scores. Scope means the implemented feature inventory is enumerated. Offline means code/tests/documents reviewed. Field means bounded live EAS and read-only drive comparisons only; it excludes motion, protection efficacy, STO/E-stop, write transactions, and Gold-family compatibility. -->
 
-# EAS LIVE PARITY AUDIT · PX/PU + CURRENT DRAFT IMPLEMENTED
+# EAS LIVE PARITY AUDIT · PX/PU + CURRENT LIVE RECHECK · SR23 FIX
 
-상태: **전 범위 감사 완료 · 두 핵심 불일치 수정 · 전체 회귀 GREEN**
+상태: **READ ONLY 재검증 완료 · SR23 수정 · 전체 회귀 GREEN · EAS 기능 대조 완료 · 게시 진행 중**
 
 업데이트: **2026-07-19 KST**
+
+## 완료 조건 · 사용자 지시 반영
+
+- 이번 범위는 **비실기 잔여 작업 0개**가 될 때까지 자동 진행한다.
+- 사용자에게 중간 단계 승인을 다시 묻지 않는다.
+- 현재 자동 순서:
+  `전체 회귀 → EAS 화면·설치 도움말·기능 의미 대조 →
+  문서/모니터 실측값 확정 → 최신 오프라인 UI 확인 →
+  변경 범위·secret 검증 → commit → private Draft PR push/update`.
+- EAS 대조는 모양뿐 아니라 control 의미, target command/register,
+  enable 조건, 실행/잠금 경계까지 항목별로 기록한다.
+- 추가 실기 연결/조회, 모터 enable, 통전, motion, tuning, write,
+  Apply/SV는 실행하지 않는다.
+- 마지막에 남을 수 있는 항목은 장비 구동·현장 측정으로만 닫히는
+  `FIELD NEED-DATA`뿐이다.
+
+## 예상 잔여시간 · 2026-07-19 23:00 KST
+
+| 단계 | 현재 상태 | 예상 잔여 |
+|---|---|---:|
+| 전체 repository 회귀 | **완료 · 1964 passed / exit 0** | 0분 |
+| EAS 화면/설치 도움말/기능 의미 최종 대조 | **완료** | 0분 |
+| 문서·handoff·모니터 실측값 확정 | **완료** | 0분 |
+| 최신 오프라인 UI/정적 검증 | **완료** | 0분 |
+| diff/secret/범위 검증 + commit + private PR push/update | 범위/secret GREEN · 게시 진행 중 | 약 5–10분 |
+| **비실기 전체** | 자동 진행 | **약 5–10분** |
+
+전체 회귀 실제값은 `1964 passed in 636.67 s`, exit 0이다.
+실패가 발견되어 수정·전체 재실행이 필요하면 늘어나며, 각 단계 완료 때
+모니터에서 실제 결과와 새 잔여시간으로 교체한다. 실기 시간은 포함하지 않는다.
 
 ## 감사 범위
 
@@ -30,6 +60,12 @@
   좌표 원점은 아직 미확정이며 앱은 자동 보정하지 않음.
 - EAS Current는 `Current Command 1..5`, 모두 같은 `[TC]`, 초기 0 A,
   motor-off에서 Set disabled.
+- 최종 offline 기능 대조에서 EAS는 disconnected 상태에도 이전/project
+  Position·Current·terminal 값을 유지했다. 최신 AngryYJH는 `OFFLINE`,
+  `MOTOR STATE UNKNOWN`, `UNKNOWN-ENABLE LOCKED`로 live authority를 지우고
+  bounded refresh와 5개 `Set TC`를 모두 잠갔다.
+- retained EAS 값은 fresh live evidence가 아니다. 값/shape parity와 freshness
+  authority를 분리한 AngryYJH 동작은 의도한 fail-closed 차이다.
 
 ## 현재 판정
 
@@ -47,22 +83,44 @@
 
 - `UM=5 Position`.
 - `PX=-2038379934`, `VX=0`.
+- `PU=-2004825502`, `PU-PX=+33554432=2^25`.
 - `SP=4444444`, `AC=DC=SD=1000000`.
 - `CL[1]=21.2132`, `PL[1]=70.7107`, `MC=140`, `TC=IQ=ID=0`.
+- 28-query Position/Velocity acquisition: `59.1 ms`, CURRENT.
+- 16-query Current acquisition: `37.4 ms`, CURRENT.
+- 5개 Current draft: 모두 0 A / observed limit 내 / Set TC 5개 모두 disabled.
 - Digital Inputs 1..6: active/GP; Digital Outputs 1..4: inactive/GP.
 - installed gains: `KP1=0.0857`, `KI1=782.5188`, `KP2=0.0002`,
   `KI2=10.7000`, `KP3=85.2114`.
 - 수정 제어창은 raw `PX`, EAS `PU`, delta/socket/modulo/scale을 분리하고
   상단 위치를 `RAW POSITION · PX`로 명시함.
 
+## SR live diagnostic
+
+- 첫 28-query 시도는 `SR safety/motion state changed`로 fail closed.
+  당시 UI는 raw pre/post를 보존하지 않아 정확한 변경 bit는 `UNVERIFIED`.
+- 진단은 이제 `SR_PRE`, `SR_POST`, changed bit 번호와
+  bit 23 movement/standstill / bit 27 STO diagnostics 의미를 표시.
+- admitted Axis Summary에서 `SR=0x0080C000`의 bit 23이 실제 관찰됐고,
+  기존 status decoder가 이를 reserved로 오판한 결함을 재현.
+- 설치 EAS SR 도움말에 따라 bits 21/22/23/27/30을 정의 목록에 추가.
+- `MO↔SR22` 불일치는 authority를 취소하며, `SR27=1`은
+  `FAULT REPORTED - NO AUTO-RETRY`로 Enable을 계속 차단.
+- bit 23은 firmware/source 차이를 고려해 물리 motion 판정이 아닌
+  `source-bound movement/standstill indication`으로만 표시.
+- 상세 증거:
+  [`docs/single-axis-sr-live-diagnostic-2026-07-19.md`](../docs/single-axis-sr-live-diagnostic-2026-07-19.md).
+
 ## 현재 코드 검증
 
-- TDD RED: Current preset module 누락, old PX-only ledger가 의도대로 실패.
-- PX/PU + Current preset 집중 GREEN: **142 passed in 34.79s**.
-- EAS parity ledger GREEN: **5 passed**.
-- 전체 repository 회귀: **1956 passed in 692.83s, exit 0**.
+- TDD RED: SR change 상세가 없고 live bit 23이 reserved로 거부되며
+  SR27이 Enable fault로 승격되지 않는 것을 재현.
+- SR/PX-PU/Current + 안전/카탈로그 직접 영향: **504 passed**.
+- Single Axis Qt 통합 전체: **56 passed in 118.13s**.
+- 전체 repository 회귀: **1964 passed in 636.67s, exit 0**.
+- 최신 focused 재실행: **197 passed in 0.67s**.
+- live SR23 Qt 핵심 경로 재실행: **1 passed in 1.06s**.
 - 전체 출력에 skip/xfail 요약 없음.
-- `git diff --check`: exit 0.
 
 ## 다음 작업
 

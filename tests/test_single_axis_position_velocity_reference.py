@@ -214,6 +214,24 @@ def test_enabled_snapshot_reports_readback_without_granting_command_authority():
         position_velocity.COMMAND_LOCKED_NEED_DATA)
 
 
+def test_sr_stability_failure_reports_exact_changed_bits():
+    stable = (1 << 14) | (1 << 15)
+    changed = stable | (1 << 23) | (1 << 27)
+
+    snapshot = position_velocity.decode_position_velocity_snapshot(
+        _raw(SR_PRE=stable, SR_POST=changed),
+        sample_duration_s=0.08,
+    )
+
+    assert snapshot.state == position_velocity.UNKNOWN
+    assert snapshot.raw == {}
+    assert "SR_PRE=0x0000C000" in snapshot.reason
+    assert "SR_POST=0x0880C000" in snapshot.reason
+    assert "changed bits=23,27" in snapshot.reason
+    assert "movement/standstill" in snapshot.reason
+    assert "STO diagnostics error" in snapshot.reason
+
+
 @pytest.mark.parametrize(
     ("updates", "reason"),
     (

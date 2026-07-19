@@ -73,6 +73,13 @@ def _summary(**updates):
         "MS": 3,
     }
     raw.update(updates)
+    if "SR" not in updates:
+        raw["SR"] = (
+            (1 << 14)
+            | (1 << 15)
+            | ((1 << 4) if raw["SO"] else 0)
+            | ((1 << 22) if raw["MO"] else 0)
+        )
     return {
         "scope": "Single Axis (application scope)",
         "mode": "Position (UM=5)",
@@ -166,7 +173,7 @@ def test_enable_contract_starts_unknown_with_enable_locked(ui):
             _summary(
                 MO=1,
                 SO=1,
-                SR=(1 << 4) | (1 << 14) | (1 << 15)),
+                SR=(1 << 4) | (1 << 14) | (1 << 15) | (1 << 22)),
             "ENABLED REPORTED - ENERGIZED",
             "STOP remains available",
         ),
@@ -1438,6 +1445,19 @@ def test_current_worker_snapshot_updates_read_only_fields_without_new_io(ui):
     ) == authority_before
 
 
+def test_live_twitter_sr23_summary_renders_current_instead_of_reserved(ui, qapp):
+    ui.worker.axis_summary.emit(_summary(SR=0x0080C000))
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_safety_state.text() == "CURRENT · MODEL"
+    assert ui.win.lbl_axis_enable_state.text() == (
+        "DISABLED REPORTED - ENABLE LOCKED")
+    assert "SR23 movement/standstill indication=1" in (
+        ui.win.lbl_axis_safety_detail.text())
+    assert ui.win.btn_axis_enable_locked.isEnabled() is False
+    assert tuple(ui.worker.calls) == ()
+
+
 def test_invalid_snapshot_blanks_every_semantic_field(ui):
     ui.worker.axis_summary.emit(_summary(SR=True))
 
@@ -1449,7 +1469,8 @@ def test_invalid_snapshot_blanks_every_semantic_field(ui):
 
 
 def test_redundant_readback_conflict_is_not_presented_as_current_authority(ui):
-    ui.worker.axis_summary.emit(_summary(SO=1))
+    ui.worker.axis_summary.emit(
+        _summary(SO=1, SR=(1 << 14) | (1 << 15)))
 
     assert ui.win.lbl_axis_safety_state.text() == (
         "INCONSISTENT · AUTHORITY UNKNOWN")

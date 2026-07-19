@@ -143,7 +143,8 @@ raw 위치는 `PX`다. 현재 target에서 `PU-PX=2^25`이며 firmware-internal
 - 수정된 Python 3.14 제어창에서 `ONLINE · READ ONLY`,
   `DISABLED REPORTED`, `UM=5 · Position`, `TC/IQ/ID=0 A`,
   `CL[1]=21.2132 A`, `PL[1]=70.7107 A`, `LC=OFF`, `MC=140.0000 A`,
-  acquisition **32.2 ms**를 관찰했다. 이는 drive readback/parameter
+  초기 acquisition **32.2 ms**, 최신 재조회 **37.4 ms**를 관찰했다.
+  이는 drive readback/parameter
   snapshot이며 physical current, torque, RMS conversion, thermal safety
   또는 EAS parity 증거가 아니다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
@@ -200,12 +201,13 @@ raw 위치는 `PX`다. 현재 target에서 `PU-PX=2^25`이며 firmware-internal
 - `Single Axis Safety Snapshot v1`은 기존 Axis Summary가 이미 읽은
   `MO/SO/MF/PS/SR/MS`만 소비하는 pure zero-new-I/O projection
 - UI에는 `DRIVE-REPORTED · MODEL DECODE · NOT STO TEST EVIDENCE`를 고정 표시
-- `SR[3:0]`, `SR4`, `SR12`, `SR13`, `SR14`, `SR15`, `SR[11:8]`을
-  2013 Gold command reference 기반 MODEL로만 해석
+- `SR[3:0]`, `SR4`, `SR12`, `SR13`, `SR14`, `SR15`, `SR[11:8]`과
+  설치 도움말의 bits 21/22/23/27/28/30을 source-bound MODEL로만 해석
 - 누락·NaN/Inf·bool·비정수·초대형 정수·범위 위반은 전체 semantic projection `UNKNOWN`
-- 2013 reference에서 reserved인 SR bit, amplifier code와 profiler code 11–15도
-  `UNKNOWN`; 현재 firmware에서 의미를 추정하지 않음
-- `SO↔SR4`, `PS↔SR12` 불일치는 raw 값은 보존하되 authority를
+- 설치 도움말에도 정의되지 않은 SR bit, amplifier code와 profiler code 11–15는
+  `UNKNOWN`; bit 23은 cross-version polarity를 추정하지 않고
+  movement/standstill indication으로만 표시
+- `MO↔SR22`, `SO↔SR4`, `PS↔SR12` 불일치는 raw 값은 보존하되 authority를
   `INCONSISTENT · AUTHORITY UNKNOWN`으로 폐기
 - current worker가 아닌 signal과 shutdown-pending/disconnect 뒤 signal은 표시를 복구하지 못함
 - telemetry authority 상실·energizing 중에는 safety projection만 blank하고,
@@ -241,7 +243,7 @@ raw 위치는 `PX`다. 현재 target에서 `PU-PX=2^25`이며 firmware-internal
   motor-off `IQ=ID=0`을 교차검증하고 하나라도 불명확하면 전체 blank한다.
 - current target readback은 `OBSERVED`: `DISABLED REPORTED`,
   `UM=5 · Position`, `TC/IQ/ID=0 A`, `CL[1]=21.2132 A`,
-  `PL[1]=70.7107 A`, `LC=OFF`, `MC=140.0000 A`, **32.2 ms**.
+  `PL[1]=70.7107 A`, `LC=OFF`, `MC=140.0000 A`, 최신 **37.4 ms**.
   `TC=` assignment와 command surface는 구현하지 않았고 operation catalog의
   command 계약은 `ENERGIZING / NEED_DATA`로 잠겨 있다.
 - `FINITE_PTP_LIVE_ENABLED=False`
@@ -631,7 +633,7 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | Drive Mode 설치 source | **1 / 1 SHA-256 일치** | installed Gold `UM – Unit Mode` command page |
 | Current Reference transport/영향 범위 | **64 / 286 passed** | exact bare `TC/LC` query 허용, assignment/lookalike 차단, decoder/worker/catalog/UI/main safety |
 | Current Reference 포함 최신 전체 repository | **1781 passed in 1269.31s · exit 0** | 이전 1741 기준선보다 40 test 증가; 100% passed, skip/xfail summary 없음 |
-| Current Reference current-target runtime | **TC/IQ/ID=0 A · CL=21.2132 A · PL=70.7107 A · LC=OFF · MC=140 A · 32.2 ms** | CURRENT DRIVE READ ONLY; disabled, UM=5; no assignment/enable/loop change/energization/motion |
+| Current Reference current-target runtime | **TC/IQ/ID=0 A · CL=21.2132 A · PL=70.7107 A · LC=OFF · MC=140 A · latest 37.4 ms** | CURRENT DRIVE READ ONLY; disabled, UM=5; no assignment/enable/loop change/energization/motion |
 | Current Reference 설치 source | **9 / 9 SHA-256 일치** | installed Gold `TC/CL/PL/LC/MC/ID-IQ/UM/MO-SO/SR` command pages |
 
 유용한 실패 이력:
@@ -868,3 +870,43 @@ Installed source identities와 상태 전이 근거는
 - EAS parity ledger: `5 passed`.
 - full repository regression: `1956 passed in 692.83s / exit 0`.
 - `git diff --check`: exit 0.
+
+## 14. SR live diagnostic + status decoder correction
+
+결정적 기록:
+[`single-axis-sr-live-diagnostic-2026-07-19.md`](single-axis-sr-live-diagnostic-2026-07-19.md).
+
+- current target: `ONLINE · READ ONLY`, Gold Twitter FW/PAL/Boot identity
+  일치, `MOTOR DISABLED`.
+- first 28-query refresh는 SR state change로 fail closed. 당시 raw
+  pre/post가 소실됐으므로 정확한 changed bit는 `UNVERIFIED`.
+- diagnostic error는 이제 `SR_PRE/SR_POST`, changed bit 번호와
+  bit 23/27 의미를 보존한다. 안정성 mask는 약화하지 않았다.
+- 재실행한 28-query Position/Velocity snapshot은 **59.1 ms**,
+  PX=`-2038379934`, PU=`-2004825502`,
+  delta=`+33554432=2^25`, VX=0으로 통과.
+- 같은 연결의 16-query Current snapshot은 **37.4 ms**,
+  TC/IQ/ID=0 A, CL=21.2132 A, PL=70.7107 A, LC=OFF, MC=140 A로 통과.
+- five Current local drafts는 모두 0 A / observed limit 내,
+  Set TC 5개 모두 disabled.
+- admitted Axis Summary는 `SR=0x0080C000`; old decoder는 bit 23을
+  reserved로 오판했다.
+- 설치 SR 도움말 기준 bits 21/22/23/27/30을 defined로 갱신하고
+  `MO↔SR22` redundancy를 추가했다.
+- bit 23은 source-bound movement/standstill indication일 뿐 물리 motion
+  판정이 아니다.
+- SR27은 STO diagnostics fault로 Enable 정상 상태보다 우선하며
+  `FAULT REPORTED - NO AUTO-RETRY`를 유지한다.
+- reserved/unknown bits, MO/SR22·SO/SR4·PS/SR12 disagreement는 계속
+  fail closed 한다.
+- enable, assignment, `BG`, `TC=`, write, Apply/SV, energization, motion은
+  실행하지 않았다.
+- 최종 offline EAS 기능 대조에서 EAS는 disconnected 상태에도 이전/project
+  Position·Current·terminal 값을 유지했지만, 최신 AngryYJH는 `OFFLINE`,
+  `MOTOR STATE UNKNOWN`, `UNKNOWN-ENABLE LOCKED`로 authority를 지우고
+  bounded refresh와 5개 `Set TC`를 모두 잠갔다. retained EAS 값은 fresh
+  live evidence가 아니며, 이 차이는 의도한 fail-closed 동작이다.
+- SR/PX-PU/Current + 안전/카탈로그 직접 영향: `504 passed`.
+- Single Axis Qt 통합 전체: `56 passed in 118.13s`.
+- 전체 repository: `1964 passed in 636.67s / exit 0`,
+  skip/xfail summary 없음.

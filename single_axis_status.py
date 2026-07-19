@@ -2,9 +2,9 @@
 
 The decoder consumes values already returned by ``read_axis_summary``.  It
 performs no drive I/O and grants no motion, enable, tuning, persistence, or
-hardware-safety authority.  SR meanings are a MODEL projection from the local
-2013 Gold command reference and are not proof that either STO channel or an
-independent emergency-stop path was tested.
+hardware-safety authority.  SR meanings are a source-bound MODEL projection
+from the installed Gold command reference and are not proof that either STO
+channel or an independent emergency-stop path was tested.
 """
 
 from __future__ import annotations
@@ -40,9 +40,29 @@ _SR_DEFINED_MASK = (
     | (1 << 15)
     | (0x3 << 16)
     | (1 << 18)
+    | (1 << 21)
+    | (1 << 22)
+    | (1 << 23)
     | (0x7 << 24)
+    | (1 << 27)
     | (1 << 28)
+    | (1 << 30)
 )
+
+_SR_CHANGE_LABELS = MappingProxyType({
+    0: "amplifier status bit 0",
+    1: "amplifier status bit 1",
+    2: "amplifier status bit 2",
+    3: "amplifier status bit 3",
+    4: "servo enabled",
+    6: "enable-time fault",
+    13: "current limit",
+    14: "STO1 permission",
+    15: "STO2 permission",
+    22: "Motor On",
+    23: "movement/standstill",
+    27: "STO diagnostics error",
+})
 
 _AMPLIFIER_LABELS = MappingProxyType({
     0x0: "0x0 · no instantaneous amplifier code reported",
@@ -74,11 +94,42 @@ class AxisSafetySnapshot:
     sto2_permission_reported: Optional[bool]
     recorder_code: Optional[int]
     target_reached_reported: Optional[bool]
+    shunt_bit_reported: Optional[bool]
+    motor_on_reported: Optional[bool]
+    movement_bit_reported: Optional[bool]
     hall_state: Optional[int]
+    sto_diagnostics_error_reported: Optional[bool]
     stopped_by_switch_reported: Optional[bool]
+    ptp_buffer_full_reported: Optional[bool]
     conflicts: tuple[str, ...]
     conditions: tuple[str, ...]
     reason: str
+
+
+def format_sr_stability_change(
+        sr_pre: int,
+        sr_post: int,
+        *,
+        mask: int,
+) -> str:
+    """Describe the exact masked SR transition without granting authority."""
+    changed = (int(sr_pre) ^ int(sr_post)) & int(mask)
+    bits = tuple(bit for bit in range(32) if changed & (1 << bit))
+    bit_text = ",".join(str(bit) for bit in bits) or "none"
+    labels = "; ".join(
+        "%d %s" % (bit, _SR_CHANGE_LABELS.get(bit, "documented state"))
+        for bit in bits
+    )
+    suffix = " (%s)" % labels if labels else ""
+    return (
+        "SR_PRE=0x%08X; SR_POST=0x%08X; changed bits=%s%s"
+        % (
+            int(sr_pre) & _UINT32_MAX,
+            int(sr_post) & _UINT32_MAX,
+            bit_text,
+            suffix,
+        )
+    )
 
 
 def _unknown(reason: str) -> AxisSafetySnapshot:
@@ -99,8 +150,13 @@ def _unknown(reason: str) -> AxisSafetySnapshot:
         sto2_permission_reported=None,
         recorder_code=None,
         target_reached_reported=None,
+        shunt_bit_reported=None,
+        motor_on_reported=None,
+        movement_bit_reported=None,
         hall_state=None,
+        sto_diagnostics_error_reported=None,
         stopped_by_switch_reported=None,
+        ptp_buffer_full_reported=None,
         conflicts=(),
         conditions=(),
         reason=str(reason or "snapshot unavailable"),
@@ -143,8 +199,8 @@ def decode_axis_safety_snapshot(
     """Decode existing MO/SO/MF/PS/SR/MS values without issuing drive I/O.
 
     Invalid or incomplete input blanks the entire semantic projection.  When
-    redundant SO/SR4 or PS/SR12 observations disagree, raw values remain
-    visible but model authority is revoked as ``INCONSISTENT``.
+    redundant MO/SR22, SO/SR4, or PS/SR12 observations disagree, raw values
+    remain visible but model authority is revoked as ``INCONSISTENT``.
     """
     if not isinstance(raw, Mapping):
         return _unknown("raw snapshot mapping is missing")
@@ -185,8 +241,13 @@ def decode_axis_safety_snapshot(
     sto2_permission = bool(sr & (1 << 15))
     recorder_code = (sr >> 16) & 0x3
     target_reached = bool(sr & (1 << 18))
+    shunt_bit = bool(sr & (1 << 21))
+    motor_on = bool(sr & (1 << 22))
+    movement_bit = bool(sr & (1 << 23))
     hall_state = (sr >> 24) & 0x7
+    sto_diagnostics_error = bool(sr & (1 << 27))
     stopped_by_switch = bool(sr & (1 << 28))
+    ptp_buffer_full = bool(sr & (1 << 30))
 
     conflicts: list[str] = []
     if bool(values["SO"]) != servo_enabled:
@@ -197,11 +258,21 @@ def decode_axis_safety_snapshot(
         conflicts.append(
             "PS=%d disagrees with SR12=%d" %
             (values["PS"], int(user_program)))
+    if bool(values["MO"]) != motor_on:
+        conflicts.append(
+            "MO=%d disagrees with SR22=%d" %
+            (values["MO"], int(motor_on)))
 
     conditions: list[str] = [
         "SR4 servo-enabled report=%d" % int(servo_enabled),
         "STO1 drive-reported permission=%d" % int(sto1_permission),
         "STO2 drive-reported permission=%d" % int(sto2_permission),
+        "SR22 motor-on report=%d" % int(motor_on),
+        (
+            "SR23 movement/standstill indication=%d "
+            "(firmware semantics source-bound)"
+        ) % int(movement_bit),
+        "SR27 STO diagnostics error report=%d" % int(sto_diagnostics_error),
     ]
     if values["MF"] != 0:
         conditions.append("MF raw fault=%d" % values["MF"])
@@ -216,8 +287,15 @@ def decode_axis_safety_snapshot(
         conditions.append("SR12 user-program report=1")
     if current_limit:
         conditions.append("SR13 current-limit report=1")
+    if shunt_bit:
+        conditions.append("SR21 shunt indication bit=1")
+    if sto_diagnostics_error:
+        conditions.append(
+            "SR27 STO diagnostics error report=1 · drive enable prohibited")
     if stopped_by_switch:
         conditions.append("SR28 profiler-stop-by-switch report=1")
+    if ptp_buffer_full:
+        conditions.append("SR30 PTP-buffer-full report=1")
 
     state = INCONSISTENT if conflicts else CURRENT
     authority = MODEL_UNKNOWN if conflicts else MODEL_CURRENT
@@ -238,8 +316,13 @@ def decode_axis_safety_snapshot(
         sto2_permission_reported=sto2_permission,
         recorder_code=recorder_code,
         target_reached_reported=target_reached,
+        shunt_bit_reported=shunt_bit,
+        motor_on_reported=motor_on,
+        movement_bit_reported=movement_bit,
         hall_state=hall_state,
+        sto_diagnostics_error_reported=sto_diagnostics_error,
         stopped_by_switch_reported=stopped_by_switch,
+        ptp_buffer_full_reported=ptp_buffer_full,
         conflicts=tuple(conflicts),
         conditions=tuple(conditions),
         reason="; ".join(conflicts),

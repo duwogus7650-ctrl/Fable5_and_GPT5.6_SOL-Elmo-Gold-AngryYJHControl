@@ -17,6 +17,8 @@ import time
 from types import MappingProxyType
 from typing import Any, Callable, Mapping, Optional
 
+from single_axis_status import format_sr_stability_change
+
 
 CURRENT = "CURRENT"
 UNKNOWN = "UNKNOWN"
@@ -340,7 +342,12 @@ def decode_current_reference_snapshot(
         if (sr_pre & _SR_STABILITY_MASK) != (
                 sr_post & _SR_STABILITY_MASK):
             raise ValueError(
-                "SR safety/current state changed during acquisition")
+                "SR safety/current state changed during acquisition: %s"
+                % format_sr_stability_change(
+                    sr_pre,
+                    sr_post,
+                    mask=_SR_STABILITY_MASK,
+                ))
 
         mode = _integer(raw, "UM", minimum=1, maximum=6)
         if mode not in _MODE_NAMES:

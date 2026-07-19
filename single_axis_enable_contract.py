@@ -86,6 +86,7 @@ def project_enable_state(snapshot: object) -> EnableStateProjection:
         mf != 0
         or snapshot.amplifier_code not in (None, 0)
         or snapshot.enabled_fault_reported is True
+        or snapshot.sto_diagnostics_error_reported is True
     )
     if fault_observed:
         fault_conditions = list(conditions)
@@ -96,6 +97,8 @@ def project_enable_state(snapshot: object) -> EnableStateProjection:
                 "SR amplifier code=0x%X" % snapshot.amplifier_code)
         if snapshot.enabled_fault_reported is True:
             fault_conditions.append("SR6 enable-time fault=1")
+        if snapshot.sto_diagnostics_error_reported is True:
+            fault_conditions.append("SR27 STO diagnostics error=1")
         return EnableStateProjection(
             state=FAULT_REPORTED,
             label="FAULT REPORTED - NO AUTO-RETRY",

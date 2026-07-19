@@ -13,7 +13,7 @@
 
 - `OBSERVED`: 2026-07-19 KST의 COM3 Read Only 세션에서 아래 스냅샷을
   정상 취득했다.
-- `OBSERVED`: 명시적 조회 시간은 **32.2 ms**였다.
+- `OBSERVED`: 최신 명시적 재조회 시간은 **37.4 ms**였다.
 - `OBSERVED`: 조회 전후 `MO/SO/MF/SR`와 `LC`의 상태 비트 교차검증이
   통과했다.
 - `OBSERVED`: 모터는 `DISABLED REPORTED`, mode는 `UM=5 · Position`이었다.
@@ -100,6 +100,13 @@ identity가 같아야 하며 다음 조건 중 하나라도 어기면 전체 값
 parameter/readback이며 독립 전류 센서 측정, RMS 환산 결과, 실제 motor phase
 current 또는 토크 검증이 아니다.
 
+2026-07-19 최신 working tree 재조회는 동일 identity와 disabled 조건에서
+**37.4 ms**로 통과했다. 다섯 local draft는 모두 0 A,
+`WITHIN OBSERVED LIMITS`였고, 다섯 `Set TC · LOCKED`는 계속 disabled였다.
+같은 세션의 SR 진단 경계는
+[`single-axis-sr-live-diagnostic-2026-07-19.md`](single-axis-sr-live-diagnostic-2026-07-19.md)에
+분리해 기록했다.
+
 ## 전송 가드와 실패 이력
 
 첫 field refresh는 vendor I/O 전에
@@ -125,6 +132,8 @@ bare `TC`도 assignment와 같이 motion prefix로 분류된 것이었다.
 - GREEN: 전체 repository **1781 passed in 1269.31s / exit 0**
 - 최신 PX/PU + EAS preset draft revision 전체 repository:
   **1956 passed in 692.83s / exit 0**
+- 최신 SR23 status/diagnostic correction 포함 전체 repository:
+  **1964 passed in 636.67s / exit 0**
 
 ## 설치 문서 identity
 

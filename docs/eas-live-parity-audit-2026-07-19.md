@@ -71,6 +71,20 @@ P1 식별 candidate 약 `0.139 Ω`, `0.0416 mH`는 서로 다른 authority다.
 configured motor DB 값과 실기 identification 결과를 “같은 값의 parity”로
 합치지 않는다.
 
+### 4. SR bit 23은 reserved가 아니다
+
+최신 앱의 admitted Axis Summary에서 `SR=0x0080C000`이 관찰됐고, 이전
+Single Axis status decoder는 `0x00800000`(bit 23)을 reserved로 오판해
+상태/Enable projection을 `UNKNOWN`으로 만들었다. 설치 EAS Gold SR 도움말은
+bits 21/22/23/27/30을 정의한다.
+
+decoder는 이 bits를 정의 목록에 포함하고 `MO↔SR22`를 교차검증한다.
+bit 23은 firmware/source 차이 때문에 물리 motion verdict가 아닌
+`movement/standstill indication`으로만 표시한다. bit 27은 STO diagnostics
+error로 보존하고 Enable을 `FAULT REPORTED - NO AUTO-RETRY`로 차단한다.
+첫 28-query 실패의 정확한 changed bit는 raw pre/post가 없으므로
+`UNVERIFIED`다.
+
 ## Quick Tuning
 
 | 기능 | EAS live 관찰 | AngryYJH 현재 동작 | 판정 |
@@ -110,7 +124,7 @@ Brake page는 `Using Brake=false`인 현재 EAS tree에서 별도 page로 나타
 
 | 기능 | EAS live 관찰 | AngryYJH current read | 판정 |
 |---|---|---|---|
-| Motion status | Disabled, velocity/current 0 | 같은 disabled/zero 상태 | `PARTIAL_LIVE_OBSERVED` |
+| Motion status | Disabled, velocity/current 0 | 같은 disabled/zero 상태; live SR23을 source-bound indication으로 해석 | `PARTIAL_LIVE_OBSERVED` |
 | raw PX | Terminal `-2038379934` | `-2038379934` | `VALUE_PARITY_OBSERVED` |
 | Position display | `PU=-2004825502` | raw `PX`와 `PU`를 분리 표시 | 표시값 `VALUE_PARITY_OBSERVED`; 좌표 원점 `NEED-DATA` |
 | Position profile | AC/DC/SD 1e6, SP 4444444, PA/PR 0 | 같은 query 결과 | `VALUE_PARITY_OBSERVED`; motion 안 함 |
@@ -128,6 +142,14 @@ Brake page는 `Using Brake=false`인 현재 EAS tree에서 별도 page로 나타
 
 EAS의 STO1/STO2 green indicators는 화면 관찰일 뿐 독립 STO 배선/torque isolation
 시험 증거가 아니다.
+
+최종 비실기 대조는 양쪽 프로그램을 disconnected 상태로 만든 뒤 수행했다.
+EAS는 `Connect` 활성/`Disconnect` 비활성 상태에서도 마지막 Position/Current 값과
+터미널의 `PX=-2038379934`를 유지했다. 최신 AngryYJH는 재시작 후 `OFFLINE`,
+`MOTOR STATE UNKNOWN`, `UNKNOWN-ENABLE LOCKED`로 전환하고 bounded refresh와
+5개 `Set TC`를 모두 잠갔다. 따라서 EAS의 retained 값은 fresh live evidence로
+취급하지 않으며, 값/화면 shape parity와 freshness authority를 분리한다. 이는
+의도한 fail-closed 차이다.
 
 ## Recorder
 
@@ -197,6 +219,8 @@ EAS의 STO1/STO2 green indicators는 화면 관찰일 뿐 독립 STO 배선/torq
 - 직접 영향 범위: `284 passed in 133.72s`.
 - 전체 repository: `1956 passed in 692.83s (11:32)`, exit 0,
   skip/xfail summary 없음.
+- 최신 SR23 status/diagnostic correction 포함:
+  `1964 passed in 636.67s (10:36)`, exit 0, skip/xfail summary 없음.
 - 위 시험은 코드 계약을 검증하며 EAS field behavior나 hardware safety를
   대신하지 않는다.
 

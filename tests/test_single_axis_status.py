@@ -43,6 +43,44 @@ def test_valid_disabled_snapshot_decodes_only_drive_reported_model_bits():
     assert "all ok" not in snapshot.amplifier_label.lower()
 
 
+def test_live_twitter_sr23_snapshot_is_defined_and_source_bound():
+    snapshot = status.decode_axis_safety_snapshot(
+        _raw(SR=0x0080C000))
+
+    assert snapshot.state == status.CURRENT
+    assert snapshot.raw["SR"] == 0x0080C000
+    assert snapshot.motor_on_reported is False
+    assert snapshot.movement_bit_reported is True
+    assert snapshot.sto_diagnostics_error_reported is False
+    assert any(
+        "SR23 movement/standstill indication=1" in item
+        for item in snapshot.conditions
+    )
+    assert "reserved" not in snapshot.reason.lower()
+
+
+def test_current_installed_defined_bits_are_not_rejected_as_reserved():
+    sr = (
+        (1 << 14)
+        | (1 << 15)
+        | (1 << 21)
+        | (1 << 23)
+        | (1 << 27)
+        | (1 << 30)
+    )
+    snapshot = status.decode_axis_safety_snapshot(_raw(SR=sr))
+
+    assert snapshot.state == status.CURRENT
+    assert snapshot.shunt_bit_reported is True
+    assert snapshot.movement_bit_reported is True
+    assert snapshot.sto_diagnostics_error_reported is True
+    assert snapshot.ptp_buffer_full_reported is True
+    assert any(
+        "SR27 STO diagnostics error report=1" in item
+        for item in snapshot.conditions
+    )
+
+
 def test_one_sto_channel_low_is_visible_without_becoming_a_safety_verdict():
     snapshot = status.decode_axis_safety_snapshot(
         _raw(SR=(1 << 14)))
@@ -56,7 +94,14 @@ def test_one_sto_channel_low_is_visible_without_becoming_a_safety_verdict():
 
 
 def test_fault_program_limit_and_profiler_bits_remain_separate_observations():
-    sr = 0x5 | (1 << 4) | (3 << 8) | (1 << 12) | (1 << 13)
+    sr = (
+        0x5
+        | (1 << 4)
+        | (3 << 8)
+        | (1 << 12)
+        | (1 << 13)
+        | (1 << 22)
+    )
     snapshot = status.decode_axis_safety_snapshot(
         _raw(MO=1, SO=1, MF=9, PS=1, SR=sr, MS=2))
 
@@ -136,6 +181,14 @@ def test_redundant_so_or_program_disagreement_revokes_model_authority(raw):
     assert snapshot.authority == status.MODEL_UNKNOWN
     assert snapshot.conflicts
     assert snapshot.raw == raw
+
+
+def test_redundant_mo_sr22_disagreement_revokes_model_authority():
+    snapshot = status.decode_axis_safety_snapshot(_raw(MO=1))
+
+    assert snapshot.state == status.INCONSISTENT
+    assert snapshot.authority == status.MODEL_UNKNOWN
+    assert "MO=1 disagrees with SR22=0" in snapshot.reason
 
 
 def test_input_mapping_is_not_modified():

@@ -11,13 +11,15 @@ import single_axis_status
 
 
 def _snapshot(*, mo=0, so=0, mf=0, amplifier_code=0,
-              enabled_fault=False):
+              enabled_fault=False, sto_diagnostics_error=False):
     sr = (
         int(amplifier_code)
         | ((1 << 4) if so else 0)
         | ((1 << 6) if enabled_fault else 0)
         | (1 << 14)
         | (1 << 15)
+        | ((1 << 22) if mo else 0)
+        | ((1 << 27) if sto_diagnostics_error else 0)
     )
     return single_axis_status.decode_axis_safety_snapshot({
         "MO": mo,
@@ -109,6 +111,7 @@ def test_mo_zero_so_one_is_documented_brake_hold_not_a_false_disabled_claim():
         _snapshot(mf=9),
         _snapshot(amplifier_code=0x5),
         _snapshot(mo=1, so=1, enabled_fault=True),
+        _snapshot(sto_diagnostics_error=True),
     ),
 )
 def test_any_fault_observation_overrides_normal_enable_state(snapshot):
@@ -119,6 +122,14 @@ def test_any_fault_observation_overrides_normal_enable_state(snapshot):
     assert "STOP" in projection.detail
     assert "inspect" in projection.detail.lower()
     assert projection.enable_executable is False
+
+
+def test_sto_diagnostics_error_is_named_in_fault_conditions():
+    projection = enable_contract.project_enable_state(
+        _snapshot(sto_diagnostics_error=True))
+
+    assert projection.state == enable_contract.FAULT_REPORTED
+    assert "SR27 STO diagnostics error=1" in projection.conditions
 
 
 @pytest.mark.parametrize(
