@@ -1,5 +1,9 @@
 # Single Axis Current Reference · Read-Only Snapshot v0.1
 
+> **2026-07-19 EAS live audit correction:** 이 기능은 EAS Single Axis의
+> `Current Command 1..5` preset/Set UI 구현이 아니다. `TC/IQ/ID/CL/PL/LC/MC`
+> current-drive readback이며 UI 의미 판정은 `UI_SEMANTICS_MISMATCH`다.
+
 ## 판정
 
 이 기능은 현재 Gold Twitter에서 `TC`, `IQ`, `ID`, `CL[1]`, `PL[1]`,

@@ -4667,10 +4667,10 @@ class MainWindow(QtWidgets.QMainWindow):
         layout.setSpacing(7)
 
         head = QtWidgets.QHBoxLayout()
-        title = QtWidgets.QLabel(
-            "CURRENT REFERENCE · READ-ONLY SNAPSHOT v0.1")
-        title.setProperty("role", "field")
-        head.addWidget(title)
+        self.lbl_axis_current_reference_title = QtWidgets.QLabel(
+            "DRIVE CURRENT READBACK · NOT EAS CURRENT COMMAND UI")
+        self.lbl_axis_current_reference_title.setProperty("role", "field")
+        head.addWidget(self.lbl_axis_current_reference_title)
         head.addStretch(1)
         self.lbl_axis_current_reference_state = QtWidgets.QLabel("UNKNOWN")
         self.lbl_axis_current_reference_state.setObjectName("pill")
@@ -4742,7 +4742,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
         actions = QtWidgets.QHBoxLayout()
         self.btn_axis_current_reference_refresh = QtWidgets.QPushButton(
-            "Refresh Current Reference · READ ONLY")
+            "Refresh Drive Current Readback · READ ONLY")
         self.btn_axis_current_reference_refresh.setEnabled(False)
         self.btn_axis_current_reference_refresh.clicked.connect(
             self._refresh_axis_current_reference_clicked)

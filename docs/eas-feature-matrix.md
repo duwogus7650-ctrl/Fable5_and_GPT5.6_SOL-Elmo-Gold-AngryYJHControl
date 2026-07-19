@@ -1,5 +1,11 @@
 # EAS III 기능 구현 매트릭스
 
+> **2026-07-19 LIVE AUDIT OVERRIDE:** 실제 EAS III 3.0.0.26과 현재 Gold Twitter를
+> 다시 대조한 결과는 [`eas-live-parity-audit-2026-07-19.md`](eas-live-parity-audit-2026-07-19.md)가
+> 우선한다. raw PX는 EAS Terminal과 일치하지만 EAS Single Axis 표시가 `2^25` counts
+> 다르며, 기존 Current Reference readback은 EAS Current 탭의 5-preset command UI와
+> 다른 기능이다. 이 문서의 과거 `LIVE/완료` 표시는 full EAS parity를 뜻하지 않는다.
+
 > **ACTIVE-SCOPE NOTE — 2026-07-18:** 이 매트릭스는 전체 기능 inventory/backlog다. 현재 실행 범위,
 > 중단 지점과 다음 순서는 [`current-scope-handoff.md`](current-scope-handoff.md)를 우선한다.
 

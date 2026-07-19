@@ -1,6 +1,12 @@
-# Quick Tuning + Single Axis + Expert v2 + UM/Digital I/O/Current Reference Read v0.1 작업 인계서
+# Quick Tuning + Single Axis + Expert v2 작업 인계서
 
-상태: **CURRENT REFERENCE READ v0.1 · CURRENT TARGET READBACK OBSERVED · TC COMMAND/MODE CHANGE/PHYSICAL I/O/EAS PARITY/ENERGIZATION/MOTION NOT VALIDATED**<br>
+상태: **EAS LIVE PARITY AUDIT IN PROGRESS · 기존 slice 완료는 full EAS parity가 아님**<br>
+
+2026-07-19 실제 EAS 재대조 결과와 현재 우선순위는
+[`eas-live-parity-audit-2026-07-19.md`](eas-live-parity-audit-2026-07-19.md)를
+기준으로 한다. raw PX는 EAS Terminal과 일치하지만 EAS Single Axis 표시가
+`2^25` counts 다르고, 기존 Current Reference readback은 EAS Current 탭의
+5-preset command surface와 다른 기능이다.
 기준 시각: **2026-07-19 17:50 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)

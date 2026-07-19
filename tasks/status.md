@@ -1,65 +1,78 @@
 <!-- scope_progress: 100 -->
-<!-- offline_progress: 100 -->
-<!-- field_progress: 10 -->
-<!-- progress_basis: Planning indicators, not safety scores. Field progress records bounded read-only observations only; it does not represent motion, protection, STO, or EAS parity validation. -->
+<!-- offline_progress: 88 -->
+<!-- field_progress: 40 -->
+<!-- progress_basis: Planning indicators, not safety scores. Scope means the implemented feature inventory is enumerated. Offline means code/tests/documents reviewed. Field means bounded live EAS and read-only drive comparisons only; it excludes motion, protection efficacy, STO/E-stop, write transactions, and Gold-family compatibility. -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2
+# EAS LIVE PARITY AUDIT · IN PROGRESS
 
-상태: **POSITION / VELOCITY REFERENCE READ v0.1 · CURRENT DRIVE READ ONLY**
+상태: **기존 완료 표시는 잠정 철회 · 처음부터 전 기능 재대조 중**
 
 업데이트: **2026-07-19 KST**
 
-## 이번 진행 결과
+## 감사 범위
 
-- `Position / Velocity References · Read-Only Snapshot v0.1` 구현 완료.
-- 정확히 18개 query만 사용:
-  `MO/SO/MF/SR` pre/post,
-  `UM`, `PA[1]`, `PR[1]`, `JV`, `SP[1]`, `AC[1]`, `DC`, `SD`, `PX`, `VX`.
-- assignment, `BG`, `MO=1`, 모드 변경, enable, energization, motion은 실행하지 않음.
-- PA/PR/JV는 **configured / queued readback**이며 active command 또는 motion proof가 아님.
-- transport는 위 exact query만 허용하고 assignment, 다른 index, lookalike를 계속 차단.
-- UI에는 편집 control이 없고 `Refresh ... READ ONLY` 버튼 하나만 존재.
-- 실제 화면 검증에서 숨겨졌던 `VX` 9번째 행을 발견해 표 높이를 수정하고 재검증 완료.
+- Quick Tuning: Axis Configuration, Motor, Feedback, 6단계 Automatic Tuning.
+- Expert Tuning: User Units, Limits/Protections, Application Settings,
+  Current, Commutation, Velocity/Position, Scheduling, Verification, Summary.
+- Single Axis: 상태, Position/Velocity/Current/Sine/Homing, Digital I/O,
+  Drive Mode, Terminal, Recorder docking.
+- Recorder: ribbon, acquisition modes, signal/trigger, chart/view/export 범위.
+- 공통 셸: 메뉴, System Configuration, Status/Monitor, persistence/authority 표시.
 
-## 현재 검증
+## 이번 live EAS 관찰
 
-- `OBSERVED` pure decoder/reader: **56 passed**.
-- `OBSERVED` transport + pure: **144 passed**.
-- `OBSERVED` authority/UI/catalog/transport 직접 영향 범위: **244 passed**.
-- `OBSERVED` closeout 영향 범위(모니터 포함): **270 passed in 104.51s**.
-- `OBSERVED` 설치 Gold command source SHA-256: **13 / 13 일치**.
-- `OBSERVED` 전체 repository 회귀: **1868 passed in 735.79s (12:15)**.
-- `git diff --check`: **exit 0**.
+- EAS 3.0.0.26을 현재 Gold Twitter에 COM3 단독 연결해 Motor Disabled,
+  Velocity 0, Active Current 0 상태에서 읽기/화면 관찰만 수행.
+- Enable, Run Tuning, Verify, PTP/Jog/Current/Sine/Homing, Apply, Save/SV는 실행하지 않음.
+- EAS 터미널 raw `PX=-2038379934`; 우리 앱의 current-drive `PX`도 정확히 동일.
+- 같은 순간 EAS Single Axis/Verification-Time 표시 위치는 `-2004825502`.
+- 차이 `33554432 = 2^25 counts`; EnDat 2.2 표시 변환/랩 원인은 아직 미확정.
 
-## COM3 read-only 관찰
+## 현재 판정
 
-- 상태: `ONLINE · READ ONLY`, `DISABLED REPORTED`, `UM=5 Position`.
-- `PA[1]=0 cnt`, `PR[1]=0 cnt`, `JV=0 cnt/s`.
-- `SP[1]=4,444,444 cnt/s`.
-- `AC[1]=DC=SD=1,000,000 cnt/s²`; `AC/DC WITHIN SD`.
-- `PX=-2,038,379,934 cnt`, `VX=0.000 cnt/s`.
-- acquisition: **35.6 ms**.
-- `PX=0` 또는 다른 쓰기는 실행하지 않음.
+- `VALUE_PARITY_OBSERVED`: raw PX, UM=5, 속도/가감속/정지감속,
+  Digital Input/Output 논리 상태, Current PI와 Velocity/Position 설계 게인.
+- `UI_SEMANTICS_MISMATCH`: 우리 Current Reference readback은 EAS Current 탭의
+  5개 Current Command preset UI와 같은 기능이 아님.
+- `MISMATCH_NEED_DATA`: EAS raw PX와 EAS Single Axis 표시 위치의 `2^25` 차이.
+- `DOC_ONLY`: User Units, Limits/Protections, Application Settings,
+  hidden Bode, Verification-Time, Summary의 기존 로컬 inspector 대부분.
+- `NOT_EXECUTED_NEED_DATA`: 실제 Automatic/Expert tuning, Commutation,
+  Verification, Recorder acquisition, motion, Apply/SV.
 
-이 값은 현재 Gold Twitter drive readback이다. EAS same-moment parity,
-physical motion capability, safe travel envelope, stopping distance,
-independent STO/E-stop, Gold family compatibility를 증명하지 않는다.
+## AngryYJH same-session 재조회
 
-## 현재 slice closeout
+- `UM=5 Position`.
+- `PX=-2038379934`, `VX=0`.
+- `SP=4444444`, `AC=DC=SD=1000000`.
+- `CL[1]=21.2132`, `PL[1]=70.7107`, `MC=140`, `TC=IQ=ID=0`.
+- Digital Inputs 1..6: active/GP; Digital Outputs 1..4: inactive/GP.
+- installed gains: `KP1=0.0857`, `KI1=782.5188`, `KP2=0.0002`,
+  `KI2=10.7000`, `KP3=85.2114`.
+- 수정 제어창을 재시작해 Current UI 의미 분리와 PX `2^25` 경고 표시를 확인함.
 
-- 구현, 문서, runtime readback, source identity, 영향 범위 및 전체 회귀 완료.
-- private branch commit/push와 Draft PR #2 갱신 준비 완료.
-- 다음 기능은 command surface가 아니라 Recorder/Single Axis의 남은
-  read-only 또는 documented-map 범위에서 별도 계약으로 시작한다.
+## 현재 코드 검증
+
+- audit RED: 누락 기능군과 UI 의미/위치 경고가 의도대로 실패.
+- focused GREEN: **57 passed**.
+- 영향 범위 GREEN: **204 passed in 269.59s**.
+- 전체 repository GREEN: **1873 passed in 852.71s (14:12), exit 0**.
+- 전체 출력에 skip/xfail 요약 없음.
+- `git diff --check`: exit 0.
+
+## 다음 작업
+
+1. 전 기능 parity ledger를 코드/문서의 현재 구현과 1:1로 고정한다.
+2. 우리 앱의 모든 read-only refresh를 현재 연결에서 재실행해 EAS 관찰값과 대조한다.
+3. 과장된 “완료/동등” 문구와 혼동되는 Current/Position UI를 수정한다.
+4. 회귀시험 뒤 감사 결과를 private branch와 Draft PR에 반영한다.
 
 ## 계속 잠긴 기능
 
-- PA/PR/JV assignment와 `BG` 실행.
-- standalone `MO=1`, Drive Mode 변경, Current command `TC=`.
-- endless Jog, Run Held, Sine/Homing/Stepper.
-- unrestricted Terminal.
-- 실제 Expert Bode/Time Verify, Apply/SV.
+- 모든 motor energization/motion: `MO=1`, `BG`, PTP/Jog/Current/Sine/Homing.
+- 실제 Quick/Expert tuning과 Commutation/Verification.
+- 파라미터 assignment, Apply/Revert, Save/SV, firmware download.
+- unrestricted Terminal 및 Digital Output actuation.
 
-이 기능들은 단순 UI 구현 문제가 아니라 단위·방향·travel/speed/acceleration,
-current/thermal/torque envelope, watchdog, 독립 abort/STO, readback,
-`ST -> MO=0` closeout이 필요한 `NEED-DATA / NO-GO` 범위다.
+이 감사의 live 관찰은 기능 동등성·제어 성능·기계 안전·STO/E-stop·다른 Gold 제품
+호환성을 증명하지 않는다.

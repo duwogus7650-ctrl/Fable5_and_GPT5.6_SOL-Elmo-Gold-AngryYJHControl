@@ -771,6 +771,8 @@ def test_worker_emits_only_the_typed_drive_mode_snapshot(monkeypatch):
 
 def test_current_reference_panel_starts_unknown_and_has_no_command_surface(ui):
     assert ui.win.lbl_axis_current_reference_state.text() == "UNKNOWN"
+    assert ui.win.lbl_axis_current_reference_title.text() == (
+        "DRIVE CURRENT READBACK · NOT EAS CURRENT COMMAND UI")
     assert ui.win.axis_current_reference_table.rowCount() == 7
     assert tuple(
         ui.win.axis_current_reference_table.item(row, 0).text()
@@ -782,7 +784,9 @@ def test_current_reference_panel_starts_unknown_and_has_no_command_surface(ui):
             "NO TC ASSIGNMENT",
             "NO LOOP CHANGE",
             "COMMAND LOCKED",
-            "NEED-DATA"):
+            "NEED-DATA",
+            "NOT EAS CURRENT TAB",
+            "FIVE CURRENT COMMAND PRESETS"):
         assert phrase in contract
     for widget_type in (
             QtWidgets.QComboBox,
@@ -798,7 +802,7 @@ def test_current_reference_panel_starts_unknown_and_has_no_command_surface(ui):
         button.text()
         for button in ui.win.axis_current_reference_frame.findChildren(
             QtWidgets.QPushButton)
-    ) == ("Refresh Current Reference · READ ONLY",)
+    ) == ("Refresh Drive Current Readback · READ ONLY",)
     assert ui.win.btn_axis_current_reference_refresh.property(
         "operationId") == "axis.current_reference.refresh"
 
@@ -924,7 +928,10 @@ def test_position_velocity_panel_starts_unknown_and_has_no_command_surface(ui):
             "NO ASSIGNMENT",
             "NO BG",
             "COMMAND LOCKED",
-            "NEED-DATA"):
+            "NEED-DATA",
+            "RAW PX MATCHED EAS TERMINAL",
+            "2^25",
+            "MISMATCH / NEED-DATA"):
         assert phrase in contract
     for widget_type in (
             QtWidgets.QComboBox,

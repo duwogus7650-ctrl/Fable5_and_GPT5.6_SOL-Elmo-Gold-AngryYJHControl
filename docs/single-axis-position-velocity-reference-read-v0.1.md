@@ -1,5 +1,11 @@
 # Single Axis Position / Velocity References · Read-Only Snapshot v0.1
 
+> **2026-07-19 EAS live audit correction:** AngryYJH raw
+> `PX=-2038379934`는 EAS Terminal raw `PX`와 정확히 일치했지만, 같은 순간
+> EAS Single Axis/Verification-Time 표시 위치는 `-2004825502`였다.
+> 차이는 `33554432 = 2^25 counts`이며 원인은 아직 `MISMATCH_NEED_DATA`다.
+> raw PX 일치를 EAS 화면 좌표 parity로 확대하지 않는다.
+
 ## Outcome
 
 `Motion` page에 position/velocity 관련 drive parameter와 live feedback을

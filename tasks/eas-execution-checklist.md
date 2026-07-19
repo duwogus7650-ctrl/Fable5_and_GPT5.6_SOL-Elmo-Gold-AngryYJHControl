@@ -1,8 +1,10 @@
 # EAS III Execution Checklist
 
-> **DEFERRED BACKLOG — 2026-07-17:** 전체 EAS checklist 실행은 중단했다. 현재 활성 범위는
-> [`../docs/current-scope-handoff.md`](../docs/current-scope-handoff.md)의 Quick Tuning + 제한형
-> Single Axis이며, 이 표의 `[x]/[~]`를 현재 완료율로 사용하지 않는다.
+> **LIVE AUDIT ACTIVE — 2026-07-19:** 실제 EAS III 3.0.0.26과 현재 Gold Twitter를
+> read-only/UI 범위에서 처음부터 다시 대조 중이다. 세션 결과는
+> [`../docs/eas-live-parity-audit-2026-07-19.md`](../docs/eas-live-parity-audit-2026-07-19.md)가
+> 우선한다. 이 표의 `[x]/[~]`는 여전히 전체 기능 완료율이 아니며, 관찰된 화면도
+> execution·motion·write·save parity를 뜻하지 않는다.
 
 기준 설치본: EAS III 3.0.0.26<br>
 계획: docs/eas-full-parity-plan.md<br>
@@ -20,7 +22,7 @@
 - 위험 분류의 canonical 집합은 `LOCAL / READ / DRIVE_STATE / RAM / ENERGY / MOTION / SV /
   RESET-FLASH / SAFETY_STOP / NEED-DATA`다. `SAFETY_STOP`은 일반 위험 승격 순서 밖의 cleanup 경로다.
 - Offline check는 기존 row-specific test evidence를 표시한다. 최신 전체 suite summary는
-  2026-07-19에 1567 passed, 직접 종료코드 0이었지만,
+  2026-07-19 live audit correction 뒤 1873 passed in 852.71s, 직접 종료코드 0이었지만,
   그 결과를 모든 행의 Offline test 완료로 확장하지 않는다.
 - 승인 Mutation 열은 매번 fresh approval이 필요하므로 과거 승인 이력을 재사용하지 않는다. 예외적으로
   SAFETY_STOP과 disconnect cleanup은 fresh approval이나 fresh telemetry를 기다리지 않고 비차단 attempt해야 한다.
@@ -88,48 +90,48 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-019 | Gold firmware download via FoE | [ ] | [x] G7 | [x] RESET-FLASH | [ ] | [ ] | [ ] | [ ] | [~] | Scope B EtherCAT 의존 |
 | A-020 | Gold PAL download via USB/RS232 | [ ] | [x] G7 | [x] RESET-FLASH | [ ] | [ ] | [ ] | [ ] | [~] | |
 | A-021 | Gold PAL download via FoE | [ ] | [x] G7 | [x] RESET-FLASH | [ ] | [ ] | [ ] | [ ] | [~] | |
-| A-022 | Quick Tuning: Axis Configurations | [ ] | [x] G2 §2.3.2 | [x] RAM | [~] | [~] | [ ] | [~] | [~] | current Axis Summary는 read-only |
-| A-023 | Quick Tuning: Motor Settings | [ ] | [x] G2 §2.3.3 | [x] RAM/SV | [x] 제한 profile | [~] | [ ] | [x] | [x] | EAS page 전체 parity 아님 |
-| A-024 | Quick Tuning: Feedback Settings | [~] 영상 | [x] G2 §2.3.3.2 | [x] RAM/SV | [x] preview | [~] EnDat | [ ] | [ ] | [x] | 23 sensor preview, write registry 미완 |
-| A-025 | Quick Tuning: Initialization | [ ] | [x] G2 §2.3.4 | [x] DRIVE_STATE/RAM | [~] | [~] | [ ] | [~] | [~] | |
-| A-026 | Quick Tuning: Current Identification | [ ] | [x] G2 §2.3.4 | [x] ENERGY | [x] | [~] | [ ] | [x] | [x] | Phase 1 구현 |
-| A-027 | Quick Tuning: Current Design | [ ] | [x] G2 §2.3.4 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
-| A-028 | Quick Tuning: Commutation | [ ] | [x] G2 §2.3.4 | [x] ENERGY/MOTION/RAM | [x] signature | [~] | [ ] | [~] | [x] | EAS auto-phasing 전체 아님 |
-| A-029 | Quick Tuning: Velocity/Position Identification | [ ] | [x] G2 §2.3.4 | [x] MOTION | [x] | [~] | [ ] | [x] | [x] | Phase 2 |
-| A-030 | Quick Tuning: Velocity/Position Design | [ ] | [x] G2 §2.3.4 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
+| A-022 | Quick Tuning: Axis Configurations | [x] live UI 2026-07-19 | [x] G2 §2.3.2 | [x] RAM | [~] | [~] | [ ] | [~] | [~] | Single/rotary/single feedback/UM=5 관찰; Apply 안 함 |
+| A-023 | Quick Tuning: Motor Settings | [x] live UI 2026-07-19 | [x] G2 §2.3.3 | [x] RAM/SV | [x] 제한 profile | [~] | [ ] | [x] | [x] | configured R/L과 식별 candidate authority 다름; EAS page 전체 parity 아님 |
+| A-024 | Quick Tuning: Feedback Settings | [x] live UI 2026-07-19 | [x] G2 §2.3.3.2 | [x] RAM/SV | [x] preview | [~] EnDat | [ ] | [ ] | [x] | EnDat 2.2/Port A 관찰; 23 sensor 전체 live와 write registry 미완 |
+| A-025 | Quick Tuning: Initialization | [x] stage UI | [x] G2 §2.3.4 | [x] DRIVE_STATE/RAM | [~] | [~] | [ ] | [~] | [~] | Run 안 함 |
+| A-026 | Quick Tuning: Current Identification | [x] stage UI | [x] G2 §2.3.4 | [x] ENERGY | [x] | [~] | [ ] | [x] | [x] | Phase 1 구현; EAS Run 안 함 |
+| A-027 | Quick Tuning: Current Design | [x] stage UI | [x] G2 §2.3.4 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | EAS Run 안 함 |
+| A-028 | Quick Tuning: Commutation | [x] stage UI | [x] G2 §2.3.4 | [x] ENERGY/MOTION/RAM | [x] signature | [~] | [ ] | [~] | [x] | EAS auto-phasing 전체와 1.30 A signature는 의미 불일치; Run 안 함 |
+| A-029 | Quick Tuning: Velocity/Position Identification | [x] stage UI | [x] G2 §2.3.4 | [x] MOTION | [x] | [~] | [ ] | [x] | [x] | Phase 2; EAS Run 안 함 |
+| A-030 | Quick Tuning: Velocity/Position Design | [x] stage UI | [x] G2 §2.3.4 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | EAS Run 안 함 |
 | A-031 | Quick Tuning: Summary recommendation/apply | [ ] | [x] G2 §2.3.4 | [x] RAM/SV | [~] | [ ] | [ ] | [~] | [~] | 추천 action 정확한 의미 미확정 |
-| A-032 | Expert Tuning tree와 page status/error | [ ] | [x] G8 §8.2 | [x] LOCAL/READ | [~] local inspector | [ ] | — | — | [~] | P1/P2/evidence local 상태만; EAS icon/Enter/Apply/Summary parity 아님 |
+| A-032 | Expert Tuning tree와 page status/error | [x] live tree/status | [x] G8 §8.2 | [x] LOCAL/READ | [~] local inspector | [ ] | — | — | [~] | Current Limits red invalid warning 관찰; local status는 EAS icon/Enter/Apply/Summary parity 아님 |
 | A-033 | Expert Apply/Revert current page | [ ] | [x] G8 §8.2.1 | [x] RAM | [x] P1/P2 | [~] | [ ] | [x] | [x] | page 범위 제한 |
 | A-034 | Expert Apply All/Revert All | [ ] | [x] G8 §8.2.1/RIB | [x] RAM | [~] | [ ] | [ ] | [~] | [~] | aggregate transaction 필요 |
 | A-035 | Expert Drive Load/Drive Save/Reset | [ ] | [x] G8 §8.2.1~2 | [x] RAM/SV/RESET-FLASH | [~] 제한 SV | [ ] | [ ] | [~] | [~] | generic path 없음 |
 | A-036 | Expert Axis Configurations | [ ] | [x] G8 §8.2.3 | [x] RAM/SV | [~] read model | [~] | [ ] | [ ] | [~] | |
 | A-037 | Expert Motor Settings 전체 | [ ] | [x] G8 §8.2.4.1 | [x] RAM/SV | [x] 제한 profile | [~] | [ ] | [x] | [x] | |
 | A-038 | Expert Feedback Settings/Advanced 전체 | [~] 영상 | [x] G8 §8.2.4.2~3 | [x] RAM/SV | [x] preview | [~] EnDat | [ ] | [ ] | [x] | |
-| A-039 | Drive/Display User Units | [~] Display page | [x] G8 §8.2.5 | [x] LOCAL/RAM/SV | [~] DS-402 position formula only | [ ] | [ ] | [ ] | [x] | `PARTIAL/SCREENING`; explicit FC1/2/5/6/7/8, grouping mismatch purpose NEED-DATA; no read/write/Apply/SV/unit propagation |
-| A-040 | Current Limits | [ ] | [x] G8 §8.2.6.1 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `MC/BV/PL1/CL1/PL2/US1/US2` immutable documentation rows only; local catalog GREEN, current values·validity·EAS parity·write `NEED-DATA/NO-GO` |
-| A-041 | Motion Limits and Modulo | [ ] | [x] G8 §8.2.6.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `SD/VH2/VL3/VH3/XM1/XM2/modulo/XA4:1/:2` documentation rows; XA bypass는 danger display only, no toggle/value; no current config/read/write/safety claim |
-| A-042 | Protections | [ ] | [x] G8 §8.2.6.3 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `ER/CL/XP/LL/HL` documentation rows와 disable warning/conflict만; focused 69 + 전체 1513 passed와 runtime은 immutable local inspector 범위, active protection·efficacy·field safety는 `NEED-DATA/NO-GO` |
-| A-043 | Brake | [ ] | [x] G8 §8.2.7.1 | [x] DRIVE_STATE/RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `OL[N]/BP[1..2]/VH[1]` 4개 documentation rows only; exact B01G output electrical/brake capability, current config, validation, actuation과 safety는 `NEED-DATA/NO-GO` |
-| A-044 | Settling Window | [ ] | [x] G8 §8.2.7.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `TR[1..4]` documentation rows only; Target Reached 의미이지 accuracy/stability/safety evidence가 아님; current/read/write/unit propagation 없음 |
-| A-045 | Inputs and Outputs settings | [ ] | [x] G8 §8.2.7.3 | [x] DRIVE_STATE/RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | `IL/IF/IP+IB/OL/GO+OP` 5개 documentation rows; status 2개는 `unavailable · not sampled`; current I/O/query/write/output actuation 없음. APP SETTINGS focused 85 + 전체 1529 passed, 독립 closeout/runtime 완료; 로컬 catalog/UI만 GREEN |
-| A-046 | Current Identification | [ ] | [x] G8 §8.2.8.1 | [x] ENERGY | [x] | [~] | [ ] | [x] closeout | [x] | |
-| A-047 | Current Design | [ ] | [x] G8 §8.2.8.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
-| A-048 | Current Verification - Time | [ ] | [x] G8 §8.2.8.3 | [x] ENERGY | [~] static map | [ ] | [ ] | [ ] | [x] | 8-row immutable documentation map only. Actual Verify는 `ENERGY + possible motor movement/twitch`; current envelope·Recorder provenance·abort/closeout·quantitative acceptance가 없어 `NEED-DATA/NO-GO` |
+| A-039 | Drive/Display User Units | [x] live page | [x] G8 §8.2.5 | [x] LOCAL/RAM/SV | [~] DS-402 position formula only | [ ] | [ ] | [ ] | [x] | No Conversion/factor1/on motor 관찰; app는 `PARTIAL/SCREENING` formula only |
+| A-040 | Current Limits | [x] live page | [x] G8 §8.2.6.1 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | live values와 EAS invalid warning 관찰; app는 immutable docs only |
+| A-041 | Motion Limits and Modulo | [x] live page | [x] G8 §8.2.6.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | No Modulo/limits ignored 관찰; app는 docs only |
+| A-042 | Protections | [x] live page | [x] G8 §8.2.6.3 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | live ER/CL 값 관찰; efficacy 미시험 |
+| A-043 | Brake | [~] page hidden | [x] G8 §8.2.7.1 | [x] DRIVE_STATE/RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | Using Brake=false라 current tree에서 별도 page 비표시; app는 docs only |
+| A-044 | Settling Window | [x] live page | [x] G8 §8.2.7.2 | [x] RAM/SV | [~] static map | [ ] | [ ] | [ ] | [x] | TR[1..4] live 값 관찰; app는 docs only |
+| A-045 | Inputs and Outputs settings | [x] live page | [x] G8 §8.2.7.3 | [x] DRIVE_STATE/RAM/SV | [~] static map + separate live snapshots | [x] query-only | [ ] | [ ] | [x] | inputs 1..6 active GP, outputs 1..4 inactive GP same-session 논리값 일치; physical I/O 미검증 |
+| A-046 | Current Identification | [x] live UI | [x] G8 §8.2.8.1 | [x] ENERGY | [x] | [~] | [ ] | [x] closeout | [x] | EAS Identify 안 함 |
+| A-047 | Current Design | [x] live UI/value | [x] G8 §8.2.8.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | KP/KI 반올림 일치; Apply 안 함 |
+| A-048 | Current Verification - Time | [x] live UI/value | [x] G8 §8.2.8.3 | [x] ENERGY | [~] static map + installed readback | [ ] | [ ] | [ ] | [x] | KP/KI exact 일치; Verify 안 함 |
 | A-049 | Current Verification - Bode | [ ] | [x] G8 §8.2.8.4 | [x] ENERGY | [~] static map | [ ] | [ ] | [ ] | [x] | 8-row immutable documentation map only; `%PL/%CL`, Offset unit, screenshot-only axis option, point-label conflicts 보존. Actual Verify/acquisition/evaluation/current injection은 `NEED-DATA/NO-GO` |
 | A-050 | Analog Sensor Calibration | [ ] | [x] G8 §8.2.9 | [x] ENERGY/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-051 | Analog Sensor Calibration Advanced | [ ] | [x] G8 §8.2.9.1 | [x] ENERGY/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-052 | Sensorless tuning/verification | [ ] | [x] G8 §8.2.10 | [x] ENERGY/MOTION/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-053 | Sensorless manual tuning | [ ] | [x] G8 §8.2.10.2 | [x] ENERGY/MOTION/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
-| A-054 | Commutation and Sensor Selection | [ ] | [x] G8 §8.2.11.1 | [x] RAM | [~] | [~] | [ ] | [~] | [x] | |
+| A-054 | Commutation and Sensor Selection | [x] live page | [x] G8 §8.2.11.1 | [x] RAM | [~] | [~] | [ ] | [~] | [x] | Absolute Serial 관찰; no mutation |
 | A-055 | Incremental Sensor + Digital Halls phasing | [ ] | [x] G8 §8.2.11.2 | [x] ENERGY/MOTION/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | current target는 EnDat 2.2 |
 | A-056 | Incremental Sensor without Halls phasing | [ ] | [x] G8 §8.2.11.3 | [x] ENERGY/MOTION/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-057 | Absolute Sensor alternate phasing method | [ ] | [x] G8 §8.2.11.4 | [x] ENERGY/MOTION/RAM | [~] signature | [~] | [ ] | [~] | [~] | |
-| A-058 | Running Commutation | [ ] | [x] G8 §8.2.11.5 | [x] ENERGY/MOTION | [x] bounded signature | [~] | [ ] | [x] closeout | [x] | EAS 전체 procedure parity 미완 |
+| A-058 | Running Commutation | [x] controls/value | [x] G8 §8.2.11.5 | [x] ENERGY/MOTION | [x] bounded signature | [~] | [ ] | [x] closeout | [x] | EAS 100% CL procedure와 1.30 A signature는 parity 아님; Run 안 함 |
 | A-059 | Stepper Closed Loop | [ ] | [x] G8 §8.2.12 | [x] ENERGY/MOTION/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
-| A-060 | Velocity/Position Identification | [ ] | [x] G8 §8.2.13.1 | [x] MOTION | [x] | [~] | [ ] | [x] | [x] | |
-| A-061 | Velocity/Position Design | [ ] | [x] G8 §8.2.13.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | |
-| A-062 | Velocity/Position Scheduling | [ ] | [x] G8 §8.2.13.3 | [x] RAM | [~] | [ ] | [ ] | [~] | [~] | |
-| A-063 | Velocity/Position Verification - Time | [ ] | [x] G8 §8.2.13.4 | [x] MOTION | [~] static map | [ ] | [ ] | [ ] | [x] | 8-row immutable documentation map only. Actual page는 editable Current/control parameters와 PTP/Jog/Sine-Step `MOTION`; Recorder provenance·abort/restore·quantitative acceptance가 없어 `NEED-DATA/NO-GO` |
+| A-060 | Velocity/Position Identification | [x] live UI | [x] G8 §8.2.13.1 | [x] MOTION | [x] | [~] | [ ] | [x] | [x] | EAS 100% CL open-loop과 app low-current Phase2는 procedure mismatch; Identify 안 함 |
+| A-061 | Velocity/Position Design | [x] live UI/value | [x] G8 §8.2.13.2 | [x] RAM | [x] | [~] | [ ] | [x] | [x] | KP2/KI2/KP3 current values 일치; filter evaluator parity 아님 |
+| A-062 | Velocity/Position Scheduling | [x] live page | [x] G8 §8.2.13.3 | [x] RAM | [~] | [ ] | [ ] | [~] | [~] | Off와 tabs 관찰; app docs only |
+| A-063 | Velocity/Position Verification - Time | [x] live UI/value | [x] G8 §8.2.13.4 | [x] MOTION | [~] static map | [ ] | [ ] | [ ] | [x] | gains/controls 관찰; Verify/PTP/Jog/Sine/Recorder 미실행 |
 | A-064 | Velocity/Position Verification - Bode | [ ] | [x] G8 §8.2.13.5 | [x] MOTION | [~] static map | [ ] | [ ] | [ ] | [x] | 8-row immutable documentation map only; loop/amplitude/current/frequency/offset/overlay/Verify 의미 표시. Actual closed-loop acquisition·motion·acceptance는 `NEED-DATA/NO-GO` |
 | A-065 | Error Mapping Settings | [ ] | [x] G8 §8.3.1 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-066 | Error Mapping Experiment | [ ] | [x] G8 §8.3.2 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |
@@ -144,15 +146,15 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-075 | Automated Sine Sweep Identification | [ ] | [x] G8 §8.7.4 | [x] ENERGY/MOTION | [~] | [ ] | [ ] | [~] | [~] | |
 | A-076 | Automated Fast Identification | [ ] | [x] G8 §8.7.5 | [x] ENERGY/MOTION | [~] | [ ] | [ ] | [~] | [~] | |
 | A-077 | Automated Closed Loop Bode Verification | [ ] | [x] G8 §8.7.6 | [x] ENERGY/MOTION | [~] | [ ] | [ ] | [~] | [~] | |
-| A-078 | Motion Single Axis: Position Loop | [ ] | [x] G8 §8.9.3.1 | [x] MOTION | [x] kernel | [ ] | [ ] | [x] offline | [x] | live NEED-DATA |
-| A-079 | Motion Single Axis: Velocity Loop | [ ] | [x] G8 §8.9.3.2 | [x] MOTION | [~] STOP model | [ ] | [ ] | [~] | [~] | |
-| A-080 | Motion Single Axis: Current Loop | [ ] | [x] G8 §8.9.3.3 + Gold TC/ID-IQ/CL/PL/LC/MC | [x] READ→ENERGY/MOTION | [x] read-only snapshot | [x] query-only current target | [ ] `TC=` | [~] STOP model only | [x] read contract | `TC/IQ/ID/CL/PL/LC/MC` read 완료; Current command는 `NEED-DATA` |
+| A-078 | Motion Single Axis: Position Loop | [x] live UI/value | [x] G8 §8.9.3.1 | [x] MOTION | [x] kernel | [x] query-only | [ ] | [x] offline | [x] | raw PX 일치, EAS display는 +2^25 mismatch; motion 안 함 |
+| A-079 | Motion Single Axis: Velocity Loop | [x] live UI/value | [x] G8 §8.9.3.2 | [x] MOTION | [~] STOP model + readback | [x] query-only | [ ] | [~] | [~] | SP/AC/DC/SD/VX 일치; Jog 안 함 |
+| A-080 | Motion Single Axis: Current Loop | [x] live UI | [x] G8 §8.9.3.3 + Gold TC/ID-IQ/CL/PL/LC/MC | [x] READ→ENERGY/MOTION | [x] read-only snapshot | [x] query-only current target | [ ] `TC=` | [~] STOP model only | [x] read contract | app readback은 EAS 5-preset Current command UI가 아님 |
 | A-081 | Motion Single Axis: Stepper UM=3 | [ ] | [x] G8 §8.9.3.4 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-082 | Motion Single Axis: Stepper UM=6 | [ ] | [x] G8 §8.9.3.5 | [x] MOTION | [ ] | [ ] | [ ] | [ ] | [ ] | |
-| A-083 | Single Axis I/O Status | [ ] | [x] G8 §8.9.4 | [x] READ | [~] telemetry | [~] | — | — | [~] | |
-| A-084 | Single Axis Motion Status | [ ] | [x] G8 §8.9.5 | [x] READ | [x] telemetry state | [x] | — | — | [x] | |
-| A-085 | Set Session Zero / PX=0 | [ ] | [x] G8/RIB Reset Ref Position | [x] RAM | [x] | [~] pre-read | [ ] | [~] coordinate latch | [x] | fresh approval 필요 |
-| A-086 | Motor Enable without profile | [ ] | [x] Gold MO/SO/SR command contract | [x] ENERGY | [~] zero-I/O state projection; Enable locked | [~] MO/SO/MF/SR read | [ ] standalone MO=1 field test | [x] existing disable closeout | [x] offline | `NEED-DATA`; no executable Enable handler |
+| A-083 | Single Axis I/O Status | [x] live UI/value | [x] G8 §8.9.4 | [x] READ | [x] bounded snapshots | [x] | — | — | [x] | logical state parity only; physical pins 미검증 |
+| A-084 | Single Axis Motion Status | [x] live UI/value | [x] G8 §8.9.5 | [x] READ | [x] telemetry state | [x] | — | — | [x] | disabled/zero velocity/current; position display transform mismatch |
+| A-085 | Set Session Zero / PX=0 | [x] button observed | [x] G8/RIB Reset Ref Position | [x] RAM | [x] | [~] pre-read | [ ] | [~] coordinate latch | [x] | 이번 감사에서 PX=0 실행 안 함 |
+| A-086 | Motor Enable without profile | [x] control observed | [x] Gold MO/SO/SR command contract | [x] ENERGY | [~] zero-I/O state projection; Enable locked | [~] MO/SO/MF/SR read | [ ] standalone MO=1 field test | [x] existing disable closeout | [x] offline | EAS/앱 모두 Enable 실행 안 함 |
 | A-087 | Software DRIVE STOP: ST→MO=0 | [ ] | [x] G8/RIB | [x] SAFETY_STOP | [x] | [~] | — 비차단 | — | [x] | fresh approval/telemetry를 기다리지 않음; independent STO 아님 |
 | A-088 | Drive Emulation | [ ] | [x] G8 §8.12.2 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-089 | Application Tool Inputs and Outputs | [ ] | [x] G8 §8.12.3 | [x] DRIVE_STATE/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |
