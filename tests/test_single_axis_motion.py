@@ -186,6 +186,37 @@ def test_axis_summary_is_read_only_and_does_not_invent_eas_topology():
     assert drive.writes == []
 
 
+@pytest.mark.parametrize(
+    ("um", "expected"),
+    (
+        (1, "Torque (UM=1)"),
+        (2, "Speed (UM=2)"),
+        (3, "Stepper (UM=3)"),
+        (5, "Position (UM=5)"),
+        (6, "Stepper open/closed loop (UM=6)"),
+    ),
+)
+def test_axis_summary_reuses_canonical_documented_um_names(um, expected):
+    drive = SimMotionLink()
+    drive.reg["UM"] = um
+
+    summary = sam.read_axis_summary(drive)
+
+    assert summary["mode"] == expected
+    assert drive.writes == []
+
+
+@pytest.mark.parametrize("um", (0, 4, 7, 1.5, True))
+def test_axis_summary_does_not_coerce_reserved_or_invalid_um(um):
+    drive = SimMotionLink()
+    drive.reg["UM"] = um
+
+    summary = sam.read_axis_summary(drive)
+
+    assert summary["mode"].startswith("Unknown (UM=")
+    assert drive.writes == []
+
+
 def test_move_rejects_without_session_commutation_signature_before_write():
     drive = SimMotionLink()
     result = sam.run_position_move(drive, request(), signature_green=False,

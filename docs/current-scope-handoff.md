@@ -1,7 +1,7 @@
-# Quick Tuning + Single Axis + Expert v2 + Digital I/O Read v0.1 작업 인계서
+# Quick Tuning + Single Axis + Expert v2 + UM/Digital I/O Read v0.1 작업 인계서
 
-상태: **DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
-기준 시각: **2026-07-19 11:30 KST**<br>
+상태: **UM/DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · MODE CHANGE/PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
+기준 시각: **2026-07-19 12:31 KST**<br>
 활성 상태판: [`../tasks/status.md`](../tasks/status.md)<br>
 후속 장비/센서 매트릭스: [`drive-feedback-validation-matrix.md`](drive-feedback-validation-matrix.md)
 
@@ -36,6 +36,8 @@
 - Single Axis Digital Outputs · Read-Only Snapshot v0.1:
   `667c19eb8bd44d1a7d838772753e7fc6d709fb94`
   (field readback·회귀 완료, private Draft PR #2 게시 대상)
+- Single Axis Drive Mode · Read-Only Snapshot v0.1:
+  working tree closeout 중
 - 새 저장소 `origin`:
   `duwogus7650-ctrl/Fable5_and_GPT5.6_SOL-Elmo-Gold-AngryYJHControl`
 - 원본 저장소 `source`:
@@ -103,6 +105,18 @@
   `OP/OL/GO` assignment, `OB/OC/XO`, 출력 토글/actuation, Enable 또는
   motion은 실행하지 않았다. physical pin/load/brake/STO/EAS parity는
   `NEED-DATA / NO-GO`다.
+- Single Axis Drive Mode v0.1은 `single_axis_drive_mode.py`의 pure
+  decoder/reader, exact `UM` one-query worker job, operation catalog와
+  Motion read-only card로 구성됐다. 설치 Gold 문서의 `1/2/3/5/6`만
+  해석하고 reserved `4` 또는 비정상·stale·session 교체는 전체 blank한다.
+  pure **24 passed**, integration **261 passed in 88.22s**, 3-skin UI
+  **32 passed in 57.09s**, 최신 focused split **53 + 287 passed**,
+  전체 **1717 passed in 1012.58s / exit 0**, source SHA-256 **1/1 일치**다.
+- 현재 target `ONLINE · READ ONLY`, motor disabled, velocity/current 0에서
+  `UM=5 · Position`, acquisition **2.1 ms**를 관찰했다. `UM=` assignment,
+  Enable/Disable, `TC/JV/PA/PR/BG`, reference, energization, motion, `SV`는
+  실행하지 않았다. UM은 문서상 non-volatile이고 assignment에 motor-off
+  제한이 있으므로 change operation은 별도 `NEED-DATA`로 잠겼다.
 - Limits/Protections 작업 이전 app revision으로 Read Only field admission을 수행했고,
   host-observed 세션 증거를 보존했다.
 - Limits/Protections 최신 source를 Python 3.14로 다시 실행해
@@ -573,6 +587,10 @@ software STOP은 독립 STO/E-stop이 아니며, vendor call이 진행 중이면
 | 최신 전체 repository | **1673 passed in 493.02s · exit 0** | current working tree 전체 회귀 |
 | Digital Output current-target runtime | **4/4 CURRENT DRIVE READ ONLY · 18.1 ms** | 모두 INACTIVE logical activation/General purpose/ACTIVE_HIGH/Function via OL[N]; physical pin/load/STO/EAS parity 아님 |
 | Digital Output 설치 source | **4 / 4 SHA-256 일치** | installed `OP`/`GO`/`OL` command pages + local Gold Twitter Installation Guide |
+| Drive Mode pure/initial integration/latest focused/UI | **24 / 261 / (53 + 287) / 32 passed** | exact `UM` decoder/reader, worker/catalog/UI/transport/safety, canonical Axis Summary labels, 3-skin geometry |
+| Drive Mode 포함 최신 전체 repository | **1717 passed in 1012.58s · exit 0** | current working tree 전체 회귀 |
+| Drive Mode current-target runtime | **UM=5 · Position · 2.1 ms** | CURRENT DRIVE READ ONLY; motor disabled, velocity/current 0; no assignment/reference/motion |
+| Drive Mode 설치 source | **1 / 1 SHA-256 일치** | installed Gold `UM – Unit Mode` command page |
 
 유용한 실패 이력:
 

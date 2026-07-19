@@ -252,6 +252,18 @@ _SPECS = (
           OperationRisk.LOCAL_UI,
           "Decode an existing MO/SO/MF/PS/SR/MS snapshot locally with no new "
           "drive query; this is not STO test evidence."),
+    _spec("axis.drive_mode.refresh",
+          "Single Axis Drive Mode · READ ONLY v0.1",
+          OperationRisk.DRIVE_READ,
+          "Explicitly read only UM for the current identity-bound session; "
+          "one bounded query, no UM assignment, no mode change, no "
+          "enable/reference command, and no motion.",
+          gates=_IDENTITY_FRESH | frozenset((
+              "bounded_read_allowlist",
+              "explicit_refresh",
+              "um_only",
+          )),
+          status=OperationStatus.PARTIAL),
     _spec("axis.digital_inputs.refresh",
           "Single Axis Digital Inputs · READ ONLY v0.1",
           OperationRisk.DRIVE_READ,
@@ -375,6 +387,13 @@ _SPECS = (
           "Single Axis Digital In/Out · NEED-DATA",
           OperationRisk.NEED_DATA,
           "Signal mapping, polarity, freshness and output-write rollback are not frozen.",
+          status=OperationStatus.NEED_DATA),
+    _spec("axis.drive_mode.change",
+          "Single Axis Drive Mode Change · NEED-DATA",
+          OperationRisk.NEED_DATA,
+          "UM is non-volatile and the installed Gold reference requires the "
+          "motor off; verified disabled/stationary state, exact readback, "
+          "persistence recovery, and rollback authority are not frozen.",
           status=OperationStatus.NEED_DATA),
     _spec("eas.single_axis.manual_references",
           "Single Axis Current/Stepper/Sine References · NEED-DATA",

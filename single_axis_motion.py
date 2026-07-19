@@ -15,6 +15,8 @@ import math
 import time
 from typing import Any, Callable, Mapping, Optional
 
+import single_axis_drive_mode
+
 
 GREEN = "GREEN"
 RED = "RED"
@@ -284,11 +286,17 @@ def read_axis_summary(link: Any) -> dict[str, Any]:
             errors[command] = str(exc)
 
     um = raw.get("UM")
-    mode_names = {1: "Torque", 2: "Velocity", 3: "Stepper",
-                  5: "Position", 6: "Open-loop stepper"}
-    mode = ("%s (UM=%d)" % (mode_names[int(um)], int(um))
-            if isinstance(um, (int, float)) and int(um) in mode_names
-            else "Unknown (UM=%r)" % um)
+    mode_spec = None
+    if (isinstance(um, (int, float))
+            and not isinstance(um, bool)
+            and math.isfinite(float(um))
+            and float(um).is_integer()):
+        mode_spec = single_axis_drive_mode.MODE_SPECS.get(int(um))
+    mode = (
+        "%s (UM=%d)" % (mode_spec.name, mode_spec.value)
+        if mode_spec is not None
+        else "Unknown (UM=%r)" % um
+    )
     pos_socket, vel_socket = raw.get("CA[45]"), raw.get("CA[46]")
     if (isinstance(pos_socket, (int, float)) and
             isinstance(vel_socket, (int, float)) and pos_socket == vel_socket):

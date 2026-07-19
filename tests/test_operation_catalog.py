@@ -538,3 +538,28 @@ def test_status_monitor_host_view_and_full_eas_gaps_are_distinct_contracts():
     file_operations = catalog.TOP_MENU_OPERATIONS["File"]
     assert file_operations.index("eas.status_monitor.native_config") > (
         file_operations.index("eas.native_files"))
+
+
+def test_single_axis_drive_mode_read_and_change_are_separate_operations():
+    read = catalog.operation_spec("axis.drive_mode.refresh")
+    change = catalog.operation_spec("axis.drive_mode.change")
+
+    assert read.risk is catalog.OperationRisk.DRIVE_READ
+    assert read.status is catalog.OperationStatus.PARTIAL
+    assert read.menu_enabled is False
+    assert {
+        "verified_identity",
+        "fresh_telemetry",
+        "bounded_read_allowlist",
+        "explicit_refresh",
+        "um_only",
+    } <= read.gates
+    assert "UM" in read.summary
+    assert "no mode change" in read.summary.lower()
+
+    assert change.risk is catalog.OperationRisk.NEED_DATA
+    assert change.status is catalog.OperationStatus.NEED_DATA
+    assert change.menu_enabled is False
+    for phrase in (
+            "motor off", "non-volatile", "exact readback", "rollback"):
+        assert phrase in change.summary.lower()

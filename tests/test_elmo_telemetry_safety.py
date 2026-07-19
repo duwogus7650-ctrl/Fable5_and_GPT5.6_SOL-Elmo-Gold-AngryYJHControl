@@ -6,6 +6,7 @@ import time
 
 from elmo_link import ElmoLink, TelemetrySnapshotError
 import persistence_audit
+import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
 import single_axis_motion
@@ -80,6 +81,7 @@ def _observe_only_link(monkeypatch):
 
 @pytest.mark.parametrize("query", [
     "VR", "SN[4]", "CA[18]", "KP[1]", "PX", "MO", "SO", "VX", "PS", "MF",
+    "UM",
 ])
 def test_observe_only_transport_allows_bare_queries(monkeypatch, query):
     link, spy = _observe_only_link(monkeypatch)
@@ -124,6 +126,7 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
         "VX": 0,
         "PS": -2,
         "MF": 0,
+        "UM": 5,
     })
     link._comm = spy
     monkeypatch.setattr(link, "persistence_unknown_latched", lambda: False)
@@ -135,6 +138,7 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
     link.read_tuning_gains()
     link.read_platform_clock()
     summary = single_axis_motion.read_axis_summary(link)
+    drive_mode = single_axis_drive_mode.read_drive_mode_snapshot(link)
     inputs = single_axis_digital_inputs.read_digital_input_snapshot(link)
     outputs = single_axis_digital_outputs.read_digital_output_snapshot(link)
     for registers in persistence_audit.PHASE_REGISTERS.values():
@@ -142,6 +146,7 @@ def test_observe_only_all_current_read_models_cross_only_allowlisted_queries(
             link.command(register)
 
     assert summary["errors"] == {}
+    assert drive_mode.state == single_axis_drive_mode.CURRENT
     assert inputs.state == single_axis_digital_inputs.CURRENT
     assert outputs.state == single_axis_digital_outputs.CURRENT
     assert spy.commands

@@ -12,6 +12,7 @@ import pytest
 from PyQt6 import QtCore, QtGui, QtWidgets
 
 import main as app_main
+import single_axis_drive_mode
 import single_axis_digital_inputs
 import single_axis_digital_outputs
 import theme as amber_theme
@@ -21,6 +22,7 @@ import theme_qdd
 
 class _AxisWorker(QtCore.QObject):
     axis_summary = QtCore.pyqtSignal(dict)
+    axis_drive_mode = QtCore.pyqtSignal(object)
     axis_digital_inputs = QtCore.pyqtSignal(object)
     axis_digital_outputs = QtCore.pyqtSignal(object)
 
@@ -37,6 +39,9 @@ class _AxisWorker(QtCore.QObject):
 
     def refresh_axis_digital_outputs(self):
         self.calls.append(("refresh_axis_digital_outputs", (), {}))
+
+    def refresh_axis_drive_mode(self):
+        self.calls.append(("refresh_axis_drive_mode", (), {}))
 
     def __getattr__(self, name):
         def forbidden(*args, **kwargs):
@@ -83,6 +88,7 @@ def ui(qapp, monkeypatch):
     win._telemetry_authoritative = True
     win._connection_shutdown_pending = False
     worker.axis_summary.connect(win._on_axis_summary)
+    worker.axis_drive_mode.connect(win._on_axis_drive_mode)
     worker.axis_digital_inputs.connect(win._on_axis_digital_inputs)
     worker.axis_digital_outputs.connect(win._on_axis_digital_outputs)
     yield SimpleNamespace(win=win, worker=worker)
@@ -126,6 +132,11 @@ def _digital_output_snapshot(**updates):
     raw.update(updates)
     return single_axis_digital_outputs.decode_digital_output_snapshot(
         raw, sample_duration_s=0.075)
+
+
+def _drive_mode_snapshot(value=5, *, duration=0.05):
+    return single_axis_drive_mode.decode_drive_mode_snapshot(
+        {"UM": value}, sample_duration_s=duration)
 
 
 def test_digital_input_panel_starts_unknown_and_exposes_no_write_surface(ui):
@@ -432,6 +443,145 @@ def test_worker_emits_only_the_typed_digital_output_snapshot(monkeypatch):
     assert observed == [expected]
 
 
+def test_drive_mode_panel_starts_unknown_and_exposes_no_change_surface(ui):
+    assert ui.win.lbl_axis_drive_mode_state.text() == "UNKNOWN"
+    assert ui.win.lbl_axis_drive_mode_value.text() == "—"
+    assert ui.win.axis_drive_mode_table.rowCount() == 5
+    assert tuple(
+        ui.win.axis_drive_mode_table.item(row, 0).text()
+        for row in range(5)
+    ) == ("UM=1", "UM=2", "UM=3", "UM=5", "UM=6")
+    contract = ui.win.lbl_axis_drive_mode_contract.text().upper()
+    for phrase in (
+            "UM QUERY ONLY",
+            "NO UM ASSIGNMENT",
+            "NO MODE CHANGE",
+            "MOTOR MUST BE OFF",
+            "NON-VOLATILE",
+            "NEED-DATA"):
+        assert phrase in contract
+    for widget_type in (
+            QtWidgets.QComboBox,
+            QtWidgets.QSpinBox,
+            QtWidgets.QDoubleSpinBox,
+            QtWidgets.QCheckBox,
+            QtWidgets.QLineEdit):
+        assert ui.win.axis_drive_mode_frame.findChildren(widget_type) == []
+    assert tuple(
+        button.text()
+        for button in ui.win.axis_drive_mode_frame.findChildren(
+            QtWidgets.QPushButton)
+    ) == ("Refresh Drive Mode · READ ONLY",)
+    assert ui.win.btn_axis_drive_mode_refresh.property(
+        "operationId") == "axis.drive_mode.refresh"
+
+
+def test_current_drive_mode_snapshot_renders_without_changing_authority(
+        ui, qapp):
+    before = (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    )
+
+    ui.worker.axis_drive_mode.emit(_drive_mode_snapshot())
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_drive_mode_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+    assert ui.win.lbl_axis_drive_mode_value.text() == "UM=5 · Position"
+    assert "PA / PR" in ui.win.lbl_axis_drive_mode_reference.text()
+    assert ui.win.axis_drive_mode_table.item(3, 0).data(
+        QtCore.Qt.ItemDataRole.UserRole) == "CURRENT"
+    assert "50.0 ms" in ui.win.lbl_axis_drive_mode_detail.text()
+    assert "NO MODE CHANGE" in ui.win.lbl_axis_drive_mode_detail.text().upper()
+    assert (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+        tuple(ui.worker.calls),
+    ) == before
+
+
+def test_drive_mode_refresh_queues_one_typed_read_job(ui, qapp):
+    ui.win.btn_axis_drive_mode_refresh.setEnabled(True)
+    ui.win.btn_axis_drive_mode_refresh.click()
+    qapp.processEvents()
+
+    assert ui.worker.calls == [
+        ("refresh_axis_drive_mode", (), {}),
+    ]
+    assert ui.win.lbl_axis_drive_mode_state.text() == "READING"
+    assert ui.win.lbl_axis_drive_mode_value.text() == "—"
+
+
+def test_invalid_late_or_disconnected_drive_mode_snapshot_stays_unknown(
+        ui, qapp):
+    ui.worker.axis_drive_mode.emit(_drive_mode_snapshot())
+    qapp.processEvents()
+    assert ui.win.lbl_axis_drive_mode_state.text() == (
+        "CURRENT · DRIVE READ ONLY")
+
+    ui.win._telemetry_authoritative = False
+    ui.worker.axis_drive_mode.emit(_drive_mode_snapshot())
+    qapp.processEvents()
+    assert ui.win.lbl_axis_drive_mode_state.text() == "UNKNOWN"
+
+    ui.win._telemetry_authoritative = True
+    ui.worker.axis_drive_mode.emit(_drive_mode_snapshot())
+    qapp.processEvents()
+    ui.win._set_connected_ui(False)
+    assert ui.win.lbl_axis_drive_mode_state.text() == "UNKNOWN"
+    assert ui.win.lbl_axis_drive_mode_value.text() == "—"
+
+
+def test_structurally_forged_current_drive_mode_snapshot_fails_closed(
+        ui, qapp):
+    valid = _drive_mode_snapshot()
+    forged = replace(valid, evidence_label="FORGED")
+
+    ui.worker.axis_drive_mode.emit(forged)
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_drive_mode_state.text() == "UNKNOWN"
+    assert ui.win.lbl_axis_drive_mode_value.text() == "—"
+
+
+def test_worker_queues_exact_drive_mode_read_job():
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+
+    worker.refresh_axis_drive_mode()
+
+    assert worker._jobs == app_main.collections.deque((
+        ("axis_drive_mode_read", None),
+    ))
+
+
+def test_worker_emits_only_the_typed_drive_mode_snapshot(monkeypatch):
+    worker = app_main.DriveWorker("COM_TEST", query_only=True)
+    expected = _drive_mode_snapshot()
+    calls = []
+    observed = []
+    monkeypatch.setattr(
+        app_main.single_axis_drive_mode,
+        "read_drive_mode_snapshot",
+        lambda link: calls.append(link) or expected)
+    worker.axis_drive_mode.connect(observed.append)
+    link = object()
+
+    worker._emit_axis_drive_mode(link)
+
+    assert calls == [link]
+    assert observed == [expected]
+
+
 def test_single_axis_authority_map_is_static_zero_io_and_isolated(
         ui, qapp, monkeypatch):
     calls_before = tuple(ui.worker.calls)
@@ -616,6 +766,17 @@ def test_single_axis_authority_map_fits_1366x820_in_all_skins(ui, qapp):
             assert (
                 ui.win.axis_digital_outputs_table.horizontalScrollBar().maximum()
                 == 0)
+            mode_palette = (
+                ui.win.axis_drive_mode_table.viewport().palette())
+            assert contrast_ratio(
+                mode_palette.color(QtGui.QPalette.ColorRole.Text),
+                mode_palette.color(QtGui.QPalette.ColorRole.Base),
+            ) >= 4.5
+            assert (
+                ui.win.axis_drive_mode_table.horizontalScrollBar().maximum()
+                == 0)
+            assert ui.win.lbl_axis_drive_mode_contract.height() >= (
+                ui.win.lbl_axis_drive_mode_contract.sizeHint().height())
     finally:
         qapp.setPalette(previous_palette)
         qapp.setStyleSheet(previous_style_sheet)
