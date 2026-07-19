@@ -152,7 +152,7 @@ identity이며 실제 EAS dialog, native file round-trip, hardware 또는 displa
 | A-083 | Single Axis I/O Status | [ ] | [x] G8 §8.9.4 | [x] READ | [~] telemetry | [~] | — | — | [~] | |
 | A-084 | Single Axis Motion Status | [ ] | [x] G8 §8.9.5 | [x] READ | [x] telemetry state | [x] | — | — | [x] | |
 | A-085 | Set Session Zero / PX=0 | [ ] | [x] G8/RIB Reset Ref Position | [x] RAM | [x] | [~] pre-read | [ ] | [~] coordinate latch | [x] | fresh approval 필요 |
-| A-086 | Motor Enable without profile | [ ] | [x] Gold command/risk catalog | [x] ENERGY | [x] gate | [~] MO read | [ ] | [x] disable closeout | [x] | |
+| A-086 | Motor Enable without profile | [ ] | [x] Gold MO/SO/SR command contract | [x] ENERGY | [~] zero-I/O state projection; Enable locked | [~] MO/SO/MF/SR read | [ ] standalone MO=1 field test | [x] existing disable closeout | [x] offline | `NEED-DATA`; no executable Enable handler |
 | A-087 | Software DRIVE STOP: ST→MO=0 | [ ] | [x] G8/RIB | [x] SAFETY_STOP | [x] | [~] | — 비차단 | — | [x] | fresh approval/telemetry를 기다리지 않음; independent STO 아님 |
 | A-088 | Drive Emulation | [ ] | [x] G8 §8.12.2 | [x] RAM/SV | [ ] | [ ] | [ ] | [ ] | [ ] | |
 | A-089 | Application Tool Inputs and Outputs | [ ] | [x] G8 §8.12.3 | [x] DRIVE_STATE/RAM | [ ] | [ ] | [ ] | [ ] | [ ] | |

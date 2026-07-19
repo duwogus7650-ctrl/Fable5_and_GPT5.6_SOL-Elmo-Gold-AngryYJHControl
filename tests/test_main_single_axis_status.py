@@ -108,6 +108,125 @@ def test_snapshot_card_starts_unknown_and_names_its_evidence_boundary(ui):
         for widget in ui.win.axis_safety_fields.values())
 
 
+def test_enable_contract_starts_unknown_with_enable_locked(ui):
+    assert ui.win.lbl_axis_enable_state.text() == "UNKNOWN - ENABLE LOCKED"
+    assert ui.win.btn_axis_enable_locked.text() == (
+        "Enable - LOCKED / NEED-DATA (MO=1)")
+    assert ui.win.btn_axis_enable_locked.isEnabled() is False
+    assert (
+        ui.win.btn_axis_enable_locked.property("operationId")
+        == "motor.enable"
+    )
+    rendered = " ".join((
+        ui.win.lbl_axis_enable_contract.text(),
+        ui.win.lbl_axis_enable_detail.text(),
+        ui.win.lbl_axis_disable_route.text(),
+    )).upper()
+    for phrase in (
+            "DRIVE-REPORTED",
+            "NOT STO TEST EVIDENCE",
+            "ENABLE REMAINS LOCKED",
+            "STOP + DISABLE",
+            "ST",
+            "MO=0",
+            "TERMINAL READBACK",
+            "NOT INDEPENDENT STO/E-STOP"):
+        assert phrase in rendered
+
+
+@pytest.mark.parametrize(
+    ("summary", "expected_state", "detail_phrase"),
+    (
+        (
+            _summary(MO=0, SO=0),
+            "DISABLED REPORTED - ENABLE LOCKED",
+            "MO=0 / SO=0",
+        ),
+        (
+            _summary(MO=1, SO=0),
+            "ENABLE REQUESTED - SO=0 / REFERENCES BLOCKED",
+            "wait for SO=1",
+        ),
+        (
+            _summary(
+                MO=1,
+                SO=1,
+                SR=(1 << 4) | (1 << 14) | (1 << 15)),
+            "ENABLED REPORTED - ENERGIZED",
+            "STOP remains available",
+        ),
+        (
+            _summary(
+                MO=0,
+                SO=1,
+                SR=(1 << 4) | (1 << 14) | (1 << 15)),
+            "DISABLING / BRAKE HOLD - SO=1",
+            "brake",
+        ),
+        (
+            _summary(MO=0, SO=0, MF=9),
+            "FAULT REPORTED - NO AUTO-RETRY",
+            "inspect",
+        ),
+    ),
+)
+def test_enable_contract_renders_documented_state_without_worker_io(
+        ui, qapp, summary, expected_state, detail_phrase):
+    authority_before = (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+    )
+
+    ui.worker.axis_summary.emit(summary)
+    qapp.processEvents()
+
+    assert ui.win.lbl_axis_enable_state.text() == expected_state
+    assert detail_phrase.lower() in (
+        ui.win.lbl_axis_enable_detail.text().lower())
+    assert ui.win.btn_axis_enable_locked.isEnabled() is False
+    assert tuple(ui.worker.calls) == ()
+    assert ui.win.btn_motion_stop.isEnabled() is True
+    assert (
+        ui.win._connection_admitted,
+        ui.win._telemetry_authoritative,
+        ui.win._motion_signature_green,
+        ui.win._motion_session_zero_confirmed,
+        ui.win._motion_inflight,
+        ui.win.btn_motion_run.isEnabled(),
+    ) == authority_before
+
+
+def test_clicking_locked_enable_cannot_dispatch_mo1(ui, qapp):
+    ui.worker.axis_summary.emit(_summary(MO=0, SO=0))
+    qapp.processEvents()
+
+    ui.win.btn_axis_enable_locked.click()
+    qapp.processEvents()
+
+    assert ui.win.btn_axis_enable_locked.isEnabled() is False
+    assert tuple(ui.worker.calls) == ()
+
+
+def test_enable_contract_blanks_on_authority_loss_and_rejects_late_summary(
+        ui, qapp):
+    ui.worker.axis_summary.emit(_summary(MO=0, SO=0))
+    qapp.processEvents()
+    assert ui.win.lbl_axis_enable_state.text() == (
+        "DISABLED REPORTED - ENABLE LOCKED")
+
+    ui.win._revoke_telemetry_authority("offline authority loss")
+    assert ui.win.lbl_axis_enable_state.text() == "UNKNOWN - ENABLE LOCKED"
+
+    ui.worker.axis_summary.emit(_summary(MO=1, SO=1, SR=(
+        (1 << 4) | (1 << 14) | (1 << 15))))
+    qapp.processEvents()
+    assert ui.win.lbl_axis_enable_state.text() == "UNKNOWN - ENABLE LOCKED"
+
+
 def _digital_input_snapshot(**updates):
     raw = {"IP": (1 << 16) | (1 << 20)}
     raw.update({"IL[%d]" % index: 7 for index in range(1, 7)})
@@ -777,6 +896,11 @@ def test_single_axis_authority_map_fits_1366x820_in_all_skins(ui, qapp):
                 == 0)
             assert ui.win.lbl_axis_drive_mode_contract.height() >= (
                 ui.win.lbl_axis_drive_mode_contract.sizeHint().height())
+            assert ui.win.lbl_axis_enable_contract.height() >= (
+                ui.win.lbl_axis_enable_contract.sizeHint().height())
+            assert ui.win.lbl_axis_enable_detail.height() >= (
+                ui.win.lbl_axis_enable_detail.sizeHint().height())
+            assert ui.win.btn_axis_enable_locked.isEnabled() is False
     finally:
         qapp.setPalette(previous_palette)
         qapp.setStyleSheet(previous_style_sheet)

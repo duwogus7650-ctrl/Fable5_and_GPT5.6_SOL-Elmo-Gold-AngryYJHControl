@@ -740,3 +740,35 @@ logical-output/config readback을 보존했다는 뜻이다.
 최신 리비전의 supervised hardware transcript, closeout, recovery,
 cold audit와 motion envelope가 없으면 `hardware safe`, `field complete`, `EAS parity`,
 `Gold-compatible`을 선언하지 않는다.
+
+## 11. Single Axis Enable / Disable v0.1 handoff
+
+2026-07-19 KST 기준 구현 범위:
+
+- 기존 Axis Summary의 `MO/SO/MF/PS/SR/MS`만 재사용하는
+  `single_axis_enable_contract.py`를 추가했다. 새 drive query는 없다.
+- `MO/SO` 조합을 `Disabled`, `Enable requested / SO waiting`, `Enabled`,
+  `Disabling / brake hold`로 분리한다.
+- `MF`, SR amplifier code, SR6 fault는 정상 상태보다 우선하며
+  `FAULT REPORTED - NO AUTO-RETRY`로 표시한다.
+- Motion page에 `Enable - LOCKED / NEED-DATA (MO=1)`을 보이되 항상
+  disabled로 유지한다. worker job, handler, dispatch, `MO=1` 송신은 없다.
+- Disable은 새 명령 경로를 만들지 않고 기존 `drive.stop`의
+  `ST -> MO=0 -> terminal readback`만 안내한다.
+- stale/disconnect/late/inconsistent/forged evidence는 모두
+  `UNKNOWN - ENABLE LOCKED`로 fail closed 한다.
+
+Installed source identities와 상태 전이 근거는
+[`single-axis-enable-disable-contract-v0.1.md`](single-axis-enable-disable-contract-v0.1.md)에
+고정했다.
+
+현재 판정:
+
+- local/offline state contract:
+  `450 affected passed` + `1741 full repository passed / exit 0`
+- standalone Enable execution: `NEED-DATA`
+- independent STO/E-stop / torque isolation: `NEED-DATA`
+- live `MO=1` / reference / motion: 이번 slice에서 실행하지 않음
+- current-target read-only observation:
+  `ONLINE · READ ONLY / MOTOR DISABLED / MO=0 / SO=0 /
+  DISABLED REPORTED - ENABLE LOCKED`

@@ -421,8 +421,13 @@ _SPECS = (
           OperationRisk.RAM_WRITE,
           "Write only the volatile session coordinate and verify PX readback.",
           gates=_SCOPED_MUTATION | frozenset(("coordinate_authority",))),
-    _spec("motor.enable", "Enable motor", OperationRisk.ENERGIZING,
-          "Enable the power stage without starting a motion profile.", gates=_ENERGY),
+    _spec("motor.enable", "Enable motor - LOCKED / NEED-DATA",
+          OperationRisk.ENERGIZING,
+          "Executable MO=1 remains locked and NEED-DATA until SO=1 "
+          "completion semantics, a bounded current envelope, independent "
+          "protection, operator authority, telemetry aborts, and verified "
+          "closeout are commissioned.",
+          status=OperationStatus.NEED_DATA),
     _spec("motor.save", "Save Motor Profile · SV",
           OperationRisk.PERSISTENT_WRITE,
           "Persist the verified full motor profile once.", gates=_PERSIST),

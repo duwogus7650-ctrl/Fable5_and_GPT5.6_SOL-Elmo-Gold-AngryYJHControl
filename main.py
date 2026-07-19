@@ -51,6 +51,7 @@ import expert_page_status
 import expert_user_units
 import single_axis_motion
 import single_axis_status
+import single_axis_enable_contract
 import single_axis_authority_evidence
 import single_axis_drive_mode
 import single_axis_digital_inputs
@@ -4134,6 +4135,7 @@ class MainWindow(QtWidgets.QMainWindow):
         locked.setProperty("role", "hint"); locked.setWordWrap(True); v.addWidget(locked)
 
         v.addWidget(self._build_single_axis_authority_frame())
+        v.addWidget(self._build_axis_enable_contract_frame())
         v.addWidget(self._build_axis_drive_mode_frame())
         v.addWidget(self._build_axis_digital_inputs_frame())
         v.addWidget(self._build_axis_digital_outputs_frame())
@@ -4148,6 +4150,82 @@ class MainWindow(QtWidgets.QMainWindow):
         self._axis_summary_data = {}
         v.addStretch(1)
         return f
+
+    def _build_axis_enable_contract_frame(self):
+        """Build a zero-I/O, fail-closed Enable/Disable contract panel."""
+        frame = QtWidgets.QFrame()
+        frame.setObjectName("chip")
+        self.axis_enable_contract_frame = frame
+        layout = QtWidgets.QVBoxLayout(frame)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(7)
+
+        head = QtWidgets.QHBoxLayout()
+        title = QtWidgets.QLabel(
+            "SINGLE AXIS ENABLE / DISABLE - DRIVE-REPORTED MODEL v0.1")
+        title.setProperty("role", "field")
+        title.setMinimumWidth(0)
+        title.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        head.addWidget(title)
+        head.addStretch(1)
+        self.lbl_axis_enable_state = QtWidgets.QLabel(
+            "UNKNOWN - ENABLE LOCKED")
+        self.lbl_axis_enable_state.setObjectName("pill")
+        self.lbl_axis_enable_state.setProperty("on", "false")
+        self.lbl_axis_enable_state.setProperty("status", "neutral")
+        self.lbl_axis_enable_state.setMinimumWidth(0)
+        self.lbl_axis_enable_state.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Preferred)
+        head.addWidget(self.lbl_axis_enable_state)
+        layout.addLayout(head)
+
+        self.lbl_axis_enable_contract = QtWidgets.QLabel(
+            single_axis_enable_contract.EVIDENCE_LABEL + " - "
+            + single_axis_enable_contract.ENABLE_BOUNDARY)
+        self.lbl_axis_enable_contract.setProperty("role", "hint")
+        self.lbl_axis_enable_contract.setWordWrap(True)
+        self.lbl_axis_enable_contract.setMinimumWidth(0)
+        self.lbl_axis_enable_contract.setMinimumHeight(96)
+        layout.addWidget(self.lbl_axis_enable_contract)
+
+        controls = QtWidgets.QHBoxLayout()
+        self.btn_axis_enable_locked = QtWidgets.QPushButton(
+            "Enable - LOCKED / NEED-DATA (MO=1)")
+        self.btn_axis_enable_locked.setEnabled(False)
+        self.btn_axis_enable_locked.setMinimumWidth(0)
+        self.btn_axis_enable_locked.setSizePolicy(
+            QtWidgets.QSizePolicy.Policy.Ignored,
+            QtWidgets.QSizePolicy.Policy.Fixed)
+        self.btn_axis_enable_locked.setToolTip(
+            "No executable MO=1 handler exists. Enable requires a separately "
+            "commissioned energization contract and exact user authority.")
+        self._decorate_operation_control(
+            self.btn_axis_enable_locked, "motor.enable")
+        controls.addWidget(self.btn_axis_enable_locked)
+        controls.addStretch(1)
+        layout.addLayout(controls)
+
+        self.lbl_axis_disable_route = QtWidgets.QLabel(
+            "STOP + DISABLE uses the existing safety escape: "
+            "ST -> MO=0 -> terminal readback. "
+            "Use DRIVE STOP or Motion STOP; software STOP is not independent "
+            "STO/E-stop.")
+        self.lbl_axis_disable_route.setProperty("role", "hint")
+        self.lbl_axis_disable_route.setWordWrap(True)
+        self.lbl_axis_disable_route.setMinimumWidth(0)
+        layout.addWidget(self.lbl_axis_disable_route)
+
+        self.lbl_axis_enable_detail = QtWidgets.QLabel(
+            "No current admitted safety snapshot")
+        self.lbl_axis_enable_detail.setProperty("role", "hint")
+        self.lbl_axis_enable_detail.setWordWrap(True)
+        self.lbl_axis_enable_detail.setMinimumWidth(0)
+        self.lbl_axis_enable_detail.setMinimumHeight(68)
+        layout.addWidget(self.lbl_axis_enable_detail)
+        return frame
 
     def _build_single_axis_authority_frame(self):
         """Build a local-only map of documented EAS Single Axis controls."""
@@ -5044,10 +5122,48 @@ class MainWindow(QtWidgets.QMainWindow):
     def _axis_join(raw, names):
         return " / ".join("%s=%s" % (name, raw.get(name, "—")) for name in names)
 
+    def _reset_axis_enable_contract(self, reason):
+        """Blank the enable projection and keep its command surface locked."""
+        projection = single_axis_enable_contract.project_enable_state(None)
+        self._axis_enable_projection = projection
+        if not hasattr(self, "lbl_axis_enable_state"):
+            return
+        self.lbl_axis_enable_state.setText(projection.label)
+        self.lbl_axis_enable_state.setProperty("on", "false")
+        self.lbl_axis_enable_state.setProperty("status", "neutral")
+        self._restyle(self.lbl_axis_enable_state)
+        self.lbl_axis_enable_detail.setText(
+            str(reason or projection.detail))
+        self.btn_axis_enable_locked.setEnabled(False)
+
+    def _render_axis_enable_contract(self, snapshot):
+        """Render drive-reported state; never add or grant MO=1 authority."""
+        projection = single_axis_enable_contract.project_enable_state(snapshot)
+        self._axis_enable_projection = projection
+        if not hasattr(self, "lbl_axis_enable_state"):
+            return
+        self.lbl_axis_enable_state.setText(projection.label)
+        state_style = (
+            "error"
+            if projection.state in (
+                single_axis_enable_contract.UNKNOWN,
+                single_axis_enable_contract.FAULT_REPORTED,
+            )
+            else "neutral")
+        self.lbl_axis_enable_state.setProperty(
+            "on", "true"
+            if projection.state == single_axis_enable_contract.ENABLED_REPORTED
+            else "false")
+        self.lbl_axis_enable_state.setProperty("status", state_style)
+        self._restyle(self.lbl_axis_enable_state)
+        self.lbl_axis_enable_detail.setText(projection.detail)
+        self.btn_axis_enable_locked.setEnabled(False)
+
     def _reset_axis_safety_snapshot(self, reason):
         """Blank the safety projection without changing any drive authority."""
         self._axis_safety_snapshot = (
             single_axis_status.decode_axis_safety_snapshot(None))
+        self._reset_axis_enable_contract(reason)
         if not hasattr(self, "lbl_axis_safety_state"):
             return
         self.lbl_axis_safety_state.setText("UNKNOWN")
@@ -5122,8 +5238,10 @@ class MainWindow(QtWidgets.QMainWindow):
         raw = self._axis_summary_data.get("raw", {}) or {}
         if (getattr(self, "_telemetry_authoritative", False)
                 and not getattr(self, "_energizing_state", False)):
-            self._render_axis_safety_snapshot(
+            safety_snapshot = (
                 single_axis_status.decode_axis_safety_snapshot(raw))
+            self._render_axis_safety_snapshot(safety_snapshot)
+            self._render_axis_enable_contract(safety_snapshot)
         else:
             self._reset_axis_safety_snapshot(
                 "Telemetry authority unavailable for safety projection")

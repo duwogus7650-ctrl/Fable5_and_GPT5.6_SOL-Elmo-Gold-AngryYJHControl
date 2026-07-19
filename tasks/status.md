@@ -1,12 +1,34 @@
 <!-- scope_progress: 99 -->
-<!-- offline_progress: 98 -->
+<!-- offline_progress: 99 -->
 <!-- field_progress: 7 -->
-<!-- progress_basis: scope/offline/field are planning indicators, not safety scores; field 7 records host-observed read-only admission plus bounded UM, Digital Input and Digital Output snapshots, not mode change, physical I/O, output actuation, energization, motion, or safety validation -->
+<!-- progress_basis: scope/offline/field are planning indicators, not safety scores; offline 99 includes the zero-new-I/O Enable/Disable state contract but not standalone Enable execution; field 7 records host-observed read-only admission plus bounded UM, Digital Input and Digital Output snapshots, not mode change, physical I/O, output actuation, energization, motion, or safety validation -->
 
-# Gold Twitter · Quick + Single Axis + Expert v2 + Single Axis UM/Digital I/O Read
+# Gold Twitter · Quick + Single Axis + Expert v2 + UM/Digital I/O + Enable State
 
-상태: **UM/DIGITAL I/O READ v0.1 · CURRENT TARGET READBACK OBSERVED · OFFLINE CONTRACT GREEN · MODE CHANGE/PHYSICAL I/O/EAS PARITY/OUTPUT ACTUATION/MOTION NOT VALIDATED**<br>
-업데이트: **2026-07-19 12:35 KST**
+상태: **ENABLE/DISABLE STATE v0.1 · ZERO-NEW-I/O · ENABLE LOCKED/NEED-DATA · 1741 FULL TESTS PASS · READ-ONLY TARGET OBSERVED · LIVE MO=1/MOTION NOT RUN**<br>
+업데이트: **2026-07-19 17:09 KST**
+
+## 현재 진행 슬라이스
+
+- `single_axis_enable_contract.py`: existing `MO/SO/MF/PS/SR/MS` snapshot을
+  재사용해 Disabled / Enable requested(`SO=0`) / Enabled /
+  Disabling-Brake-Hold(`MO=0, SO=1`) / Fault / Unknown을 구분한다.
+- Motion page의 `Enable - LOCKED / NEED-DATA (MO=1)`은 항상 disabled이며
+  worker job, handler, dispatch, `MO=1` 송신 경로를 추가하지 않았다.
+- Disable은 새 경로를 만들지 않고 기존 `drive.stop`의
+  `ST -> MO=0 -> terminal readback`만 사용한다. software STOP은 독립
+  STO/E-stop이 아니다.
+- `OBSERVED`: pure/catalog/UI/safety/shutdown/motion 영향 범위
+  **450 passed in 274.33s / exit 0**.
+- `OBSERVED`: 전체 repository
+  **1741 passed in 1613.99s (0:26:53) / exit 0**.
+- `OBSERVED`: installed Gold `MO/SO`, `SO`, `SR` source SHA-256
+  **3/3 일치**.
+- `OBSERVED`: 최신 소스 제어창 `COM3 / ONLINE · READ ONLY`,
+  `MOTOR DISABLED`, velocity/current `0/0`, Axis Summary `MO=0/SO=0`,
+  새 패널 `DISABLED REPORTED - ENABLE LOCKED`; Enable button disabled.
+- 다음 gate: 문서/PR closeout. standalone Enable과 motor motion은 계속
+  `NEED-DATA`.
 
 ## 현재 기준
 

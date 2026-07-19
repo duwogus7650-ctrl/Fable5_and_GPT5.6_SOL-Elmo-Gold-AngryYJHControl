@@ -386,6 +386,10 @@ EAS의 게인 알고리즘은 재현 불가지만, **드라이브 명령으로 R
 - `single_axis_authority_evidence.py` — Motion - Single Axis의 Status/I/O,
   mode/reference, activation/supporting-tool을 실제 실행 권한과 분리한
   no-I/O immutable documented authority map.
+- `single_axis_enable_contract.py` — 기존 `MO/SO/MF/PS/SR/MS` 증거를
+  재사용해 Disabled/Enabling/Enabled/Disabling-Brake-Hold/Fault/Unknown을
+  구분하는 zero-new-I/O projection. `motor.enable`은
+  `LOCKED / NEED-DATA`, Disable은 기존 `drive.stop` 경로만 가리킨다.
 - `single_axis_digital_inputs.py` — identity-bound explicit refresh에서
   `IL[1..6]`, `IF[1..6]`, 최종 `IP`만 읽어 6개 Digital Input의 drive logical
   state/function/polarity/sticky/filter를 fail-closed snapshot으로 만드는 decoder/reader.
@@ -411,6 +415,9 @@ EAS의 게인 알고리즘은 재현 불가지만, **드라이브 명령으로 R
 - `docs/single-axis-authority-evidence-v0.1.md` — Single Axis 3 section/12 row,
   Digital Output·UM·Enable·모션·Terminal·Recorder의 risk/authority와
   zero-I/O/zero-execution 경계.
+- `docs/single-axis-enable-disable-contract-v0.1.md` — installed Gold
+  `MO/SO/SR` 근거, 네 가지 `MO/SO` 전이, fault 우선순위, 잠긴 Enable과
+  기존 STOP/Disable 경계를 기록한다.
 - `docs/single-axis-digital-input-read-v0.1.md` — 6개 Digital Input의
   `IP/IL/IF` 읽기 순서, source hash, freshness/identity gate와
   output·sticky-clear·mapping/filter-write 제외 계약.

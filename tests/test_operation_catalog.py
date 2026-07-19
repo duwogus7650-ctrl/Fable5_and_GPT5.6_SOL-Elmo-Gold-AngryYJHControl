@@ -343,6 +343,28 @@ def test_single_axis_safety_snapshot_is_zero_io_model_projection():
     assert "not STO test evidence" in spec.summary
 
 
+def test_single_axis_enable_and_disable_are_separate_fail_closed_operations():
+    enable = catalog.operation_spec("motor.enable")
+    disable = catalog.operation_spec("drive.stop")
+
+    assert enable.risk is catalog.OperationRisk.ENERGIZING
+    assert enable.status is catalog.OperationStatus.NEED_DATA
+    assert enable.menu_enabled is False
+    assert enable.gates == frozenset()
+    for phrase in (
+            "locked", "mo=1", "so=1", "current", "independent",
+            "closeout", "need-data"):
+        assert phrase in enable.summary.lower()
+
+    assert disable.risk is catalog.OperationRisk.SAFETY_STOP
+    assert disable.status is catalog.OperationStatus.IMPLEMENTED
+    assert disable.gates == frozenset((
+        "connected_transport",
+        "terminal_readback",
+    ))
+    assert "not independent sto" in disable.summary.lower()
+
+
 def test_single_axis_authority_map_is_local_partial_and_zero_io():
     spec = catalog.operation_spec(
         "eas.single_axis.authority.evidence.inspect")
