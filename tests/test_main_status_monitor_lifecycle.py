@@ -77,7 +77,6 @@ def test_production_skin_monitor_is_bounded_private_and_zero_io(skin):
 
         dialog_rect = dialog.frameGeometry()
         protected = (
-            window.cmb_conn, window.cmb_port, window.btn_port_refresh,
             window.btn_conn, window.btn_global_stop,
             window.lbl_persistence_badge, window.lbl_state,
             *window.app_menu_buttons.values(),

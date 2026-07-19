@@ -64,7 +64,6 @@ def test_production_skin_apply_keeps_1366x820_and_protected_geometry(skin):
 
         dialog_rect = dialog.frameGeometry()
         protected = (
-            window.cmb_conn, window.cmb_port, window.btn_port_refresh,
             window.btn_conn, window.btn_global_stop,
             window.lbl_persistence_badge, window.lbl_state,
             *window.app_menu_buttons.values(),
@@ -218,8 +217,10 @@ def test_reorder_and_reset_are_atomic_and_keep_menu_duplicates_consistent(
     qapp.processEvents()
 
     assert window.tool_layout.active[0] == "system"
+    # EAS-structure: the tool nav is a vertical column, so visual order is by
+    # y (was x when the nav was a horizontal row).
     visible_buttons = sorted(
-        (button.mapTo(window, QtCore.QPoint(0, 0)).x(), tool_id)
+        (button.mapTo(window, QtCore.QPoint(0, 0)).y(), tool_id)
         for tool_id, button in window._nav_button_by_tool_id.items()
         if button.isVisibleTo(window))
     assert tuple(tool_id for _, tool_id in visible_buttons) == window.tool_layout.active
@@ -431,10 +432,9 @@ def test_default_dialog_position_does_not_cover_connection_or_safety_escape(
         window, qapp):
     dialog = _open_dialog(window, qapp)
     dialog_rect = dialog.frameGeometry()
+    # EAS-structure: the connection SETTINGS (access mode / type / port) moved
+    # to the System page; only the header Connect button stays always visible.
     protected = (
-        window.cmb_conn,
-        window.cmb_port,
-        window.btn_port_refresh,
         window.btn_conn,
         window.btn_global_stop,
         window.lbl_persistence_badge,

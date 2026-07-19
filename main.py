@@ -3430,8 +3430,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.eas_ribbon = self._build_eas_ribbon()
         root.addWidget(self.eas_ribbon)
         root.addWidget(self._build_header())
+        # Build the connection detail panel first so the System page can host
+        # it; the left rail is then free for the EAS vertical tool navigation.
+        self._connection_panel = self._build_connection_panel()
         body = QtWidgets.QHBoxLayout(); body.setSpacing(14)
-        body.addWidget(self._build_connection_card(), 0)
         body.addWidget(self._build_workspace(), 1)
         root.addLayout(body, 1)
         outer.addWidget(content, 1)
@@ -3475,10 +3477,21 @@ class MainWindow(QtWidgets.QMainWindow):
             "Active P1_CONFIG/P2_LIMITS/Motor persistence ledger plus legacy P2 "
             "record audit. A resolved profile does not certify commutation or motion safety.")
         self.lbl_state = QtWidgets.QLabel("OFFLINE"); self.lbl_state.setObjectName("pill")
-        # Stack the two status pills.  Side-by-side long safety text made the
-        # header dictate a width larger than common 1366 px bench displays.
+        # EAS-structure relocation: the ALWAYS-VISIBLE Connect/Disconnect button
+        # + state pill live in the header, freeing the left rail for the EAS
+        # vertical tool navigation.  The connection SETTINGS (access mode /
+        # type / port / firmware) moved to the System page connection panel,
+        # matching EAS's "System Configuration > Target Connection" placement.
+        # Keeping only the button here bounds the header width to the badge.
+        self.btn_conn = QtWidgets.QPushButton("Connect · Read Only")
+        self.btn_conn.setObjectName("primary")
+        self.btn_conn.clicked.connect(self.toggle_connect)
+        # Stack the badge / connect / state.  Side-by-side long safety text made
+        # the header dictate a width larger than common 1366 px bench displays.
         status_col = QtWidgets.QVBoxLayout(); status_col.setSpacing(6)
         status_col.addWidget(self.lbl_persistence_badge)
+        status_col.addWidget(
+            self.btn_conn, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         status_col.addWidget(
             self.lbl_state, 0, QtCore.Qt.AlignmentFlag.AlignRight)
         h.addLayout(status_col)
@@ -3640,9 +3653,11 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog.adjustSize()
         workspace_origin = self.workspace_scroll.mapTo(
             self, QtCore.QPoint(0, 0))
-        connection_right = self.btn_conn.mapTo(
-            self, QtCore.QPoint(0, 0)).x() + self.btn_conn.width()
-        left = max(workspace_origin.x(), connection_right + 16)
+        # The connection controls moved to the header chip (EAS-structure), so
+        # floating dialogs only need to sit within the workspace content area —
+        # right of the tool nav, below the header.  There is no longer a
+        # left-side connection button to route around.
+        left = workspace_origin.x()
         available_width = max(
             dialog.minimumWidth(), self.width() - left - 16)
         width = min(720, available_width)
@@ -3679,9 +3694,11 @@ class MainWindow(QtWidgets.QMainWindow):
         dialog.adjustSize()
         workspace_origin = self.workspace_scroll.mapTo(
             self, QtCore.QPoint(0, 0))
-        connection_right = self.btn_conn.mapTo(
-            self, QtCore.QPoint(0, 0)).x() + self.btn_conn.width()
-        left = max(workspace_origin.x(), connection_right + 16)
+        # The connection controls moved to the header chip (EAS-structure), so
+        # floating dialogs only need to sit within the workspace content area —
+        # right of the tool nav, below the header.  There is no longer a
+        # left-side connection button to route around.
+        left = workspace_origin.x()
         available_width = max(
             dialog.minimumWidth(), self.width() - left - 16)
         width = min(720, available_width)
@@ -3969,40 +3986,31 @@ class MainWindow(QtWidgets.QMainWindow):
         return frame
 
     # ---- connection ------------------------------------------------------------------
-    def _build_connection_card(self):
-        f = theme.HudCard(); f.setFixedWidth(340)
+    def _build_connection_panel(self):
+        # EAS-structure: the detailed connection form (type / port / firmware /
+        # audit) lives in the System page.  The always-visible access mode +
+        # Connect button + state pill are in the header chip (_build_header).
+        f = theme.HudCard(); f.setMaximumWidth(360)
         v = QtWidgets.QVBoxLayout(f)
         v.setContentsMargins(16, 14, 16, 16); v.setSpacing(8)
 
-        # Access authority is always visible, but it shares the card heading
-        # instead of consuming another full form row.  The previous standalone
-        # row raised the production minimum height beyond 1366×820.
-        title_row = QtWidgets.QHBoxLayout(); title_row.setSpacing(8)
         title = QtWidgets.QLabel("CONNECTION")
         title.setProperty("role", "celltitle")
-        title_row.addWidget(title)
-        title_row.addStretch(1)
+        v.addWidget(title)
+
         self.cmb_access_mode = QtWidgets.QComboBox()
-        self.cmb_access_mode.addItem(
-            "READ ONLY",
-            OBSERVE_ONLY_ACCESS_MODE)
-        self.cmb_access_mode.addItem(
-            "SUPERVISED",
-            SUPERVISED_ACCESS_MODE)
-        self.cmb_access_mode.setFixedWidth(156)
+        self.cmb_access_mode.addItem("READ ONLY", OBSERVE_ONLY_ACCESS_MODE)
+        self.cmb_access_mode.addItem("SUPERVISED", SUPERVISED_ACCESS_MODE)
         self.cmb_access_mode.setAccessibleName("Connection Access Mode")
         self.cmb_access_mode.setItemData(
-            0,
-            "Default. Drive writes are blocked; queries and safe shutdown remain available.",
+            0, "Default. Drive writes are blocked; queries and safe shutdown remain available.",
             QtCore.Qt.ItemDataRole.ToolTipRole)
         self.cmb_access_mode.setItemData(
-            1,
-            "Explicit supervised authority. Later controls can energize or move the motor.",
+            1, "Explicit supervised authority. Later controls can energize or move the motor.",
             QtCore.Qt.ItemDataRole.ToolTipRole)
         self.cmb_access_mode.currentIndexChanged.connect(
             self._connection_access_mode_selection_changed)
-        title_row.addWidget(self.cmb_access_mode)
-        v.addLayout(title_row)
+        v.addLayout(self._row("Access Mode", self.cmb_access_mode))
 
         self.cmb_conn = QtWidgets.QComboBox()
         self.cmb_conn.addItems(["Direct Access USB", "Direct Access RS232",
@@ -4017,11 +4025,6 @@ class MainWindow(QtWidgets.QMainWindow):
         portrow.addWidget(self.cmb_port, 1)
         portrow.addWidget(self.btn_port_refresh)
         v.addLayout(self._row("Serial Port", portrow))
-
-        self.btn_conn = QtWidgets.QPushButton(
-            "Connect · Read Only"); self.btn_conn.setObjectName("primary")
-        self.btn_conn.clicked.connect(self.toggle_connect)
-        v.addWidget(self.btn_conn)
 
         v.addWidget(self._hline())
         self.lbl_fw = self._kv(v, "Firmware")
@@ -5984,9 +5987,14 @@ class MainWindow(QtWidgets.QMainWindow):
 
     # ---- workspace: nav + stacked pages ----------------------------------------------
     def _build_workspace(self):
+        # EAS-structure: a vertical tool-selector column on the left (mirrors
+        # EAS III's Quick Tuning / Expert Tuning / Motion ... tool list) with
+        # the stacked pages on the right.  The Tool Organizer insert/remove
+        # machinery is orientation-agnostic, so it keeps working unchanged.
         wrap = QtWidgets.QWidget()
-        v = QtWidgets.QVBoxLayout(wrap); v.setContentsMargins(0, 0, 0, 0); v.setSpacing(10)
-        nav = QtWidgets.QHBoxLayout(); nav.setSpacing(8)
+        row = QtWidgets.QHBoxLayout(wrap)
+        row.setContentsMargins(0, 0, 0, 0); row.setSpacing(12)
+        nav = QtWidgets.QVBoxLayout(); nav.setSpacing(4)
         self._workspace_nav_layout = nav
         self.stack = CurrentPageStack()
         self._nav_btns = []
@@ -6012,9 +6020,11 @@ class MainWindow(QtWidgets.QMainWindow):
         for i, (name, page) in enumerate(pages):
             tool_id = tool_organizer.CANONICAL_TOOL_IDS[i]
             b = QtWidgets.QPushButton(name); b.setCheckable(True)
-            b.setStyleSheet("QPushButton{padding:7px 8px;} "
+            b.setStyleSheet("QPushButton{padding:9px 14px; text-align:left;} "
                             "QPushButton:checked{background:%s;color:#042435;border:none;font-weight:800;}"
                             % theme.INDIGO)
+            b.setSizePolicy(QtWidgets.QSizePolicy.Policy.Expanding,
+                            QtWidgets.QSizePolicy.Policy.Fixed)
             if name in nav_tooltips:
                 b.setToolTip(nav_tooltips[name])
             b.clicked.connect(
@@ -6033,7 +6043,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.workspace_scroll.setVerticalScrollBarPolicy(
             QtCore.Qt.ScrollBarPolicy.ScrollBarAsNeeded)
         self.workspace_scroll.setWidget(self.stack)
-        v.addLayout(nav); v.addWidget(self.workspace_scroll, 1)
+        nav_col = QtWidgets.QFrame(); nav_col.setObjectName("card")
+        nav_col.setLayout(nav); nav_col.setFixedWidth(180)
+        nav.setContentsMargins(10, 12, 10, 12)
+        self._workspace_nav_col = nav_col
+        row.addWidget(nav_col, 0); row.addWidget(self.workspace_scroll, 1)
         self._nav_to(0)
         return wrap
 
@@ -6375,6 +6389,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.lbl_system_config_contract.setMinimumHeight(max(
             48, self.lbl_system_config_contract.sizeHint().height()))
         outer.addWidget(self.lbl_system_config_contract)
+
+        # EAS-structure: the detailed connection form (Connection Type / Serial
+        # Port / firmware readout / persistence audit) is hosted here, matching
+        # EAS's "Item Configuration > Target Connection" placement.  The
+        # always-visible access mode + Connect button live in the header chip.
+        if getattr(self, "_connection_panel", None) is not None:
+            outer.addWidget(self._connection_panel)
 
         content = QtWidgets.QHBoxLayout(); content.setSpacing(12)
         tree_panel, tree_layout = self._ribbon_group(

@@ -1,0 +1,4 @@
+{"t":0,"agent":"a5db62c","agent_type":"parallel-agent-fable-5:fable-vision","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a7ca211","agent_type":"parallel-agent-fable-5:fable-vision","event":"agent_start","parent_mode":"none"}
+{"t":0,"agent":"a7ca211","agent_type":"parallel-agent-fable-5:fable-vision","event":"agent_stop","success":true,"duration_ms":397166}
+{"t":0,"agent":"a5db62c","agent_type":"parallel-agent-fable-5:fable-vision","event":"agent_stop","success":true,"duration_ms":592318}

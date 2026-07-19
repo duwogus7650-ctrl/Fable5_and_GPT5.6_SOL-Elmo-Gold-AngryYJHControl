@@ -1,0 +1,26 @@
+{
+  "agents": [
+    {
+      "agent_id": "a5db62ccc821e643c",
+      "agent_type": "parallel-agent-fable-5:fable-vision",
+      "started_at": "2026-07-19T15:09:35.088Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-19T15:19:27.406Z",
+      "duration_ms": 592318
+    },
+    {
+      "agent_id": "a7ca2113523ac8c00",
+      "agent_type": "parallel-agent-fable-5:fable-vision",
+      "started_at": "2026-07-19T15:09:44.889Z",
+      "parent_mode": "none",
+      "status": "completed",
+      "completed_at": "2026-07-19T15:16:22.055Z",
+      "duration_ms": 397166
+    }
+  ],
+  "total_spawned": 2,
+  "total_completed": 2,
+  "total_failed": 0,
+  "last_updated": "2026-07-19T15:19:27.513Z"
+}

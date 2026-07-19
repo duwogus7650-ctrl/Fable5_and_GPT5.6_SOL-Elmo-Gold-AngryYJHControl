@@ -264,7 +264,6 @@ def test_dialog_default_position_does_not_cover_connection_or_safety_shell(
     dialog = _open_dialog(window, qapp)
     dialog_rect = dialog.frameGeometry()
     protected = (
-        window.cmb_conn, window.cmb_port, window.btn_port_refresh,
         window.btn_conn, window.btn_global_stop,
         window.lbl_persistence_badge, window.lbl_state,
         *window.app_menu_buttons.values(),
