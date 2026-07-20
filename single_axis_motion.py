@@ -89,6 +89,14 @@ JOG_OVERSPEED_FACTOR = 1.25
 JOG_OVERSPEED_FLOOR_RPM = 15.0     # low-speed false-positive floor
 JOG_STOP_SETTLE_TIMEOUT_S = 2.0    # operator stop: minimum |VX|~0 settle floor
 JOG_STOP_SETTLE_TIMEOUT_S_MAX = 15.0  # cap on the decel-sized settle wait
+# The closed-loop enable inrush (backlash unwind + stiction breakaway) can clamp
+# at the current cap (SR bit 13 / LC) for one settling cycle (~5/KP3 + re-seat,
+# 100-300 ms). That transient is tolerated ONLY inside the enable poll loop and
+# ONLY for bit 13; if LC is still clamping past this window the drive is treated
+# as stalled / mis-commutated and the enable aborts. 0.5 s = >3x the slowest
+# observed transient and bounds exposure to ~0.5 A^2s below the stall-thermal budget.
+JOG_LC_SETTLE_TIMEBOX_S = 0.5
+JOG_LC_CLEAR_POLLS_REQUIRED = 2    # consecutive LC-clear polls to confirm settle
 JOG_STOP_RPM = 1.0                 # |VX| below this (rpm) counts as stopped
 JOG_PROFILE_VELOCITY_MODE = 3      # OV[2] during a JV jog (CR :9450), not 1
 
@@ -980,7 +988,10 @@ def run_jog(
             raise _MotionAborted("operator cancel before enable")
         _assert_same_session(link, token)
         link.command("MO=1", allow_motion=True)
-        enable_deadline = clock_fn() + 1.5
+        mo1_at = clock_fn()
+        enable_deadline = mo1_at + 1.5
+        lc_settle_deadline = mo1_at + JOG_LC_SETTLE_TIMEBOX_S
+        lc_clear_polls = 0
         while True:
             es, _age = _read_active_sample(
                 link, ("MO", "SO", "MF", "PS", "SR", "VX", "ID", "IQ"),
@@ -992,7 +1003,12 @@ def run_jog(
                 raise _MotionAborted("drive fault while enabling")
             if int(es["PS"]) == 1:
                 raise _MotionAborted("user program started while enabling (PS=1)")
-            if sr & _UNSAFE_SR_MASK:
+            # Every unsafe bit EXCEPT bit 13 (LC / current-limit) aborts on sight.
+            # Bit 13 during the closed-loop enable inrush is a transient clamp at the
+            # cap (handled below); the exemption is local to this poll loop only —
+            # _preflight, the pre-BG re-check, and the jog runtime loop keep the full
+            # _UNSAFE_SR_MASK.
+            if sr & (_UNSAFE_SR_MASK & ~(1 << 13)):
                 raise _MotionAborted("unsafe SR status while enabling (SR=%s)" % sr)
             if not (sr & (1 << 14)) or not (sr & (1 << 15)):
                 raise _MotionAborted("STO permission dropped while enabling")
@@ -1001,8 +1017,20 @@ def run_jog(
                         cap * (1.0 + CURRENT_LIMIT_REL_MARGIN)
                         + CURRENT_LIMIT_ABS_MARGIN_A)):
                 raise _MotionAborted("unintended motion/current while enabling")
+            if sr & (1 << 13):
+                # LC still clamping at the cap: reset the consecutive-clear count and
+                # abort only if it stays clamped past the bounded settle window (a
+                # persistent limit is a stall / mis-commutation, not an inrush).
+                lc_clear_polls = 0
+                if clock_fn() >= lc_settle_deadline:
+                    raise _MotionAborted(
+                        "enable current-limit did not settle (persistent); "
+                        "check axis restraint / commutation")
+            else:
+                lc_clear_polls += 1
             if (int(es["MO"]) == 1 and int(es["SO"]) == 1
-                    and bool(sr & (1 << 4))):
+                    and bool(sr & (1 << 4))
+                    and lc_clear_polls >= JOG_LC_CLEAR_POLLS_REQUIRED):
                 break
             if clock_fn() >= enable_deadline:
                 raise _MotionAborted("MO=1 issued but SO=1 was not observed")

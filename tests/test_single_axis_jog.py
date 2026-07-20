@@ -76,7 +76,16 @@ class JogSimLink:
 
     def __init__(self, *, persistence_unknown=False, vx_override=None,
                  iq_override=None, no_motion=False, disable_stuck=False,
-                 reg_overrides=None, fail_write=None, vx_seq=None):
+                 reg_overrides=None, fail_write=None, vx_seq=None,
+                 lc_active_polls=0, sr_mo1_extra=0):
+        # lc_active_polls: SR bit 13 (LC / current-limit) is reported set on the
+        # first N SR reads taken while MO=1, then clears -- models the closed-loop
+        # enable inrush clamping at the cap for a few polls before it settles.
+        # sr_mo1_extra: bits always OR'd into SR while MO=1 (clean at MO=0 preflight)
+        # -- models an unsafe bit that only appears during the enable transient.
+        self.lc_active_polls = lc_active_polls
+        self.sr_mo1_extra = int(sr_mo1_extra)
+        self._mo1_sr_reads = 0
         self.unknown = persistence_unknown
         self.vx_override = vx_override      # fixed feedback VX (overspeed/runaway)
         self.iq_override = iq_override      # fixed active current (excursion)
@@ -161,6 +170,14 @@ class JogSimLink:
         if (core == "VX" and self.vx_override is not None and self.reg["MO"]
                 and self.pending_jv not in (None, 0)):
             return str(self.vx_override)
+        if core == "SR":
+            sr = int(self.reg["SR"])
+            if self.reg["MO"]:
+                sr |= self.sr_mo1_extra
+                if self._mo1_sr_reads < self.lc_active_polls:
+                    sr |= (1 << 13)
+                self._mo1_sr_reads += 1
+            return str(sr)
         if core not in self.reg:
             raise KeyError(core)
         return str(self.reg[core])
@@ -248,6 +265,43 @@ def test_jog_runs_at_raised_max_current_cap():
     assert result.status == sam.GREEN, result.reason
     assert any(w.startswith("JV=") for w in drive.writes)
     assert int(drive.reg["MO"]) == 0 and "SV" not in drive.writes
+
+
+def test_jog_enable_tolerates_transient_current_limit_then_runs():
+    # The closed-loop enable inrush clamps at the cap (SR bit 13) for a few polls,
+    # then settles. The enable must WAIT it out (not abort on the first poll) and
+    # complete once LC clears for two consecutive polls.
+    drive = JogSimLink(lc_active_polls=3)
+    clock = Clock()
+    cmd = JogCmd(clock, [(50.0, False), (50.0, False), (50.0, False),
+                         (0.0, True)])
+    result = _run(drive, cmd, clock=clock)
+    assert result.status == sam.GREEN, result.reason
+    assert any(w.startswith("JV=") for w in drive.writes)   # actually enabled + moved
+    assert int(drive.reg["MO"]) == 0
+
+
+def test_jog_enable_aborts_when_current_limit_never_settles():
+    # A persistent clamp (stall / mis-commutation) must still abort — after the
+    # bounded LC settle window, not the 1.5 s SO deadline.
+    drive = JogSimLink(lc_active_polls=10_000)
+    result = _run(drive, JogCmd(Clock(), [(50.0, False)]))
+    assert result.status == sam.RED
+    assert "settle" in result.reason.lower()
+    # never latched a jog velocity; torque-off on the way out
+    assert not any(w.startswith("JV=") and not w.startswith("JV=0") for w in drive.writes)
+    assert int(drive.reg["MO"]) == 0
+
+
+def test_jog_enable_still_aborts_immediately_on_other_unsafe_sr_bit():
+    # The bit-13 exemption is surgical: an unsafe bit that appears DURING the enable
+    # transient (here bit 6, clean at the MO=0 preflight) still aborts on sight in
+    # the enable loop. LC tolerance must not widen to the rest of the mask.
+    drive = JogSimLink(sr_mo1_extra=(1 << 6))
+    result = _run(drive, JogCmd(Clock(), [(50.0, False)]))
+    assert result.status == sam.RED
+    assert "unsafe sr status while enabling" in result.reason.lower()
+    assert int(drive.reg["MO"]) == 0
 
 
 def test_jog_proceeds_with_zero_position_limits_that_a_ptp_move_would_reject():
