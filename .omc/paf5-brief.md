@@ -365,3 +365,12 @@ UM3_DRAG_I_A=6.0, ka_baseline 단일파일 교차오염, G3가 EAS FF[1] 의존.
 전압경고: N_WARN=0.90 → 요청>0.90·rated 시 "토크여유0 접근" 확인 다이얼로그(차단 아님). 상시권장≤0.85.
 타임박스: 로직 불변, v_cap=jog_ceiling_rpm·CA[18]/60 파생, 주석 상수→evidence[px_overflow_projection].
 실기확인필요: 홀드전류3.25A(코드주석만)→i_ba_history로 대체, N=90 버스새그 성분 관례값, f_I_max×0.7 마진.
+
+## 실기 그라운딩 확정 (2026-07-21, 읽기전용)
+spikes/live_motor_profile.py로 COM3 Gold Twitter 실독(통전0). **P1/P2 실기 GREEN**:
+MotorProfile이 실드라이브 값 정독 → effective_rated_rpm=3600·jog_ceiling=3600·warn=3240
+파생 확인. 오라클 5/5 GREEN.
+- **확정 사실: 현재 벤치 모터 = 극쌍 16** (사용자 확정 2026-07-21). 드라이브 CA[19]=16이
+  맞는 값. 메모리의 "극쌍 21"은 과거 AngryYJH의 *다른 모터* — 이 모터에 적용 금지.
+- **실기 TS 명령은 µs 반환**(TS='100'=100µs). from_sources는 초 단위 기대 →
+  라이브 프로필 배선 시 ×1e-6 변환 필요(P3/오토튠이 TS 사용). 정격 파생엔 무관.
