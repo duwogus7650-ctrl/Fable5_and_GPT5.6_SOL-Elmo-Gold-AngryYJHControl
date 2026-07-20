@@ -1261,6 +1261,16 @@ def _fresh_link(tmp_path, monkeypatch, upload_ok=True):
     import elmo_link
     monkeypatch.setattr(elmo_link, "_LIBDIR", str(tmp_path / "lib"))
     monkeypatch.setattr(elmo_link, "_STATE_DIR", str(tmp_path / "state"))
+    # Durable safety-ledger isolation (2026-07-20): a REAL live UNKNOWN in
+    # %LOCALAPPDATA%/AngryYJHControl/safety/persistence_unknown.json latches
+    # every fresh ElmoLink and routes command("VR") through the persistence
+    # authorization chain, which the minimal _FakeComm cannot satisfy — the
+    # cache-first test then re-uploads and fails.  Unit links must never
+    # read (or risk writing) the live ledger.
+    monkeypatch.setattr(elmo_link, "_PERSISTENCE_UNKNOWN_PATH",
+                        str(tmp_path / "persistence_unknown.json"))
+    monkeypatch.setattr(elmo_link, "_RECORDER_UNKNOWN_PATH",
+                        str(tmp_path / "recorder_unknown.json"))
     link = elmo_link.ElmoLink()
     link._comm = _FakeComm(upload_ok=upload_ok)
     return elmo_link, link

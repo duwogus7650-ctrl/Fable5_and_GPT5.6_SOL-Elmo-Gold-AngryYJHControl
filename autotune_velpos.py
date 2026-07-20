@@ -233,6 +233,18 @@ JV_RECORD_S = 0.5
 JV_STOP_RPM = 30.0
 JV_STOP_TIMEOUT_S = 2.0
 DECEL_TAIL_S = 0.25       # post-pulse coast captured for the regression
+# --- WAL rollback stationary-proof coast-down budget (live relock fix 2026-07-20) ------
+# begin_persistence_ram_rollback() proves MO=SO=VX=0 in ONE sweep and raises
+# (with NO ledger state change) when the axis is not yet at rest.  Live runs
+# 1784521356712 (coasting rotor, VX=-260596 right after MO=0) and
+# 1784524717607 (residual creep, VX=-63) showed the ONE-SHOT call being
+# rejected -> every restore write skipped -> temporary limits left on the
+# drive -> desktop app relocked with PERSISTENCE UNKNOWN(P2_LIMITS).  The
+# rejection is TRANSIENT physics (coast-down), so the restore path retries
+# until the axis proves stationary or this budget expires; only then does the
+# honest UNKNOWN lock remain.
+ROLLBACK_STATIONARY_TIMEOUT_S = 12.0  # coast-down wait ceiling [s]
+ROLLBACK_STATIONARY_POLL_S = 0.1      # retry period between proof sweeps [s]
 # --- F2/G5 verification run (JV step-response acceptance, 2026-07-14) -------------------
 # Acceptance authority = fable-physics live criteria; the SPEC §6 G5 numbers
 # (overshoot<=15%, settle<=60 ms) are TIGHTER and demoted to YELLOW advisories
@@ -1117,6 +1129,47 @@ def _apply_limits_verified(ctx: _Ctx):
     return readback
 
 
+def _begin_rollback_when_stationary(ctx: _Ctx, api, active_attempt):
+    """Bounded coast-down retry around the WAL rollback transition.
+
+    The journal's begin_persistence_ram_rollback() demands one clean
+    MO=SO=VX=0 sweep and raises WITHOUT any ledger state change when the axis
+    is still moving.  A rotor that just lost torque (abort MO=0, drive fault,
+    or the signature's own safe shutdown) is legitimately coasting at that
+    instant, so a single attempt turns transient physics into a permanent
+    UNKNOWN lock with the TEMPORARY limits left on the drive (live incidents
+    1784521356712 / 1784524717607).  Retry the transition while the axis
+    coasts down; every non-stationary rejection (missing prepared attempt,
+    session/epoch change) is permanent and returned immediately.  Returns
+    None on success or the final error string (honest UNKNOWN upstream).
+    """
+    waited = 0.0
+    rejections = 0
+    critical = ctx.evidence.setdefault("critical_limits", {})
+    while True:
+        try:
+            api["begin_persistence_ram_rollback"](active_attempt)
+            if rejections:
+                critical["rollback_stationary_wait"] = {
+                    "rejections": rejections, "waited_s": round(waited, 3)}
+            return None
+        except Exception as exc:
+            message = str(exc)
+            if "stationary" not in message:
+                return message
+            rejections += 1
+        critical["rollback_stationary_wait"] = {
+            "rejections": rejections, "waited_s": round(waited, 3)}
+        if waited >= ROLLBACK_STATIONARY_TIMEOUT_S:
+            return message
+        try:
+            ctx.params.sleep_fn(ROLLBACK_STATIONARY_POLL_S)
+        except Exception as sleep_exc:
+            return "%s; stationary-wait sleep failed: %s" % (
+                message, sleep_exc)
+        waited += ROLLBACK_STATIONARY_POLL_S
+
+
 def _restore_limits(ctx: _Ctx):
     """Restore every touched limit and prove the complete original profile."""
     if ctx.limits_restore_finalized:
@@ -1177,9 +1230,13 @@ def _restore_limits(ctx: _Ctx):
     if active_attempt is not None:
         try:
             api = _p2_limits_journal_api(ctx)
-            api["begin_persistence_ram_rollback"](active_attempt)
         except Exception as exc:
             rollback_transition_error = str(exc)
+        else:
+            # coast-down aware (2026-07-20): the stationary proof is retried
+            # inside — one moving-axis sample must not abandon the restore
+            rollback_transition_error = _begin_rollback_when_stationary(
+                ctx, api, active_attempt)
     for name, _temporary in LIMIT_WRITES:
         if name not in restore_targets:
             continue
@@ -1309,6 +1366,39 @@ def _do_abort(ctx: _Ctx, reason: str):
     ctx.evidence["abort"] = {"reason": reason, "segment": ctx.segment,
                              "steps_done": steps}
     return limits_restored
+
+
+def _ensure_limits_closeout(ctx: _Ctx):
+    """finally-net: NO exit may leave the temporary P2 limits unadjudicated.
+
+    Every established exit (AbortError/Exception -> _do_abort, E1 restore,
+    signature shutdown) already runs the restore chain and is untouched: the
+    net fires ONLY when limits were applied but no restore verdict exists —
+    e.g. a PreflightError raised after the apply, a BaseException such as
+    KeyboardInterrupt, or a future coding error.  It routes through _do_abort
+    (TC=0 / MO=0 FIRST — the rollback stationary proof requires a disabled
+    axis) and keeps honest gating: the restore still proves the profile, and
+    a real failure remains UNKNOWN.  Never raises.
+    """
+    try:
+        if ctx.limits_restore_finalized:
+            return
+        critical = ctx.evidence.get("critical_limits") or {}
+        if "restore" in critical:
+            return                      # a restore chain already adjudicated
+        if not ctx.dirty and ctx.limits_attempt_id is None:
+            return                      # nothing was ever applied
+        _do_abort(ctx, "limits closeout finally-net "
+                       "(exit path skipped the restore chain)")
+    except Exception as exc:
+        try:
+            ctx.warnings.append(
+                "limits closeout finally-net failed: %r" % (exc,))
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                latch()
+        except Exception:
+            pass
 
 
 def _capture_signature_final_state(ctx: _Ctx) -> bool:
@@ -2373,6 +2463,11 @@ def run_velpos_autotune(link, params: Optional[AutotuneVPParams] = None
         if ctx.params.signature_only and not _capture_signature_final_state(ctx):
             reason = "%s; %s" % (reason, _signature_final_state_failure(ctx))
         return _red(ctx, reason)
+    finally:
+        # 2026-07-20 hardening: temporary limits applied => a restore verdict
+        # MUST exist on EVERY exit (incl. PreflightError after apply and
+        # BaseException); no-op when a restore chain already adjudicated
+        _ensure_limits_closeout(ctx)
 
 
 def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
@@ -3901,6 +3996,10 @@ def verify_run_vp(link, params: Optional[AutotuneVPParams] = None
     except Exception as e:
         _do_abort(ctx, "내부 예외: %r" % (e,))
         return _red(ctx, "내부 예외: %r" % (e,))
+    finally:
+        # same finally-net as run_velpos_autotune (verify also applies the
+        # four temporary limits and must never exit without a restore verdict)
+        _ensure_limits_closeout(ctx)
 
 
 _VERIFY_READS = ("TS", "UM", "MF", "GS[2]", "CA[18]", "CL[1]",

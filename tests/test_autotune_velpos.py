@@ -25,6 +25,25 @@ from autotune_velpos import (AutotuneVPParams, AutotuneVPResult,
                              vel_pos_margins, design_vp_gains, window_slope,
                              GREEN, YELLOW, RED)
 
+@pytest.fixture(autouse=True)
+def _isolated_safety_ledgers(tmp_path, monkeypatch):
+    """Unit isolation for the REAL ElmoLink durable safety ledgers.
+
+    The live relock incident (2026-07-20, LIMIT_RESTORE_OR_CLOSEOUT_
+    UNVERIFIED) left an ACTIVE UNKNOWN record in the machine-global
+    %LOCALAPPDATA%/AngryYJHControl/safety/persistence_unknown.json; every
+    real ElmoLink() constructed in this module LOADED that live lock, so
+    tests expecting a clear link failed on this machine — and a test could
+    conceivably WRITE into the live ledger.  Each test gets fresh per-test
+    ledger files; the live ledger is never read or modified from here (the
+    live lock itself stays untouched — it is real safety state)."""
+    import elmo_link as _el
+    monkeypatch.setattr(_el, "_PERSISTENCE_UNKNOWN_PATH",
+                        str(tmp_path / "persistence_unknown.json"))
+    monkeypatch.setattr(_el, "_RECORDER_UNKNOWN_PATH",
+                        str(tmp_path / "recorder_unknown.json"))
+
+
 # ---- frozen oracles (SPEC §7 — never re-baseline here) -------------------------------
 KA_TRUTH = 5.79e6            # cnt/s^2/A  (T3 plant truth)
 B_TRUTH = 1e-7               # A/(cnt/s)
@@ -723,6 +742,194 @@ def test_signature_gate_rejects_cap_above_absolute_limit_before_enable(tmp_path)
     assert "1.30 A" in res.reason
     assert not any(cmd == "MO=1" for cmd in _motion_commands(drive))
     assert drive.regs["MO"] == 0
+
+
+# ======================================================================================
+# Signature limit-restore hardening — live relock incidents 2026-07-19/20
+# (results 1784521356712 / 1784524717607: the WAL rollback's ONE-SHOT
+# MO/SO/VX==0 proof was rejected by a coasting/creeping axis, every restore
+# write was skipped, and the drive kept the TEMPORARY limits -> the desktop
+# app relatched PERSISTENCE UNKNOWN(P2_LIMITS) on every signature run)
+# ======================================================================================
+LIMIT_ORIGINALS = {"SD": 1e6, "HL[2]": 0.0, "LL[2]": 0.0, "ER[2]": 1e8}
+
+
+class StationaryGateJournalVPSim(LimitsJournalVPSim):
+    """Journal double with the REAL elmo_link rollback gate: ONE clean
+    MO/SO/VX==0 sweep or raise WITHOUT any ledger state change — the exact
+    live rejection ("... rollback requires disabled stationary proof")."""
+
+    def __init__(self, *, stationary_never=False, **kwargs):
+        kwargs.setdefault("vel_noise", 0.0)  # exact VX==0 at true standstill
+        super().__init__(**kwargs)
+        self.stationary_never = bool(stationary_never)
+        self.rollback_gate_rejections = 0
+
+    def begin_persistence_ram_rollback(self, record_id):
+        for reg in ("MO", "SO", "VX"):
+            raw = self._query(reg)
+            if self.stationary_never and reg == "VX":
+                raw = "-63"                  # live case 2: residual creep
+            if float(raw) != 0.0:
+                self.rollback_gate_rejections += 1
+                raise RuntimeError(
+                    "P2_LIMITS rollback requires disabled stationary proof; "
+                    "%s=%r" % (reg, raw))
+        return super().begin_persistence_ram_rollback(record_id)
+
+
+class ServoDropJournalSim(StationaryGateJournalVPSim):
+    """Live case 1784521356712: the drive drops the servo MID-RAMP — every
+    following TC!=0 write raises Drive error 58 while the rotor keeps
+    coasting, so the restore chain starts against a MOVING axis."""
+
+    def __init__(self, *, coast_vx=260596.0, **kwargs):
+        super().__init__(**kwargs)
+        self.err58_latched = False
+        self.coast_vx = float(coast_vx)
+
+    def _write(self, name, v):
+        if (name == "TC" and float(v) != 0.0
+                and (self.err58_latched or abs(self.v) > 0.0)):
+            if not self.err58_latched:
+                self.err58_latched = True
+                self.regs["MO"] = 0          # servo dropped, torque gone
+                self.v = self.coast_vx       # rotor coasting (live VX scale)
+                self.v_meas = self.v
+            raise IOError("Drive error 58: Servo (SO) must be on")
+        return super()._write(name, v)
+
+
+def _assert_limits_restored(res, drive):
+    """The acceptance oracle: verified RESTORED evidence AND the drive's
+    actual registers back at the original snapshot values."""
+    assert res.evidence["configuration_state"] == "RESTORED"
+    assert res.evidence["restored_limits"] == [
+        name for name, _ in vp.LIMIT_WRITES]
+    critical = res.evidence["critical_limits"]
+    assert critical["state"] == "RESTORED"
+    assert critical["restore"]["pass"] is True
+    for name, original in LIMIT_ORIGINALS.items():
+        assert drive.regs[name] == pytest.approx(original), name
+    assert drive.limits_incident_active is False
+
+
+def test_signature_err58_mid_ramp_red_but_limits_restored(tmp_path):
+    """Acceptance 1: probe exception (err58) mid-ramp -> RED AND restored.
+
+    The coasting rotor rejects the first rollback stationary proof exactly
+    like the live run; the coast-down retry must then complete the restore
+    instead of abandoning it (old behavior: attempted=[], UNKNOWN)."""
+    drive = ServoDropJournalSim()
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "Drive error 58" in res.reason
+    assert drive.rollback_gate_rejections >= 1   # moving axis WAS rejected
+    _assert_limits_restored(res, drive)
+    assert res.evidence["final_state"]["limit_mismatch"] == {}
+    assert res.evidence["final_state"]["MO"] == 0
+    wait = res.evidence["critical_limits"]["rollback_stationary_wait"]
+    assert wait["rejections"] >= 1
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_reverse_feedback_red_restores_limits(tmp_path):
+    """Acceptance 2: direction=-1 -> RED AND restored (WAL journal active)."""
+    drive = StationaryGateJournalVPSim(i_c=0.6, commut_sign=-1.0)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "방향" in res.reason
+    assert res.evidence["breakaway"]["direction"] == -1
+    _assert_limits_restored(res, drive)
+    assert res.evidence["final_state"]["pass"] is True
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_no_breakaway_red_restores_limits(tmp_path):
+    """Acceptance 3a: no detection below the cap -> RED AND restored."""
+    drive = StationaryGateJournalVPSim(i_c=2.0)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "미검출" in res.reason
+    _assert_limits_restored(res, drive)
+    assert res.evidence["final_state"]["pass"] is True
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_current_window_red_restores_limits(tmp_path):
+    """Acceptance 3b: i_ba outside the acceptance window -> RED AND
+    restored."""
+    drive = StationaryGateJournalVPSim(i_c=0.6)
+    res = run_velpos_autotune(drive, _signature_params(
+        drive, tmp_path, signature_i_min_a=1.25, signature_i_max_a=1.30))
+
+    assert res.status == RED
+    assert "전류 불합격" in res.reason
+    _assert_limits_restored(res, drive)
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_green_with_wal_journal_restores_limits(tmp_path):
+    """Acceptance 4: passing signature stays GREEN with the WAL journal, the
+    restore is verified, and the ledger closes with resolve."""
+    drive = StationaryGateJournalVPSim(i_c=0.6)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == GREEN, (res.status, res.reason, res.warnings)
+    assert res.evidence["signature_gate"]["pass"] is True
+    assert res.evidence["final_state"]["pass"] is True
+    _assert_limits_restored(res, drive)
+    # ledger closed exactly once; the final-state proof re-reads the four
+    # limit registers AFTER resolve, so resolve is not the last wire event
+    assert drive.journal_events.count("resolve") == 1
+    assert not drive.limits_rollback_active
+    _assert_signature_did_not_continue_to_phase2(drive)
+
+
+def test_signature_restore_never_stationary_stays_unknown(tmp_path,
+                                                         monkeypatch):
+    """Acceptance 5: an axis that NEVER proves stationary (live case 2's
+    VX=-63 creep, made permanent) keeps the HONEST UNKNOWN lock — no fake
+    RESTORED, durable mark_unknown recorded, limits reported as-left."""
+    monkeypatch.setattr(vp, "ROLLBACK_STATIONARY_TIMEOUT_S", 1.0)
+    drive = StationaryGateJournalVPSim(i_c=0.6, stationary_never=True)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "종료 상태 확인 실패" in res.reason
+    assert res.evidence["configuration_state"] == "UNKNOWN"
+    critical = res.evidence["critical_limits"]
+    assert critical["state"] == "UNKNOWN"
+    assert critical["restore"]["pass"] is False
+    assert any("stationary" in err
+               for err in critical["restore"]["closeout_errors"])
+    requested = dict(vp.LIMIT_WRITES)
+    for name in requested:                    # truth: limits stayed at TEST
+        assert drive.regs[name] == pytest.approx(float(requested[name]))
+    assert any(event.startswith("mark_unknown:")
+               for event in drive.journal_events)
+    assert drive.persistence_unknown_latched() is True
+    assert res.evidence["signature_gate"]["pass"] is False
+
+
+def test_preflight_exit_after_apply_still_restores_limits(tmp_path,
+                                                          monkeypatch):
+    """try/finally contract: an exit class that skips the abort chain
+    (PreflightError raised AFTER the temporary limits were applied) must
+    still de-energize and restore via the finally-net."""
+    def boom(ctx):
+        raise vp.PreflightError("synthetic post-apply preflight exit")
+    monkeypatch.setattr(vp, "_breakaway_ramp", boom)
+    drive = StationaryGateJournalVPSim(i_c=0.6)
+    res = run_velpos_autotune(drive, _signature_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "synthetic post-apply preflight exit" in res.reason
+    assert drive.regs["MO"] == 0             # net routed through _do_abort
+    _assert_limits_restored(res, drive)
 
 
 # ======================================================================================
