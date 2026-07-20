@@ -4185,6 +4185,30 @@ class MainWindow(QtWidgets.QMainWindow):
         line.setStyleSheet("background:%s;" % theme.BORDER)
         return line
 
+    # ---- IO & Safety status pills ----------------------------------------------------
+    _PILL_STYLE = {
+        # bg, fg — colours chosen to read on the QDD dark navy shell
+        "unverified": ("#8a5a12", "#ffe6b8"),  # amber: state not trustworthy
+        "ok": ("#17a068", "#eafff5"),
+        "fault": ("#c0342a", "#ffecec"),
+        "idle": ("#26384b", "#8fa6bd"),
+    }
+
+    def _safety_pill(self, caption, value, kind):
+        """A compact caption:value status pill for the Motion IO & Safety row."""
+        lbl = QtWidgets.QLabel()
+        lbl.setProperty("safetyCaption", caption)
+        self._paint_safety_pill(lbl, value, kind)
+        return lbl
+
+    def _paint_safety_pill(self, lbl, value, kind):
+        bg, fg = self._PILL_STYLE.get(kind, self._PILL_STYLE["idle"])
+        caption = lbl.property("safetyCaption") or ""
+        lbl.setText("%s: %s" % (caption, value))
+        lbl.setStyleSheet(
+            "QLabel{background:%s;color:%s;border-radius:4px;padding:4px 10px;"
+            "font-weight:700;}" % (bg, fg))
+
     # ---- motion dashboard ------------------------------------------------------------
     def _build_motion_card(self):
         f = theme.HudCard()
@@ -4206,6 +4230,34 @@ class MainWindow(QtWidgets.QMainWindow):
         grid.addWidget(b1, 0, 0); grid.addWidget(b2, 0, 1)
         grid.addWidget(b3, 1, 0); grid.addWidget(b4, 1, 1)
         v.addLayout(grid)
+
+        # IO & SAFETY (EAS Status–IO/Safety parity, kept honest). This drive link
+        # holds NO independent STO/E-STOP evidence — the digital-input reader itself
+        # declares "NOT STO/E-STOP EVIDENCE" and that absence is one of the reasons
+        # FINITE PTP stays NEED-DATA locked. So STO shows UNVERIFIED rather than a
+        # false green "OK": a misleading safety indicator is worse than none. These
+        # pills are static (not telemetry-bound) — see the note below.
+        v.addWidget(self._hline())
+        io_title = QtWidgets.QLabel("IO & SAFETY"); io_title.setProperty("role", "field")
+        v.addWidget(io_title)
+        iorow = QtWidgets.QHBoxLayout(); iorow.setSpacing(8)
+        self.io_sto1 = self._safety_pill("STO1", "미검증", "unverified")
+        self.io_sto2 = self._safety_pill("STO2", "미검증", "unverified")
+        self.io_estop = self._safety_pill("E-STOP", "미검증", "unverified")
+        _sto_tip = ("독립 STO/E-STOP 증거가 없습니다 — 드라이브 self-report를 안전 "
+                    "증거로 신뢰하지 않으므로 '미검증'으로 표시합니다. 정적 표시(라이브 "
+                    "갱신 없음).")
+        for w in (self.io_sto1, self.io_sto2, self.io_estop):
+            w.setToolTip(_sto_tip); iorow.addWidget(w)
+        iorow.addStretch(1)
+        v.addLayout(iorow)
+        io_note = QtWidgets.QLabel(
+            "STO/E-STOP는 독립 증거가 없어 '미검증'입니다 — 이것이 FINITE PTP를 "
+            "NEED-DATA로 잠그는 이유 중 하나입니다. 이 표시는 정적이며 라이브 갱신되지 "
+            "않습니다 — 라이브 드라이브 상태 레지스터(MO/SO/MF/SR)와 "
+            "Digital Inputs(IL/IF/IP)는 Axis 페이지에서 조회하세요.")
+        io_note.setProperty("role", "hint"); io_note.setWordWrap(True)
+        v.addWidget(io_note)
 
         v.addWidget(self._hline())
         actionrow = QtWidgets.QHBoxLayout(); actionrow.setSpacing(8)

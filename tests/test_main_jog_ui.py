@@ -112,3 +112,20 @@ def test_jog_result_releases_panel_and_stops_timer(window):
 def test_jog_sample_updates_live_velocity_readout(window):
     window._on_jog_sample({"VX": 109226.0, "IQ": 0.42})
     assert "109" in window.m_vel.text().replace(",", "")
+
+
+def test_motion_io_safety_panel_shows_sto_unverified_never_ok(window):
+    # The drive holds no independent STO/E-STOP evidence, so these must stay an
+    # honest "unverified" — never a false green "OK" that would misrepresent safety.
+    ok_bg = app_main.MainWindow._PILL_STYLE["ok"][0]
+    for name in ("io_sto1", "io_sto2", "io_estop"):
+        pill = getattr(window, name)
+        assert "미검증" in pill.text()
+        assert "OK" not in pill.text().upper()
+        # amber "unverified" background, never the green "ok" background
+        assert ok_bg not in pill.styleSheet()
+        assert app_main.MainWindow._PILL_STYLE["unverified"][0] in pill.styleSheet()
+    # Repainting through the honest "unverified" path keeps the pill non-green;
+    # the build path never wires telemetry into these pills, so green never appears.
+    window._paint_safety_pill(window.io_sto1, "미검증", "unverified")
+    assert app_main.MainWindow._PILL_STYLE["ok"][0] not in window.io_sto1.styleSheet()
