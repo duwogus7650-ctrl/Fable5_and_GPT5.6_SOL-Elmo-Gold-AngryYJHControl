@@ -226,6 +226,30 @@ def test_jog_speed_over_ceiling_is_rejected():
     assert drive.writes == []
 
 
+def test_jog_current_cap_over_ceiling_is_rejected():
+    drive = JogSimLink()
+    result = _run(drive, JogCmd(Clock(), [(50.0, False)]),
+                  current_cap_a=sam.MAX_CURRENT_CAP_A + 0.5)
+    assert result.status == sam.RED
+    assert "current_cap" in result.reason.lower()
+    assert drive.writes == []
+
+
+def test_jog_runs_at_raised_max_current_cap():
+    # The peak cap was raised 1.30 -> 3.50 A: 1.30 A sat inside the static-friction
+    # band so the closed-loop enable/hold transient current-limited the drive (SR
+    # bit 13) and the enable SR check aborted. The raised max must be accepted and
+    # drive a real jog.
+    assert sam.MAX_CURRENT_CAP_A >= 3.5
+    drive = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(50.0, False), (50.0, False), (0.0, True)])
+    result = _run(drive, cmd, clock=clock, current_cap_a=sam.MAX_CURRENT_CAP_A)
+    assert result.status == sam.GREEN, result.reason
+    assert any(w.startswith("JV=") for w in drive.writes)
+    assert int(drive.reg["MO"]) == 0 and "SV" not in drive.writes
+
+
 def test_jog_proceeds_with_zero_position_limits_that_a_ptp_move_would_reject():
     # Real Gold drives on this bench run with VL[3]=VH[3]=0 (no software position
     # window). A finite PA move requires a valid VL[3] < VH[3]; an endless JV jog

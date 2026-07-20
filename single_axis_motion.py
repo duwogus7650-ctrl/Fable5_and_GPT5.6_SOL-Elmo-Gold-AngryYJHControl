@@ -27,7 +27,12 @@ MAX_ACCEL_RPM_S = 600.0
 MAX_STOP_DECEL_RPM_S = 600.0
 MAX_TRAVEL_LIMIT_REV = 1.0
 MAX_STEP_REV = 0.25
-MAX_CURRENT_CAP_A = 1.30
+# 3.50 A peak session cap (drive clamps PL[1]=CL[1] to this). 1.30 A sat inside
+# the static-friction band (i_ba 0.8-1.3 A) so the closed-loop enable/hold
+# transient always saturated; 3.50 A clears 2x the 1.3 A signature ceiling with
+# margin, matches this rig's sealed drag limit, and a stall at 3.50 A (2.5 Arms,
+# 16% of the 15 Arms continuous rating) trips the I2t thermal guard in ~1 s.
+MAX_CURRENT_CAP_A = 3.50
 MIN_CURRENT_CAP_A = 0.10
 SMOOTHING_MS = 20
 
@@ -99,7 +104,7 @@ class JogRequest:
 
     max_speed_rpm: float = JOG_MAX_RPM_DEFAULT
     accel_rpm_s: float = JOG_ACCEL_RPM_S
-    current_cap_a: float = 1.30
+    current_cap_a: float = 3.0
     timebox_s: float = JOG_TIMEBOX_DEFAULT_S
 
 

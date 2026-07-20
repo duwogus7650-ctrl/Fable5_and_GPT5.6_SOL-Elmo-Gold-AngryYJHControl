@@ -4361,7 +4361,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spn_jog_current = QtWidgets.QDoubleSpinBox()
         self.spn_jog_current.setRange(single_axis_motion.MIN_CURRENT_CAP_A,
                                       single_axis_motion.MAX_CURRENT_CAP_A)
-        self.spn_jog_current.setDecimals(2); self.spn_jog_current.setValue(1.30)
+        self.spn_jog_current.setDecimals(2); self.spn_jog_current.setValue(3.0)
         jform.addWidget(QtWidgets.QLabel("Jog speed [rpm]"), 0, 0)
         jform.addWidget(self.spn_jog_speed, 0, 1)
         jform.addWidget(QtWidgets.QLabel("Temporary current cap [A peak]"), 1, 0)
