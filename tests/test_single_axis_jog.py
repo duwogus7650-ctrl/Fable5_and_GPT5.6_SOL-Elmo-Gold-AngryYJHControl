@@ -497,3 +497,221 @@ def test_nan_command_fails_safe_to_stop():
     # a NaN target is never sent as a live JV
     assert not any(w.startswith("JV=") and w not in ("JV=0",)
                    for w in drive.writes)
+
+
+# --- retarget-tick dt skew: field false-overspeed regression (2026-07-19) --------
+#
+# Field failure: releasing a low-speed jog intermittently tripped the overspeed
+# guard on the DECEL leg (|VX| 16889/19708/28088/28410 cnt/s vs limits
+# 16384/17279/27633/28018 -- all inside the 15..~27 rpm window between the
+# floor and 1.25x envelope).  Root cause: on the retarget tick the integrator
+# debited the wall-clock interval since the PREVIOUS tick (which the drive
+# spent still ramping toward the OLD target) in the NEW (decel) direction,
+# opening a ~2*AC*dt expected-vs-VX gap that stayed frozen through the decel.
+# Only a slow host tick (~100-140 ms) adjacent to the release made dt big
+# enough to trip; the ~65 ms nominal tick left the window empty.
+#
+# The fix (single_axis_motion.py retarget block): pre-credit expected toward
+# the OLD last_jv over [last_tick, t_bg], anchor last_tick at the BG instant,
+# and never rewind the anchor (last_tick = max(last_tick, now)).
+
+RTT_S = 0.0032   # one serial command round-trip (field timeline, jog_sim2)
+
+
+class ProfilerClockLink(JogSimLink):
+    """JogSimLink + shared-clock serial cost + drive-side velocity profiler.
+
+    Every ``command()`` advances the shared ``Clock`` by ``serial_s`` (one
+    serial round trip), so the 10-register jog sample costs ~32 ms and a poll
+    tick ~62 ms of clock time -- reproducing the field timing that framed the
+    2026-07-19 false trips.  The drive velocity ``_v`` ramps toward the last
+    BG-latched target at ``accel_rpm_s`` in clock time and VX reads return the
+    live profile value.
+
+    Fault/latency injection:
+
+    * ``stall_map={vx_read_index: extra_s}`` -- extra clock time consumed right
+      after the profile value of that post-BG VX read is latched (index = the
+      runtime poll index, the enable-loop/preflight reads are not counted).
+      Models a slow host tick: the sample and the whole poll stretch, but the
+      returned VX is the speed at read time.
+    * ``chronic_vx_stall_s`` -- the same extra on EVERY post-BG VX read.
+    * ``jv_stall_map={jv_write_index: extra_s}`` -- extra clock time consumed
+      BY the JV= write itself (before BG lands): a slow retarget write leg.
+    * ``freeze_on_stop`` -- on the first JV=0 after motion the profile freezes
+      at its instantaneous speed (stuck-at-speed feedback fault at release).
+    * ``runaway_on_stop`` -- on the first JV=0 after motion the profile keeps
+      ACCELERATING in the motion direction instead of decelerating.
+    """
+
+    def __init__(self, clock, *, accel_rpm_s=30.0, serial_s=RTT_S,
+                 stall_map=None, chronic_vx_stall_s=0.0, jv_stall_map=None,
+                 freeze_on_stop=False, runaway_on_stop=False, **kwargs):
+        super().__init__(**kwargs)
+        self.clock = clock
+        self.serial_s = float(serial_s)
+        self.accel_cps = float(accel_rpm_s) * 65536.0 / 60.0
+        self.stall_map = dict(stall_map or {})
+        self.chronic_vx_stall_s = float(chronic_vx_stall_s)
+        self.jv_stall_map = dict(jv_stall_map or {})
+        self.freeze_on_stop = bool(freeze_on_stop)
+        self.runaway_on_stop = bool(runaway_on_stop)
+        self._v = 0.0
+        self._t = clock()
+        self._target = 0.0
+        self._frozen = False
+        self._runaway_dir = 0.0
+        self._vx_reads = 0        # post-BG VX read counter == runtime poll index
+        self._jv_writes = 0
+        self.vx_trace = []        # (vx_read_index, clock_t, profile_v)
+
+    def _advance_profile(self):
+        t = self.clock()
+        dt = t - self._t
+        self._t = t
+        if dt <= 0 or self._frozen:
+            return
+        if self._runaway_dir:
+            self._v += self._runaway_dir * self.accel_cps * dt
+            return
+        dv = self._target - self._v
+        step = self.accel_cps * dt
+        if abs(dv) <= step:
+            self._v = self._target
+        else:
+            self._v += step if dv > 0 else -step
+
+    def command(self, command, timeout_ms=1000, allow_motion=False):
+        core = "".join(command.split()).rstrip(";")
+        if core.startswith("JV="):
+            idx = self._jv_writes
+            self._jv_writes += 1
+            # the write itself may be slow: BG (and the profile retarget) lands late
+            self.clock.advance(self.serial_s + self.jv_stall_map.get(idx, 0.0))
+            jv = int(float(core[3:]))
+            if jv == 0 and self._motion_begun:
+                self._advance_profile()
+                if self.freeze_on_stop:
+                    self._frozen = True
+                if self.runaway_on_stop and not self._runaway_dir:
+                    self._runaway_dir = 1.0 if self._v >= 0 else -1.0
+            return super().command(command, timeout_ms=timeout_ms,
+                                   allow_motion=allow_motion)
+        self.clock.advance(self.serial_s)
+        if core == "BG":
+            out = super().command(command, timeout_ms=timeout_ms,
+                                  allow_motion=allow_motion)
+            # ramp on the OLD target up to the BG instant, THEN switch target
+            self._advance_profile()
+            if not self._frozen and not self._runaway_dir:
+                self._target = float(self.pending_jv)
+            return out
+        if core == "VX" and int(self.reg["MO"]) == 1 and self._motion_begun:
+            self._advance_profile()
+            value = self._v
+            idx = self._vx_reads
+            self._vx_reads += 1
+            self.vx_trace.append((idx, self.clock(), value))
+            extra = self.stall_map.get(idx, 0.0) + self.chronic_vx_stall_s
+            if extra:
+                self.clock.advance(extra)   # slow tick AFTER the value latched
+            return str(int(round(value)))
+        return super().command(command, timeout_ms=timeout_ms,
+                               allow_motion=allow_motion)
+
+
+# Field danger window: floor (15 rpm) < |VX| < ~27.4 rpm where the frozen gap
+# could beat 1.25*expected+margin without the floor saving it.
+_WINDOW_LO = 16384.0
+_WINDOW_HI = 29930.0
+
+
+def test_jog_release_during_accel_slow_tick_no_false_overspeed():
+    # A) 50 rpm tap at 30 rpm/s: release after ~9 polls (mid-ramp, |VX|~20-27k)
+    #    with a ~0.13 s host stall on the VX read of the tick JUST BEFORE the
+    #    release.  Pre-fix this froze a ~2*AC*dt gap and tripped the guard in
+    #    the field window; the fixed retarget accounting must ride the decel
+    #    down to a clean operator stop.
+    clock = Clock()
+    drive = ProfilerClockLink(clock, accel_rpm_s=30.0, stall_map={8: 0.13})
+    cmd = JogCmd(clock, [(50.0, False)] * 9 + [(0.0, True)] * 60)
+    result = _run(drive, cmd, clock=clock,
+                  max_speed_rpm=50.0, accel_rpm_s=30.0)
+    assert result.status == sam.GREEN, (result.reason, drive.vx_trace[-3:])
+    assert result.reason == "stopped"
+    assert int(drive.reg["MO"]) == 0
+    # the double really released inside the field danger window (else this
+    # test would not exercise the bug at all)
+    release_v = abs(drive.vx_trace[9][2])
+    assert _WINDOW_LO < release_v < _WINDOW_HI, release_v
+
+    # B) hardened variant: EVERY VX read chronically slow by 0.13 s.  Sample
+    #    age stays under the host watchdog (10 reads * RTT + 0.13 < 0.25 s),
+    #    so no age abort masks the check; the run must still end GREEN.
+    assert (len(sam._JOG_SAMPLE_READS) * RTT_S + 0.13
+            < sam.MAX_ACTIVE_SAMPLE_AGE_S)
+    clock2 = Clock()
+    drive2 = ProfilerClockLink(clock2, accel_rpm_s=30.0,
+                               chronic_vx_stall_s=0.13)
+    cmd2 = JogCmd(clock2, [(50.0, False)] * 3 + [(0.0, True)] * 60)
+    result2 = _run(drive2, cmd2, clock=clock2,
+                   max_speed_rpm=50.0, accel_rpm_s=30.0)
+    assert result2.status == sam.GREEN, (result2.reason, drive2.vx_trace[-3:])
+    assert result2.reason == "stopped"
+    release_v2 = abs(drive2.vx_trace[3][2])
+    assert _WINDOW_LO < release_v2 < _WINDOW_HI, release_v2
+
+
+def test_jog_release_at_cruise_slow_retarget_tick_no_false_overspeed():
+    # Reach 50 rpm cruise, then release with the retarget JV=0 write itself
+    # slow by 0.2 s (BG lands late).  Pre-fix the integrator debited that
+    # whole interval in the decel direction before the drive ever received
+    # the command, freezing a gap that tripped as the decel crossed the
+    # danger window.  Post-fix the BG anchor removes the skew -> GREEN.
+    clock = Clock()
+    drive = ProfilerClockLink(clock, accel_rpm_s=30.0, jv_stall_map={1: 0.2})
+    cmd = JogCmd(clock, [(50.0, False)] * 32 + [(0.0, True)] * 80)
+    result = _run(drive, cmd, clock=clock,
+                  max_speed_rpm=50.0, accel_rpm_s=30.0)
+    assert result.status == sam.GREEN, (result.reason, drive.vx_trace[-4:])
+    assert result.reason == "stopped"
+    assert int(drive.reg["MO"]) == 0
+    # released from cruise, and the decel leg really swept the danger window
+    assert abs(drive.vx_trace[32][2]) > 45000.0
+    swept = [abs(v) for _i, _t, v in drive.vx_trace[32:]
+             if _WINDOW_LO < abs(v) < _WINDOW_HI]
+    assert swept, "decel leg never sampled inside the field danger window"
+
+
+def test_jog_stuck_feedback_after_release_still_red_despite_slow_tick():
+    # HIGH-2 tooth check: the SAME timing as the false-positive scenario, but
+    # the feedback genuinely freezes at the release speed (stuck-at-speed
+    # fault).  The fix must not blunt the guard: expected decays at AC while
+    # |VX| stays pinned above the floor -> still RED overspeed.
+    clock = Clock()
+    drive = ProfilerClockLink(clock, accel_rpm_s=30.0, stall_map={8: 0.13},
+                              freeze_on_stop=True)
+    cmd = JogCmd(clock, [(50.0, False)] * 9 + [(0.0, True)] * 300)
+    result = _run(drive, cmd, clock=clock,
+                  max_speed_rpm=50.0, accel_rpm_s=30.0)
+    assert result.status == sam.RED, result.reason
+    assert "overspeed" in result.reason.lower()
+    assert int(drive.reg["MO"]) == 0
+    # the frozen speed sat above the guard floor (the fault was catchable)
+    assert abs(drive.vx_trace[-1][2]) > _WINDOW_LO
+
+
+def test_jog_runaway_during_decel_still_red():
+    # After release the profiler ACCELERATES instead of decelerating (runaway
+    # during the decel leg).  Expected decays while |VX| climbs -> RED within
+    # a few polls, immediate two-tier abort path.
+    clock = Clock()
+    drive = ProfilerClockLink(clock, accel_rpm_s=30.0, runaway_on_stop=True)
+    cmd = JogCmd(clock, [(50.0, False)] * 32 + [(0.0, True)] * 300)
+    result = _run(drive, cmd, clock=clock,
+                  max_speed_rpm=50.0, accel_rpm_s=30.0)
+    assert result.status == sam.RED, result.reason
+    assert "overspeed" in result.reason.lower()
+    assert int(drive.reg["MO"]) == 0
+    # it really was accelerating past the release speed when caught
+    assert abs(drive.vx_trace[-1][2]) > abs(drive.vx_trace[31][2])

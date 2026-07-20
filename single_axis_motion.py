@@ -27,12 +27,15 @@ MAX_ACCEL_RPM_S = 600.0
 MAX_STOP_DECEL_RPM_S = 600.0
 MAX_TRAVEL_LIMIT_REV = 1.0
 MAX_STEP_REV = 0.25
-# 3.50 A peak session cap (drive clamps PL[1]=CL[1] to this). 1.30 A sat inside
-# the static-friction band (i_ba 0.8-1.3 A) so the closed-loop enable/hold
-# transient always saturated; 3.50 A clears 2x the 1.3 A signature ceiling with
-# margin, matches this rig's sealed drag limit, and a stall at 3.50 A (2.5 Arms,
-# 16% of the 15 Arms continuous rating) trips the I2t thermal guard in ~1 s.
-MAX_CURRENT_CAP_A = 3.50
+# Peak session cap (drive clamps PL[1]=CL[1] to this).  Sized for the 3000 rpm
+# supervised jog: fable-physics worst-case hold current is ~3.25 A, so 5.0 A
+# leaves ~1.7 A disturbance headroom.  5 A amplitude = 3.54 Arms = 33% of the
+# 15 Arms continuous rating; a sustained stall dissipates ~4.7 W in the phases
+# (thermally harmless over a supervised run).  NOTE: because PL[1]==CL[1] there
+# is NO peak-vs-continuous excess for the drive to integrate, so there is no
+# I2t trip backstop at this cap -- over-current protection is the current-vector
+# guard (sqrt(ID^2+IQ^2) > cap+margin) plus the operator DRIVE STOP, not I2t.
+MAX_CURRENT_CAP_A = 5.0
 MIN_CURRENT_CAP_A = 0.10
 SMOOTHING_MS = 20
 
@@ -79,11 +82,11 @@ _RESTORE_ORDER = (
 JOG_MAX_RPM_DEFAULT = 300.0        # 8.3% of rated; runaway trips in 1-2 polls
 JOG_MAX_RPM_CEILING = 3000.0       # -17% of the 3600 rpm voltage limit
 JOG_MIN_RPM = 1.0
-JOG_ACCEL_RPM_S = 30.0
+JOG_ACCEL_RPM_S = 300.0            # start/stop ramp; ~10 s to 3000 rpm (accel current negligible)
 JOG_MAX_ACCEL_RPM_S = 600.0
 JOG_POLL_S = 0.03                  # 30 ms tick (>=1-2 poll runaway detection)
 JOG_DEADMAN_AGE_S = 0.25           # stale jog command -> demote to stop
-JOG_TIMEBOX_DEFAULT_S = 60.0       # PX int32 headroom 0.92% at 300 rpm / 60 s
+JOG_TIMEBOX_DEFAULT_S = 120.0      # 3000 rpm x 120 s = 393M cnt = 37% of the live-PX overflow gate; the gate (fail-closed, uses live PX) rejects the run if the projection would overflow, prompting Session Zero
 JOG_TIMEBOX_HARD_S = 180.0
 JOG_OVERSPEED_FACTOR = 1.25
 JOG_OVERSPEED_FLOOR_RPM = 15.0     # low-speed false-positive floor
@@ -1070,6 +1073,22 @@ def run_jog(
                 _write_verified(link, "JV", target_jv, token, allow_motion=True)
                 link.command("BG", allow_motion=True)
                 motion_started = True
+                # Retarget accounting: until BG landed just now the drive was
+                # still ramping toward the OLD last_jv.  Credit that wall-clock
+                # interval to the OLD leg first, then anchor the integrator at
+                # the BG instant, so the new leg never debits host time from
+                # before the drive received the command.  Otherwise a slow tick
+                # coinciding with a downshift opens a ~2*AC*dt expected-vs-VX gap
+                # (frozen through the decel) that false-trips the overspeed guard
+                # in the low-speed window (field 2026-07-19: |VX| 16889..28410
+                # cnt/s vs limits 16384..28018).
+                t_bg = clock_fn()
+                pre_step = float(accel_counts) * max(0.0, t_bg - last_tick)
+                if expected_counts < last_jv:
+                    expected_counts = min(float(last_jv), expected_counts + pre_step)
+                elif expected_counts > last_jv:
+                    expected_counts = max(float(last_jv), expected_counts - pre_step)
+                last_tick = t_bg
                 last_jv = target_jv
             sample, _age = _read_active_sample(
                 link, _JOG_SAMPLE_READS, sample_clock_fn=sample_clock_fn)
@@ -1103,7 +1122,7 @@ def run_jog(
             # below the frozen feedback.  max(expected, target) keeps the
             # accel/first-tick edge from tripping before feedback catches up.
             dt = max(0.0, now - last_tick)
-            last_tick = now
+            last_tick = max(last_tick, now)   # keep the BG anchor; never rewind
             step = float(accel_counts) * dt
             if expected_counts < last_jv:
                 expected_counts = min(float(last_jv), expected_counts + step)
