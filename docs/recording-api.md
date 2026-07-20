@@ -9,6 +9,9 @@ here only for context / fallback.
 Provenance: `.NET reflection` = live offline reflection of `ElmoMotionControlComponents.Drive.EASComponents.dll`
 (no hardware). `CR` = Gold Line Command Reference MAN-G-CR 1.406 (`docs/command-reference.txt`).
 `RN` = Drive .NET Library 1.0.0.8 Release Notes PDF (fitz). `FW` = firmware-release-notes.txt.
+`EX` = official Drive .NET 1.0.0.8 code examples archive, SHA-256
+`0E12B2B332D35E26DD5B81797E442D568BA966FE752930B849C19E09F7379222`, member
+`Code Examples/DriveDotNetRecording/RecordingOperator.cs`.
 
 ---
 
@@ -25,8 +28,12 @@ Flow (from RN Chapter 4 + reflection):
 1. **Personality (signal list source).** `IDriveCommunication.CreatePersonalityModel(string personalityPath, out IDriveErrorObject err)`.
    Populates `comm.PersonalityModel` (`DrivePersonalityModel`). RN: "the library can upload the
    personality data from the drive and save it into an XML file … obtaining the list of recording
-   signals." **LIVE-UNKNOWN**: whether CreatePersonalityModel uploads from the connected drive when
-   given a fresh path, or needs a prior "Upload personality" (IUploadDownloadModel) step. Confirm live.
+   signals." The implemented ladder is populated communication model → identity-matched cached XML →
+   upload from the connected drive and parse. A pre-populated communication-model catalog may supply
+   signals, but it has no XML-version comparison and therefore records
+   `firmware_personality_match=false`. A cached XML is accepted only when the normalized firmware
+   portion of `<version>` is non-empty and exactly equals normalized live `VR` (case-insensitive), and
+   its integer `Pal:` value equals live `VP`; otherwise a current-session upload is required.
 
 2. **Signal list.** `comm.PersonalityModel.SignalsMetaData` : `Dictionary<Int32, RecordingSignalSetup>`.
    - `RecordingSignalSetup` props (reflection): `Int32 SignalIndex`, `Int32 SignalType`,
@@ -49,18 +56,47 @@ Flow (from RN Chapter 4 + reflection):
      → **immediate capture: SetupType = Immediate**.
    - `SignalData` = the RecordingSignalSetup instances (from SignalsMetaData) for the signals to record.
    - `bool ConfigureRecording(RecordingSetup)`, `bool StartRecording()`.
+   - Before the vendor configure/start calls, `elmo_link` stores a provisional pending handle. If an
+     exception is returned after crossing `StartRecording()`, the UI reports
+     `START_OWNERSHIP_UNKNOWN` and keeps recorder ownership fail-closed; only Recorder Stop/recovery
+     is allowed because the drive may already be armed.
 4. **Monitor.** poll `RecordingStatus GetRecordingStatus()` : enum `{ROff, RWait, REnd, RProgress}`.
-   ROff=error/cancel, RWait=awaiting trigger, REnd=done, RProgress=running. `void StopRecorder()` aborts.
+   ROff=error/cancel, RWait=awaiting trigger, REnd=done, RProgress=running. `void StopRecorder()` requests
+   abort, but a no-exception return is not success evidence: ownership is released only after the same
+   recorder reads back `ROff` or `REnd`.
 5. **Upload.** `RecordingData UploadRecordingData()` → `RecordingData.Data` : `Dictionary<Int32, Double[]>`
    (value = physical double array). **No factor/offset/hex — already physical.**
+   - Recorder Stop cannot preempt an `UploadRecordingData()` vendor call already in progress. When
+     Stop wins that race, returned host data is discarded, no late `COMPLETED`/data event is
+     published, and the terminal UI state remains `CANCELLED`.
    - **LIVE-CONFIRMED (2026-07-13, autotune run #4): Data keys are POSITIONAL 0..N-1 in
      SignalData request order — NOT SignalIndex.** (6-signal request returned keys [0..5];
      'A Voltage' has SignalIndex 19 → SignalIndex lookup fails. `elmo_link._map_upload_data`
      maps positionally and raises IOError when the key set ≠ {0..N-1}.)
-   - **LIVE-UNKNOWN**: dt derivation (SamplingTime vs TimeResolution×TS).
+   - **DOCUMENTED (EX)**: the example assigns `SamplingTime=TS` in µs and
+     `TimeResolution=4`, explicitly describing the gap as `4 × TS`. Therefore
+     `dt_s = TimeResolution × SamplingTime_us × 1e-6`.
+   - Before upload, the implementation reads back `SamplingTime`, `TimeResolution`, and
+     `RecordingLength` from the configured setup object. It fails closed unless all three are
+     finite/positive as applicable and exactly agree with the stored configured TS, integer
+     resolution, and requested sample count (`SamplingTime` uses a tight numeric tolerance).
 
 Interface: `IDriveCommunication.GetRecordingObject() -> IDriveRecording`,
 `CreatePersonalityModel(String, IDriveErrorObject&) -> Boolean`, `PersonalityModel {get;set;}`.
+
+### Recovery and capture provenance
+
+- If disconnect cleanup cannot confirm terminal `ROff`/`REnd` after `StopRecorder()`, a v2 record is
+  atomically latched in `.omc/state/recorder_unknown.json`, keyed by COM port and opaque hashed drive
+  identity. Recovery can clear only the exact matching record after a live Stop plus terminal-status
+  readback; a different drive on the same COM cannot clear it. Missing or legacy-unproven identity
+  stays fail-closed as `RECOVERY_REQUIRED_UNKNOWN`.
+- CSV export creates a `.meta.json` sidecar with a capture UUID, start-attempt/completion UTC times,
+  target and firmware/PAL/boot fields, requested/actual timing and sample counts, and CSV SHA-256.
+  Its capture manifest also records SHA-256 values for `main.py`, `elmo_link.py`,
+  `recorder_control.py`, the loaded Drive .NET DLL, Personality XML and canonical signal catalog;
+  Personality source/cache-match evidence; and an opaque SHA-256 identity derived from `SN[4]`
+  without exporting the raw serial token.
 
 ---
 
@@ -94,4 +130,5 @@ Wrap the .NET recorder in `elmo_link`:
 
 Then autotune `_record`/`_list_recorder_signals` call these link methods (drop the raw RC/RG/BH path
 and its B1/B2 bugs). Sim tests mock `record()` with the same dict shape. Live bring-up confirms the
-LIVE-UNKNOWNs (CreatePersonalityModel behavior, voltage signal existence, dt).
+remaining LIVE-UNKNOWNs (voltage signal existence and target-specific vendor behavior not covered by
+the exact configure/upload readback gates).

@@ -103,7 +103,29 @@ QLabel#pill {
     letter-spacing: 1.5px; background: rgba(229,37,33,0.14); color: #b81f1c; border: 2px solid rgba(229,37,33,0.5);
 }
 QLabel#pill[on="true"] { background: qlineargradient(x1:0,y1:0,x2:1,y2:1, stop:0 #96d030, stop:1 #5f9200); color: #ffffff; border: none; }
+QLabel#pill[status="active"] { background: #dff4ff; color: #176887; border-color: #55a9cb; }
+QLabel#pill[status="ready"] { background: #fff0ad; color: #735200; border-color: #e6b23c; }
+QLabel#pill[status="success"] { background: #6fae10; color: #ffffff; border-color: #96d030; }
+QLabel#pill[status="error"] { background: #ffe0d8; color: #a01916; border-color: #e52521; }
+QLabel#pill[status="neutral"] { background: #fff3d8; color: #8a6e4d; border-color: #d6b36c; }
 QToolTip { background: #fffdf6; color: #2b211a; border: 2px solid #e52521; padding: 5px 9px; border-radius: 8px; }
+
+QTableWidget#expertEvidenceTable {
+    background: #fffaf0; alternate-background-color: #fff3d8;
+    color: #2b211a; gridline-color: #e6b23c;
+    border: 2px solid #e6b23c; border-radius: 8px;
+    selection-background-color: #fff3d8; selection-color: #2b211a;
+    outline: none; font-family: "JetBrains Mono","Consolas",monospace;
+}
+QTableWidget#expertEvidenceTable::item { padding: 6px; }
+QTableWidget#expertEvidenceTable QHeaderView::section {
+    background: #ffe9b8; color: #b81f1c; border: none;
+    border-right: 1px solid #e6b23c; border-bottom: 1px solid #e6b23c;
+    padding: 7px 5px; font-weight: 900;
+}
+QTableWidget#expertEvidenceTable QTableCornerButton::section {
+    background: #ffe9b8; border: 1px solid #e6b23c;
+}
 
 QTabWidget::pane { border: none; }
 QTabBar::tab {

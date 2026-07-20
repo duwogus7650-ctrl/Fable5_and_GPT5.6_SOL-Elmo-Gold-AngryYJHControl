@@ -10,3 +10,10 @@ NUL
 *.tmp
 # synthetic/smoke quarantine (by design throwaway — see SYNTHETIC_SUBDIR)
 .omc/state/synthetic/
+
+# per-run tuning evidence; durable runtime artifacts are not source fixtures
+.omc/state/autotune_result_*.json
+.omc/state/autotune_vp_result_*.json
+.omc/state/autotune_vp_snapshot_*.json
+.omc/state/verify_vp_result_*.json
+.omc/state/verify_vp_snapshot_*.json

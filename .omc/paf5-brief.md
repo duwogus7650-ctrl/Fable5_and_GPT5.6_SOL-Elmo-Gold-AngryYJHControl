@@ -1,5 +1,10 @@
 # PAF5 Brief — Fable5-Elmo-Control-Program
 
+> **CURRENT POINTER — 2026-07-17:** 활성 범위는 Quick Tuning + 제한형 Single Axis Motion이다.
+> 현재 working tree, 중단 지점, 검증 근거와 재개 순서는
+> [`../docs/current-scope-handoff.md`](../docs/current-scope-handoff.md)를 우선한다. 이 파일의 아래 내용은
+> 초기 프로젝트 경로와 장기 개발 이력을 포함한 historical context이며 현재 상태를 덮어쓰지 않는다.
+
 메인 세션(Opus)이 유지하는 연속성 파일. 모든 fable-* 에이전트는 시작 시 이 파일을 읽는다.
 
 ## 목표
@@ -229,3 +234,49 @@ EAS의 게인계산 알고리즘은 재현 불가(EAS 내부)지만, **드라이
 - **브레이크어웨이 캡 UI 선택(2026-07-14)**: Tuning 페이지에 "브레이크어웨이 캡 (P2)" 드롭다운(**0.2·CL 기본/0.4·CL 고전류** — 16극 확정·커뮤 정상인데 기본 캡 무이탈인 이 유닛용) + 안전 안내(토크 ~2배·감독 필수·1200rpm 가드/조기종료 유지·0.4=캡 8.49A≥6A라 UM3 판별 자동 실행). `_velpos_overrides()`가 선택값을 `AutotuneVPParams(ramp_frac=…)`로 전달(워커 `**kw` 기존 경로), Phase 2 확인 다이얼로그에 선택 캡 표기. 커널 불변(RAMP_FRAC_ABS_MAX=0.4 사전게이트가 천장). 검증: `--smoke-velpos`에 3단언 추가(글루 레벨 ramp_frac=0.4→i_cap evidence 8.49 도달·UI 기본 0.2·선택 0.4) 전부 PASS, pytest **127 passed** 무회귀, `--smoke-autotune`/`--smoke` GREEN. 실기 재실행(0.4 선택)은 사용자 감독 별도.
 - **방향 반전 안전보강 4건(fable-physics §3, 2026-07-14)**: 이 유닛=유효-역방향 커뮤(+TC→−피드백, CA[25]=1+재커뮤로 사용자 수리 예정). ① 방향 RED를 **램프 i_ba 래치 시점**으로 조기화(signed dpx/VX 판정, 진단펄스 통전 전 중단 — 실기는 19,571cnt 역회전 후 사망했었음; `breakaway.direction/±basis` evidence) ② unit-diag에 **ka_pos>0 단언**(실기 하드게이트가 음의 K_a −5.5e5로 PASS하던 구멍 — ka_dev는 크기 일관성만) ③ 3층 메시지를 "방향 반전(유효-역방향 커뮤): 수리=MO=0→CA[25]=1→재커뮤→SV"로 통일(묵시적 부호보정 금지 명문화) ④ design_vp_gains K_a>0 ValueError(음의 KP[2] 폭주 유입 차단). 교차검증: 반전 sim 램프 RED(dir=−1·dpx −15489·unit_diag 미생성)/FlipAfterRampSim diag서 K_a=−3.38e6 포착/design 거부/정방향 dir=+1 무영향. pytest **130 passed**(기존 반전 테스트 램프-시점으로 강화+신규 3)·`--smoke-velpos` GREEN·스펙 §14.2.
 - **다음(실기, 사용자 감독)**: 새 유닛 Phase 2 재실행 — 예상: 램프가 i_ba(0.5~2.12A 사이) 실측→적응 펄스로 로터 실이동→위치기반 K_a 실측(FF[1]=1/K_a 확증=U-P1)·125× 종결. 무인 통전 금지.
+
+### Single Axis Digital Inputs · Read-Only Snapshot v0.1 (2026-07-19)
+- 설치 Gold UM Single Axis §8.9와 `IP`/`IL`/`IF` command reference를
+  SHA-256 4개로 동결했다. explicit refresh는 `IL[1..6]`,
+  `IF[1..6]`, final `IP`만 150ms/query·2s total·동일 session token으로
+  읽는다. Digital Output, `IB` sticky clear, assignment, mapping/filter
+  mutation, Enable/motion은 없음.
+- pure fail-closed decoder와 Motion 6×5 read-only table, worker typed job,
+  transport/operation catalog gate를 구현했다. invalid/reserved/session-change/
+  timing 오류와 forged partial `CURRENT` snapshot은 전체 blank.
+- 첫 Read Only field refresh는 transport allowlist 뒤 worker query-only
+  job guard에서 막혔다. 허용-case test를 RED로 추가한 뒤
+  `axis_digital_inputs_read` 하나만 observer job allowlist에 추가해 수정.
+- 수정된 Python 3.14 새 창의 current-target observation:
+  Input 1–6 모두 `ACTIVE · DRIVE LOGICAL`, `General purpose`,
+  `ACTIVE_HIGH · non-sticky`, `0.000 ms`, acquisition `25.9 ms`.
+  이는 raw pin voltage, wiring correctness, safety input 또는 EAS parity가 아님.
+- 검증: focused `133 passed in 96.03s / exit 0`; 전체 stdout
+  `1639 passed in 827.24s / 100% / stderr 0`. 전체 numeric exit watcher는
+  빈 값이어서 그 숫자만 `UNVERIFIED`. 구현 HEAD `8c2a955a0d11c63c691b77f8eeeb21aaa5a2d269`.
+- 다음 gate: EAS same-moment comparison, known inactive/active physical
+  stimulus, polarity/filter/sticky timing. 그 전에는 safety interlock
+  authority를 부여하지 않는다.
+
+### Single Axis Digital Outputs · Read-Only Snapshot v0.1 (2026-07-19)
+- installed Gold `OP`/`GO`/`OL` command pages와 local Gold Twitter
+  Installation Guide를 SHA-256 4개로 동결했다. 매뉴얼 page 62–63 시각
+  대조로 OUT1/2 5 V logic, OUT3/4 3.3 V logic을 고정했다.
+- explicit refresh는 `OL[1..4]`, `GO[1..4]`, final `OP`만
+  150 ms/query·2 s total·동일 session token으로 읽는다. assignment,
+  `OB/OC/XO`, output toggle/actuation, Enable/motion은 없다.
+- pure fail-closed decoder와 Motion 4×5 read-only table, transport/worker
+  typed-job allowlist, operation catalog를 구현했다. `OL` range 0..9와
+  Target Reached 10/11의 문서 충돌은 `OL_RANGE_CONFLICT`로 보존한다.
+- current-target `ONLINE · READ ONLY` observation: Output 1–4 모두
+  `INACTIVE · DRIVE LOGICAL ACTIVATION`, `General purpose`, `ACTIVE_HIGH`,
+  `Function via OL[N]`, acquisition `18.1 ms`.
+- 검증: pure `24 passed`, integration slice `113 passed in 46.12s`,
+  직접 영향 범위 `276 passed in 53.27s / exit 0`, 전체 repository
+  `1673 passed in 493.02s / exit 0`, source SHA-256 `4/4`;
+  세 skin contrast ≥4.5:1, horizontal scroll 0.
+- 구현 HEAD:
+  `667c19eb8bd44d1a7d838772753e7fc6d709fb94`.
+- physical pin voltage/current, external load/brake, EAS same-moment parity,
+  output compare/STO indication 자극과 write/readback/rollback은
+  `NEED-DATA / NO-GO`; 이 readback을 safety authority로 사용하지 않는다.

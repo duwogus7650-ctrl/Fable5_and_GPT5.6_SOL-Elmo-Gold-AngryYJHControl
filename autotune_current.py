@@ -65,8 +65,9 @@ Honesty / hardware-pending items (cannot be verified headless — SPEC §10):
   U2  CL[4] unit (interpreted as ms).
   U3  existence of a non-bus voltage-command signal in the personality list
       (runtime-resolved; RED+dump if absent).  Also live-unknown:
-      CreatePersonalityModel upload behavior, and recording dt semantics
-      (SamplingTime vs TimeResolution*TS — fallback is flagged in warnings).
+      CreatePersonalityModel upload behavior and target-specific post-Configure
+      SamplingTime behavior.  The official example defines SamplingTime=TS in
+      µs and dt=TimeResolution*TS; the link fails closed on readback mismatch.
   U4  SO==1 latency after MO=1 (absorbed by the B2 poll).
 
 All failures return a RED AutotuneResult (never raise), after the fixed-order
@@ -81,17 +82,27 @@ import os
 import re
 import time
 from dataclasses import dataclass, field
+from decimal import Decimal, InvalidOperation
 from typing import Callable, Optional, Sequence
 
 import numpy as np
+import persistence_audit
 
 __all__ = ["AutotuneParams", "AutotuneResult", "run_current_autotune",
            "apply_gains", "verify_run", "loop_margins", "design_gains",
            "demod", "derive_freqs", "neutral_subtract", "pi_discrete",
-           "pi_continuous", "loopgain_crossover_hz",
-           "GREEN", "YELLOW", "RED"]
+           "pi_continuous", "loopgain_crossover_hz", "GainTrialP1",
+           "begin_gain_trial_p1", "restore_gain_trial_p1",
+           "commit_gain_trial_p1", "adopt_gain_trial_p1_for_restore",
+           "p1_gain_trial_has_save_authority",
+           "P1_CONFIG_NAMES", "GREEN", "YELLOW", "RED"]
 
 GREEN, YELLOW, RED = "GREEN", "YELLOW", "RED"
+P1_CONFIG_NAMES = persistence_audit.PHASE_REGISTERS["P1_CONFIG"]
+_P1_CONFIG_INTEGER_NAMES = frozenset((
+    "UM", "SC[8]", "CA[42]", "CA[43]", "CA[44]", "CA[70]",
+    "SE[1]", "SE[4]", "SE[5]", "SE[6]", "SE[7]",
+))
 
 # --- calibration & gate constants (SPEC §4) -------------------------------------------
 WC_TS_CAL = 0.2010        # wc*TS single-point calibration (EAS: KP/L_np*TS)
@@ -235,6 +246,31 @@ def _to_num(s):
         return float(t)
     except ValueError:
         return t
+
+
+def _exact_config_snapshot_number(value, register: str):
+    """Reject any P1_CONFIG snapshot value that float conversion would alter."""
+
+    if isinstance(value, bool) or value is None:
+        raise ValueError("%s is not a numeric literal: %r" % (register, value))
+    token = str(value).strip().rstrip(";").strip()
+    try:
+        number = Decimal(token)
+    except (InvalidOperation, ValueError):
+        raise ValueError(
+            "%s is not a numeric literal: %r" % (register, value)) from None
+    if not number.is_finite():
+        raise ValueError("%s is not finite: %r" % (register, value))
+    if register in _P1_CONFIG_INTEGER_NAMES:
+        if number != number.to_integral_value():
+            raise ValueError(
+                "%s is not an exact integer: %r" % (register, value))
+        return int(number)
+    observed = float(number)
+    if not math.isfinite(observed) or number != Decimal(str(observed)):
+        raise ValueError(
+            "%s exceeds exact numeric precision: %r" % (register, value))
+    return observed
 
 
 def demod(x: np.ndarray, f_hz: float, dt_s: float) -> complex:
@@ -390,6 +426,7 @@ class _Ctx:
         self.link = link
         self.params = params
         self.readings: dict = {}
+        self.raw_readings: dict = {}
         self.evidence: dict = {}
         self.warnings: list = []
         self.snapshot: dict = {}
@@ -413,6 +450,8 @@ class _Ctx:
         self.duty_fs: float = DUTY_FS   # G0-derived duty full scale (never hardcoded)
         self.g0: dict = {}              # G0 platform-grounding gate record
         self.g1p: dict = {}             # G1' idle-leg/Vbus gate record
+        self.config_attempt_id: Optional[str] = None
+        self.config_restore_finalized = False
 
 
 def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
@@ -421,7 +460,16 @@ def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
     last = None
     for _ in range(retries + 1):
         try:
-            resp = ctx.link.command(cmd, timeout_ms=1000, allow_motion=allow_motion)
+            kwargs = {
+                "timeout_ms": 1000,
+                "allow_motion": allow_motion,
+            }
+            if ctx.config_attempt_id is not None:
+                kwargs["_persistence_attempt_id"] = ctx.config_attempt_id
+            resp = ctx.link.command(cmd, **kwargs)
+            core = "".join(str(cmd).split()).upper().rstrip(";")
+            if "=" not in core:
+                ctx.raw_readings[core] = resp
             val = _to_num(resp)
             if isinstance(val, float) and math.isnan(val):
                 raise AbortError("NaN 응답 (%s) — 즉시 중단" % cmd)
@@ -434,6 +482,7 @@ def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
 
 
 def _write(ctx: _Ctx, cmd: str, value, allow_motion: bool = False):
+    _check_cancel_before_mutation(ctx)
     ctx.dirty.append(cmd)
     return _cmd(ctx, "%s=%s" % (cmd, _fmt(value)), allow_motion=allow_motion)
 
@@ -469,6 +518,22 @@ def _check_cancel(ctx: _Ctx):
         return
     if want:
         raise AbortError("작업자 중단 요청")
+
+
+def _check_cancel_before_mutation(ctx: _Ctx):
+    """Poll cancel at a drive-mutation boundary.
+
+    Before the first attempted write, cancellation is a read-only preflight
+    failure: there is no drive state to restore and the abort chain itself
+    would create writes. Once a write has been attempted, retain the normal
+    AbortError path so the fixed safe-abort/restore chain runs.
+    """
+    try:
+        _check_cancel(ctx)
+    except AbortError as exc:
+        if ctx.dirty:
+            raise
+        raise PreflightError(str(exc)) from None
 
 
 def _guard(ctx: _Ctx):
@@ -689,28 +754,231 @@ _RESTORE_ORDER = ("SE[1]", "SE[2]", "SE[3]", "SE[4]", "SE[5]", "SE[6]", "SE[7]",
                   "KP[1]", "KI[1]")
 
 
+def _p1_config_journal_api(ctx: _Ctx):
+    names = (
+        "prepare_persistence_attempt",
+        "begin_persistence_ram_rollback",
+        "resolve_persistence_ram_rollback",
+        "mark_persistence_attempt_unknown",
+    )
+    try:
+        methods = tuple(getattr(ctx.link, name, None) for name in names)
+    except Exception as exc:
+        raise PreflightError(
+            "P1 configuration journal API inspection failed: %s" % exc)
+    if all(method is None for method in methods):
+        try:
+            synthetic_mode = getattr(
+                ctx.link, "p1_config_durability_mode", None)
+        except Exception as exc:
+            raise PreflightError(
+                "P1 configuration journal mode inspection failed: %s" % exc)
+        if synthetic_mode == "SYNTHETIC_NO_HARDWARE":
+            return None
+        raise PreflightError(
+            "P1 configuration journal API is required for a hardware-capable "
+            "link")
+    if not all(callable(method) for method in methods):
+        raise PreflightError(
+            "P1 configuration journal API is incomplete")
+    return methods
+
+
+def _latch_p1_config_unknown(ctx: _Ctx, attempt_id, reason: str):
+    """Retain a durable incident; fall back to the runtime mutation latch."""
+    mark_error = None
+    try:
+        marker = getattr(ctx.link, "mark_persistence_attempt_unknown", None)
+        if not callable(marker):
+            raise RuntimeError("configuration journal marker unavailable")
+        marker(attempt_id, str(reason) or "CONFIGURATION_RESTORE_UNKNOWN")
+    except Exception as exc:
+        mark_error = "%s: %s" % (type(exc).__name__, exc)
+        try:
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                latch()
+        except Exception:
+            pass
+    finally:
+        ctx.config_attempt_id = None
+    return mark_error
+
+
+def _prepare_p1_config_journal(
+        ctx: _Ctx, original: dict, applied: dict,
+        mutation_bounds: dict):
+    api = _p1_config_journal_api(ctx)
+    if api is None:
+        return
+    prepare, _begin_rollback, _resolve, _mark = api
+    _check_cancel_before_mutation(ctx)
+    try:
+        attempt_id = prepare(
+            phase="P1_CONFIG",
+            registers=P1_CONFIG_NAMES,
+            original=original,
+            applied=applied,
+            initial_state="RAM_APPLYING",
+            mutation_bounds=mutation_bounds,
+        )
+    except Exception as exc:
+        try:
+            latched = getattr(ctx.link, "persistence_unknown_latched", None)
+            if callable(latched) and latched():
+                ctx.evidence["configuration_state"] = "UNKNOWN"
+        except Exception:
+            ctx.evidence["configuration_state"] = "UNKNOWN"
+        raise PreflightError(
+            "P1 configuration journal preflight failed: %s" % exc) from None
+    if not isinstance(attempt_id, str) or not attempt_id:
+        try:
+            latch = getattr(ctx.link, "latch_persistence_unknown", None)
+            if callable(latch):
+                latch()
+        except Exception:
+            pass
+        ctx.evidence["configuration_state"] = "UNKNOWN"
+        raise PreflightError(
+            "P1 configuration journal returned no record capability")
+    ctx.config_attempt_id = attempt_id
+    ctx.evidence["configuration_transaction"] = {
+        "phase": "P1_CONFIG",
+        "record_id": attempt_id,
+        "state": "RAM_APPLYING",
+    }
+
+
 def _restore_snapshot(ctx: _Ctx):
-    """A4/E1: restore only what we actually wrote, in fixed order, from snapshot."""
-    restored, failed = [], []
+    """A4/E1: restore touched values and prove the full bounded config set."""
+    if ctx.config_restore_finalized:
+        evidence = ctx.evidence.get("configuration_restore", {})
+        return list(evidence.get("failures", ()))
+    ctx.config_restore_finalized = True
+    attempted, write_errors = [], []
     dirty = set(ctx.dirty)
+    targets = [cmd for cmd in P1_CONFIG_NAMES if cmd in ctx.snapshot]
+    rollback_transition_error = None
+    if ctx.config_attempt_id is not None:
+        try:
+            begin_rollback = getattr(
+                ctx.link, "begin_persistence_ram_rollback", None)
+            if not callable(begin_rollback):
+                raise RuntimeError(
+                    "configuration journal rollback transition unavailable")
+            begin_rollback(ctx.config_attempt_id)
+        except Exception as exc:
+            rollback_transition_error = "%s: %s" % (
+                type(exc).__name__, exc)
     for cmd in _RESTORE_ORDER:
-        if cmd not in dirty or cmd not in ctx.snapshot:
+        if (cmd not in P1_CONFIG_NAMES or cmd not in dirty
+                or cmd not in ctx.snapshot):
             continue
+        if rollback_transition_error is not None:
+            continue
+        attempted.append(cmd)
         try:
             _cmd(ctx, "%s=%s" % (cmd, _fmt(ctx.snapshot[cmd])), retries=1)
-            restored.append(cmd)
         except Exception as e:
-            failed.append("%s(%s)" % (cmd, e))
-    if failed:
-        ctx.warnings.append("복원 실패 %s — 전원 재투입 시 스냅숏(%s)으로 복원 필요"
-                            % (", ".join(failed), ctx.snapshot_path))
+            # A lost assignment reply is not itself proof of failure.  The
+            # independent query below adjudicates the actual RAM state.
+            write_errors.append("%s(%s)" % (cmd, e))
+
+    readback, read_errors, mismatches, restored = {}, [], [], []
+    if rollback_transition_error is not None:
+        read_errors.append(
+            "rollback transition failed: %s" % rollback_transition_error)
+    if (ctx.config_attempt_id is not None
+            and tuple(targets) != tuple(P1_CONFIG_NAMES)):
+        missing = [name for name in P1_CONFIG_NAMES if name not in targets]
+        read_errors.append("missing snapshot values: %s" % ", ".join(missing))
+    for cmd in targets:
+        try:
+            observed = _cmd(ctx, cmd, retries=1)
+            readback[cmd] = observed
+        except Exception as e:
+            read_errors.append("%s(%s)" % (cmd, e))
+            continue
+        expected = _to_num(ctx.snapshot[cmd])
+        if (isinstance(expected, (int, float))
+                and not isinstance(expected, bool)
+                and isinstance(observed, (int, float))
+                and not isinstance(observed, bool)):
+            matches = bool(
+                math.isfinite(float(expected))
+                and math.isfinite(float(observed))
+                and observed == expected)
+        else:
+            matches = observed == expected
+        if matches:
+            restored.append(cmd)
+        else:
+            mismatches.append("%s(expected=%r observed=%r)" % (
+                cmd, expected, observed))
+
+    failed = read_errors + mismatches
+    ram_passed = not failed and len(restored) == len(targets)
+    journal = {
+        "record_id": ctx.config_attempt_id,
+        "closeout": "NOT_REQUIRED",
+        "error": None,
+        "mark_unknown_error": None,
+        "verified_original_readback": None,
+    }
+    if ctx.config_attempt_id is not None:
+        attempt_id = ctx.config_attempt_id
+        if ram_passed:
+            try:
+                resolver = getattr(
+                    ctx.link, "resolve_persistence_ram_rollback", None)
+                if not callable(resolver):
+                    raise RuntimeError(
+                        "configuration journal rollback resolver unavailable")
+                verified_original = resolver(attempt_id)
+                if (not isinstance(verified_original, dict)
+                        or set(verified_original) != set(P1_CONFIG_NAMES)):
+                    raise RuntimeError(
+                        "configuration journal resolver returned incomplete "
+                        "original-profile evidence")
+                ctx.config_attempt_id = None
+                journal["closeout"] = "RAM_ROLLBACK_VERIFIED"
+                journal["verified_original_readback"] = dict(
+                    verified_original)
+            except Exception as exc:
+                journal["closeout"] = "UNKNOWN"
+                journal["error"] = "%s: %s" % (type(exc).__name__, exc)
+                failed.append("journal closeout failed: %s" % journal["error"])
+                journal["mark_unknown_error"] = _latch_p1_config_unknown(
+                    ctx, attempt_id, "CONFIGURATION_JOURNAL_CLOSEOUT_FAILED")
+        else:
+            journal["closeout"] = "UNKNOWN"
+            journal["mark_unknown_error"] = _latch_p1_config_unknown(
+                ctx, attempt_id, "CONFIGURATION_RESTORE_UNVERIFIED")
+    passed = not failed and ram_passed and journal["closeout"] != "UNKNOWN"
     ctx.evidence["restored"] = restored
+    ctx.evidence["configuration_restore"] = {
+        "attempted": attempted,
+        "write_errors": write_errors,
+        "readback": readback,
+        "read_errors": read_errors,
+        "mismatches": mismatches,
+        "ram_pass": ram_passed,
+        "journal": journal,
+        "failures": list(failed),
+        "pass": passed,
+    }
+    ctx.evidence["configuration_state"] = (
+        "RESTORED" if passed else "UNKNOWN")
+    if failed:
+        ctx.warnings.append(
+            "복원 되읽기 실패 %s — 설정 상태 UNKNOWN, 스냅숏(%s)으로 복구 필요"
+            % (", ".join(failed), ctx.snapshot_path))
     return failed
 
 
 def _do_abort(ctx: _Ctx, reason: str):
     if ctx.aborted:
-        return
+        return ctx.evidence.get("configuration_state") != "UNKNOWN"
     ctx.aborted = True
     steps = []
 
@@ -721,16 +989,16 @@ def _do_abort(ctx: _Ctx, reason: str):
         except Exception as e:
             ctx.warnings.append("abort %s 실패: %s" % (label, e))
 
-    _try("A1 MO=0", lambda: ctx.link.command("MO=0", timeout_ms=1000))
+    _try("A1 MO=0", lambda: _cmd(ctx, "MO=0", retries=0))
     a1_ok = "A1 MO=0" in steps
     ctx.motor_on = False
-    _try("A2 TW[80]=0", lambda: ctx.link.command("TW[80]=0", timeout_ms=1000))
+    _try("A2 TW[80]=0", lambda: _cmd(ctx, "TW[80]=0", retries=0))
     # A3 TC=0 — after a SUCCESSFUL A1 the drive is expected to answer
     # "Drive error 58: Servo must be on" (torque command void with the bridge
     # off).  That is harmless: log it as an expected step, NOT a warning.
     # Any other failure (or err58 while A1 itself failed) stays a warning.
     try:
-        ctx.link.command("TC=0", timeout_ms=1000, allow_motion=True)
+        _cmd(ctx, "TC=0", allow_motion=True, retries=0)
         steps.append("A3 TC=0")
     except Exception as e:
         msg = str(e)
@@ -739,9 +1007,15 @@ def _do_abort(ctx: _Ctx, reason: str):
             steps.append("A3 TC=0 (err58 예상 — MO=0 탈전 확정 상태, 무해)")
         else:
             ctx.warnings.append("abort A3 TC=0 실패: %s" % e)
-    _try("A4 restore", lambda: _restore_snapshot(ctx))
-    _try("A5 RR=0", lambda: ctx.link.command("RR=0", timeout_ms=1000))
+    restore_failed = _restore_snapshot(ctx)
+    if restore_failed:
+        ctx.warnings.append(
+            "abort A4 restore UNKNOWN: %s" % ", ".join(restore_failed))
+    else:
+        steps.append("A4 restore")
+    _try("A5 RR=0", lambda: _cmd(ctx, "RR=0", retries=0))
     ctx.evidence["abort"] = {"reason": reason, "steps_done": steps}
+    return not restore_failed
 
 
 def _red(ctx: _Ctx, reason: str) -> AutotuneResult:
@@ -776,17 +1050,33 @@ def run_current_autotune(link, params: Optional[AutotuneParams] = None) -> Autot
     try:
         return _pipeline(ctx)
     except PreflightError as e:
-        return _red(ctx, str(e))
+        reason = str(e)
+        if ctx.dirty or ctx.config_attempt_id is not None:
+            restored = _do_abort(
+                ctx, "late PreflightError after mutation: %s" % reason)
+            if not restored:
+                reason += "; configuration restore UNKNOWN"
+        elif ctx.evidence.get("configuration_state") == "UNKNOWN":
+            reason += "; configuration state UNKNOWN"
+        return _red(ctx, reason)
     except AbortError as e:
-        _do_abort(ctx, str(e))
-        return _red(ctx, str(e))
+        reason = str(e)
+        if not _do_abort(ctx, reason):
+            reason += "; configuration restore UNKNOWN"
+        return _red(ctx, reason)
     except Exception as e:                          # never die on an exception
-        _do_abort(ctx, "내부 예외: %r" % (e,))
-        return _red(ctx, "내부 예외: %r" % (e,))
+        reason = "내부 예외: %r" % (e,)
+        if not _do_abort(ctx, reason):
+            reason += "; configuration restore UNKNOWN"
+        return _red(ctx, reason)
 
 
 def _pipeline(ctx: _Ctx) -> AutotuneResult:
     p = ctx.params
+
+    # Honor a cancel already latched before issuing even the first read. The
+    # identical gate inside _write catches a cancel that arrives during P0-P4.
+    _check_cancel_before_mutation(ctx)
 
     # ---- P0: connection + MO gate (no auto-disable) ----------------------------------
     if not getattr(ctx.link, "is_connected", False):
@@ -811,6 +1101,12 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     if not isinstance(cl1, (int, float)) or cl1 <= 0:
         raise PreflightError("CL[1]=%r 비정상" % (cl1,))
     ctx.cl1 = float(cl1)
+    ca18 = ctx.readings.get("CA[18]")
+    if (not isinstance(ca18, (int, float)) or isinstance(ca18, bool)
+            or not math.isfinite(float(ca18)) or float(ca18) <= 0):
+        raise PreflightError(
+            "CA[18]=%r invalid; finite positive counts/rev is required "
+            "for every PX motion guard" % (ca18,))
     mf = ctx.readings["MF"]
     if not isinstance(mf, (int, float)) or mf != 0:
         raise PreflightError("모터 폴트 존재 MF=%r — 폴트 해소 후 재시도" % (mf,))
@@ -870,6 +1166,19 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     # ---- P4 (before any write): recorder signal resolution ----------------------------
     ctx.sig = _resolve_signals(ctx)
 
+    # ---- P4b (before any write): feedback-socket admission ---------------------------
+    # This is an admission decision, not a recoverable setup failure.  Resolve it
+    # before bootstrap gains, UM, or SC[8] can touch drive RAM.
+    used_sockets = {ctx.readings.get(k) for k in ("CA[45]", "CA[46]", "CA[47]")}
+    ctx.socket = None
+    for s in (4, 3, 2):
+        sid = ctx.readings.get("CA[4%d]" % s)
+        if s not in used_sockets and sid != 8:
+            ctx.socket = s
+            break
+    if ctx.socket is None:
+        raise PreflightError("SE용 빈 피드백 소켓 없음 (CA[42..44] 만석/ID8 선점)")
+
     # ---- P3: snapshot to disk (I1 invariant: BEFORE first drive write) ----------------
     ctx.snapshot = dict(ctx.readings)
     os.makedirs(p.snapshot_dir, exist_ok=True)
@@ -880,6 +1189,74 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
                   ensure_ascii=False, indent=1)
     ctx.evidence["snapshot_path"] = ctx.snapshot_path
     _emit(ctx, "SNAPSHOT", "드라이브 상태 스냅숏 저장: %s" % ctx.snapshot_path)
+
+    # Freeze and durably prepare the complete temporary configuration before
+    # the first assignment.  The later B3 fallback may choose bootstrap gains
+    # after this target was frozen; that intermediate state intentionally
+    # matches neither audit profile and therefore remains fail-closed.
+    kp0 = ctx.readings["KP[1]"]
+    planned_kp, planned_ki = kp0, ctx.readings["KI[1]"]
+    if not isinstance(kp0, (int, float)) or kp0 <= 0:
+        if not (l_np_ph and r_np_ph):
+            raise PreflightError(
+                "KP[1]<=0 and nameplate(명판) R/L are unavailable for "
+                "bootstrap(부트스트랩)")
+        planned_kp = (0.05 / ctx.ts_s) * p.nameplate_l_pp_h
+        planned_ki = r_np_ph / (2 * math.pi * l_np_ph)
+
+    original_config = {}
+    for name in P1_CONFIG_NAMES:
+        raw_value = ctx.raw_readings.get(name, ctx.snapshot.get(name))
+        try:
+            value = _exact_config_snapshot_number(raw_value, name)
+        except ValueError as exc:
+            raise PreflightError(
+                "P1 configuration snapshot is not exact: %s" % exc) from None
+        original_config[name] = value
+    applied_config = dict(original_config)
+    applied_config.update({
+        "KP[1]": float(_to_num(_fmt(planned_kp))),
+        "KI[1]": float(_to_num(_fmt(planned_ki))),
+        "UM": 3.0,
+        "SC[8]": 0.0,
+        "CA[4%d]" % ctx.socket: 8.0,
+        "CA[70]": float(ctx.socket),
+        "SE[1]": 1.0,
+        "SE[2]": 0.0,
+        "SE[3]": float(_to_num(_fmt(ctx.freqs[0]))),
+        "SE[4]": 0.0,
+        "SE[5]": 0.0,
+        "SE[6]": 0.0,
+        "SE[7]": 50.0,
+    })
+    kp_candidates = [
+        value for value in (
+            original_config["KP[1]"], applied_config["KP[1]"])
+        if value > 0.0]
+    ki_candidates = [
+        value for value in (
+            original_config["KI[1]"], applied_config["KI[1]"])
+        if value > 0.0]
+    if (isinstance(l_np_ph, (int, float)) and l_np_ph > 0.0
+            and isinstance(r_np_ph, (int, float)) and r_np_ph > 0.0):
+        kp_candidates.append(float(_to_num(_fmt(
+            (0.05 / ctx.ts_s) * p.nameplate_l_pp_h))))
+        ki_candidates.append(float(_to_num(_fmt(
+            r_np_ph / (2 * math.pi * l_np_ph)))))
+    if not kp_candidates or not ki_candidates:
+        raise PreflightError(
+            "P1 configuration mutation bounds require positive KP[1]/KI[1]")
+    se3_max = max(
+        (2.0 * f if 2.0 * f <= f_max else f) for f in ctx.freqs)
+    mutation_bounds = {
+        "KP[1]": (min(kp_candidates), max(kp_candidates)),
+        "KI[1]": (min(ki_candidates), max(ki_candidates)),
+        "SE[2]": (0.0, 0.8 * i1),
+        "SE[3]": (min(ctx.freqs), se3_max),
+        "TC": (0.0, max(i2, 0.10 * ctx.cl1)),
+    }
+    _prepare_p1_config_journal(
+        ctx, original_config, applied_config, mutation_bounds)
 
     # ---- P5: gain bootstrap if current loop is unconfigured ---------------------------
     kp0 = ctx.readings["KP[1]"]
@@ -902,16 +1279,7 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     if ctx.readings["SC[8]"] not in (0, None):
         _write(ctx, "SC[8]", 0)
 
-    # ---- A2: claim a free feedback socket for Virtual-2-Sine (ID 8) -------------------
-    used_sockets = {ctx.readings.get(k) for k in ("CA[45]", "CA[46]", "CA[47]")}
-    ctx.socket = None
-    for s in (4, 3, 2):
-        sid = ctx.readings.get("CA[4%d]" % s)
-        if s not in used_sockets and sid != 8:
-            ctx.socket = s
-            break
-    if ctx.socket is None:
-        raise PreflightError("SE용 빈 피드백 소켓 없음 (CA[42..44] 만석/ID8 선점)")
+    # ---- A2: claim the preflight-admitted socket for Virtual-2-Sine (ID 8) ------------
     _write(ctx, "CA[4%d]" % ctx.socket, 8)
     _write(ctx, "CA[70]", ctx.socket)
 
@@ -920,21 +1288,11 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
         _write(ctx, "SE[%d]" % idx, val)
 
     # ---- B1/B2: enable (operator gate is the CALLER's), wait servo-on -----------------
+    _check_cancel_before_mutation(ctx)
     _cmd(ctx, "MO=1", allow_motion=True)
     ctx.motor_on = True
     px0 = _cmd(ctx, "PX")
-    ca18_raw = ctx.readings.get("CA[18]")
-    ca18 = (float(ca18_raw)
-            if isinstance(ca18_raw, (int, float)) and ca18_raw > 0 else 0.0)
-    if not ca18:
-        # NO silent disable (fable-critic MEDIUM): with CA[18] unreadable every
-        # PX motion gate (align_tol / prealign_tol / theta_abort) degenerates
-        # to inf — the run proceeds WITHOUT motion verification and must say so
-        # loudly (YELLOW), symmetric with the CA[19] fallback warning below.
-        ctx.warnings.append(
-            "CA[18] 판독 불가/0(%r) — counts/rev 미상으로 PX 모션게이트(정렬허용·"
-            "사전정렬 완화·θ_abort) 전체 비활성: 무모션 검증 없이 진행(YELLOW)"
-            % (ca18_raw,))
+    ca18 = float(ctx.readings["CA[18]"])
     # motion thresholds are SENSOR- AND MOTOR-PARAMETERIZED: the old 11.25 deg
     # (=180/16 pole pairs) hardcoded THIS motor's pole count — a p=21 motor got
     # a wrong (too-wide) allowance.  half pole pitch [counts] = CA[18]/(2*p).
@@ -945,11 +1303,10 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
         pole_pairs = POLE_PAIRS_FALLBACK
         ctx.warnings.append("CA[19] 판독 불가(%r) — 극쌍 %d 가정으로 정렬허용치 산출"
                             % (ca19, int(POLE_PAIRS_FALLBACK)))
-    half_pitch = ca18 / (2.0 * pole_pairs) if ca18 else 0.0
-    align_tol = half_pitch * 1.2 if ca18 else float("inf")
-    prealign_tol = (2.0 * PREALIGN_PITCH_MULT * half_pitch) if ca18 \
-        else float("inf")                   # 1.5 pole pitch: legit align snap
-    theta_abort = max(4.0, ca18 * 2.0 / 360.0) if ca18 else float("inf")
+    half_pitch = ca18 / (2.0 * pole_pairs)
+    align_tol = half_pitch * 1.2
+    prealign_tol = 2.0 * PREALIGN_PITCH_MULT * half_pitch
+    theta_abort = max(4.0, ca18 * 2.0 / 360.0)
     if isinstance(px0, (int, float)):
         ctx.px_ref, ctx.px_tol = float(px0), align_tol
     waited = 0.0
@@ -1264,7 +1621,11 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     _ramp_tc(ctx, 0.0, T_RAMP_DOWN_S, 10)
     _cmd(ctx, "MO=0")
     ctx.motor_on = False
-    _restore_snapshot(ctx)
+    restore_failed = _restore_snapshot(ctx)
+    if restore_failed:
+        raise AbortError(
+            "E1 configuration restore UNKNOWN: %s" %
+            ", ".join(restore_failed))
     try:
         ctx.link.command("RR=0", timeout_ms=1000)   # leave recorder idle
     except Exception:
@@ -1390,7 +1751,7 @@ def _measure_sine(ctx: _Ctx, f_hz: float, a_cmd: float):
     _write(ctx, "SE[2]", a_cmd)
     if ctx.tc_now + a_cmd > 0.85 * ctx.cl1:         # I2 invariant (TC+SE)
         raise AbortError("전류지령 총합 %.1fA > 0.85*CL[1]" % (ctx.tc_now + a_cmd))
-    _write(ctx, "TW[80]", 1)
+    _write(ctx, "TW[80]", 1, allow_motion=True)
     try:
         waited = 0.0
         while _cmd(ctx, "WS[75]") != 2:
@@ -1402,7 +1763,7 @@ def _measure_sine(ctx: _Ctx, f_hz: float, a_cmd: float):
         rec = _record(ctx, T_SINE_RECORD_S)
     finally:
         try:
-            ctx.link.command("TW[80]=0", timeout_ms=1000)
+            _cmd(ctx, "TW[80]=0", retries=0)
         except Exception:
             pass
     dt = rec["dt"]
@@ -1430,6 +1791,651 @@ def _fmt_gain(v: float) -> str:
     return text if text and text != "-" else "0"
 
 
+P1_GAIN_NAMES = ("KP[1]", "KI[1]")
+P1_GAIN_TRIAL_SYNTHETIC_MODE = "SYNTHETIC_NO_HARDWARE"
+P1_TRIAL_PREPARING = "PREPARING"
+P1_TRIAL_RAM = "RAM_TRIAL"
+P1_TRIAL_RESTORING = "RESTORING"
+P1_TRIAL_RESTORED = "RESTORED"
+P1_TRIAL_RESTORE_FAILED = "RESTORE_FAILED"
+P1_TRIAL_PERSISTING = "PERSISTING"
+P1_TRIAL_PERSISTED = "PERSISTED"
+P1_TRIAL_UNKNOWN = "UNKNOWN"
+P1_TRIAL_AUTHORITY_INVALID = "AUTHORITY_INVALID"
+
+
+def _p1_gain_trial_is_explicit_synthetic(link) -> bool:
+    """Allow RAM-only trials solely for an explicit no-hardware contract."""
+    try:
+        mode = getattr(link, "p1_gain_trial_durability_mode", None)
+    except Exception:
+        return False
+    return (type(mode) is str
+            and mode == P1_GAIN_TRIAL_SYNTHETIC_MODE)
+
+
+@dataclass
+class GainTrialP1:
+    """One rollback-capable, unsaved current-loop gain trial.
+
+    ``original`` is the pre-write RAM snapshot. ``applied`` contains the exact
+    rounded values accepted by the drive. ``rollback_literals`` and
+    ``rollback_expected`` freeze the exact representable rollback transaction
+    before any trial write. Creating or restoring this object never sends
+    ``SV``; only :func:`commit_gain_trial_p1` may persist it.
+    """
+    original: dict
+    applied: dict
+    rollback_literals: dict = field(default_factory=dict)
+    rollback_expected: dict = field(default_factory=dict)
+    applied_fingerprint: tuple = field(init=False, repr=False)
+    persistence_state: str = field(
+        default=P1_TRIAL_PREPARING, init=False, compare=False)
+    owner_link: object = field(
+        default=None, init=False, repr=False, compare=False)
+    stable_identity: object = field(
+        default=None, init=False, repr=False, compare=False)
+    session_token: object = field(
+        default=None, init=False, repr=False, compare=False)
+    restore_only: bool = field(
+        default=False, init=False, repr=False, compare=False)
+
+    def __post_init__(self):
+        # A directly-constructed object is only PREPARING, never commit
+        # authority. begin_gain_trial_p1 promotes it to RAM_TRIAL only after
+        # every write/readback succeeds. Copy and validate every mutable input
+        # so a caller cannot smuggle NaN/Inf into the final SV comparison.
+        self.original = dict(self.original)
+        self.applied = dict(self.applied)
+        derived_literals, derived_expected = _p1_wire_values(self.original)
+        if not self.rollback_literals and not self.rollback_expected:
+            self.rollback_literals = derived_literals
+            self.rollback_expected = derived_expected
+        elif not self.rollback_literals or not self.rollback_expected:
+            raise ValueError("P1 rollback plan incomplete")
+        else:
+            supplied_literals = dict(self.rollback_literals)
+            supplied_expected = dict(self.rollback_expected)
+            for name in P1_GAIN_NAMES:
+                if supplied_literals.get(name) != derived_literals[name]:
+                    raise ValueError("%s rollback literal changed" % name)
+                expected = supplied_expected.get(name)
+                if not isinstance(expected, (int, float)) \
+                        or not math.isfinite(float(expected)) \
+                        or float(expected) != derived_expected[name]:
+                    raise ValueError("%s rollback expected value changed" % name)
+            self.rollback_literals = supplied_literals
+            self.rollback_expected = {
+                name: float(supplied_expected[name]) for name in P1_GAIN_NAMES
+            }
+        _, applied_expected = _p1_wire_values(self.applied)
+        self.applied = dict(applied_expected)
+        self.applied_fingerprint = tuple(
+            (name, float(applied_expected[name])) for name in P1_GAIN_NAMES)
+
+
+def _p1_wire_values(values: dict) -> tuple[dict, dict]:
+    """Validate the complete P1 set before the first drive write."""
+    literals, sent = {}, {}
+    for name in P1_GAIN_NAMES:
+        if name not in values:
+            raise ValueError("%s 값 누락" % name)
+        requested = float(values[name])
+        if not math.isfinite(requested) or requested <= 0.0:
+            raise ValueError("%s 값은 유한한 양수여야 함: %r" % (name, requested))
+        literal = _fmt_gain(requested)
+        rounded = float(literal)
+        if rounded <= 0.0:
+            raise ValueError("%s 전송값이 0으로 소멸: %s" % (name, literal))
+        error = abs(rounded / requested - 1.0)
+        if error > GAIN_ROUND_RTOL:
+            raise ValueError(
+                "%s 반올림 오차 %.3f%% > %.3f%% (요청 %.9g, 전송 %s)" %
+                (name, 100.0 * error, 100.0 * GAIN_ROUND_RTOL,
+                 requested, literal))
+        literals[name], sent[name] = literal, rounded
+    return literals, sent
+
+
+def _p1_rollback_plan(trial: GainTrialP1) -> tuple[dict, dict]:
+    """Return and integrity-check the frozen rollback wire transaction.
+
+    Older callers may still construct ``GainTrialP1(original, applied)``;
+    derive the plan for those objects before any restore write. New trials
+    always freeze both dictionaries in :func:`begin_gain_trial_p1`.
+    """
+    derived_literals, derived_expected = _p1_wire_values(trial.original)
+    if not trial.rollback_literals and not trial.rollback_expected:
+        return derived_literals, derived_expected
+    if not trial.rollback_literals or not trial.rollback_expected:
+        raise ValueError("P1 rollback plan incomplete")
+    for name in P1_GAIN_NAMES:
+        literal = trial.rollback_literals.get(name)
+        expected = trial.rollback_expected.get(name)
+        if literal != derived_literals[name]:
+            raise ValueError("%s rollback literal changed" % name)
+        if not isinstance(expected, (int, float)) \
+                or not math.isfinite(float(expected)) \
+                or float(expected) != derived_expected[name]:
+            raise ValueError("%s rollback expected value changed" % name)
+    return dict(trial.rollback_literals), {
+        name: float(trial.rollback_expected[name]) for name in P1_GAIN_NAMES
+    }
+
+
+def _p1_frozen_applied_plan(trial: GainTrialP1) -> dict:
+    """Rebuild and integrity-check the immutable applied recovery authority."""
+    fingerprint = trial.applied_fingerprint
+    if not isinstance(fingerprint, tuple) \
+            or len(fingerprint) != len(P1_GAIN_NAMES):
+        raise ValueError("P1 applied authority fingerprint malformed")
+    expected = {}
+    for index, name in enumerate(P1_GAIN_NAMES):
+        item = fingerprint[index]
+        if not isinstance(item, tuple) or len(item) != 2 or item[0] != name:
+            raise ValueError("P1 applied authority fingerprint malformed")
+        value = item[1]
+        if isinstance(value, bool) or not isinstance(value, (int, float)) \
+                or not math.isfinite(float(value)) or float(value) <= 0.0:
+            raise ValueError("%s frozen applied value invalid" % name)
+        expected[name] = float(value)
+    _, rounded = _p1_wire_values(expected)
+    rebuilt = tuple(
+        (name, float(rounded[name])) for name in P1_GAIN_NAMES)
+    if rebuilt != fingerprint:
+        raise ValueError("P1 applied authority fingerprint changed")
+    return rounded
+
+
+def _p1_applied_plan(trial: GainTrialP1) -> dict:
+    """Validate mutable presentation data against frozen save authority."""
+    frozen = _p1_frozen_applied_plan(trial)
+    _, expected = _p1_wire_values(trial.applied)
+    mutable_fingerprint = tuple(
+        (name, float(expected[name])) for name in P1_GAIN_NAMES)
+    if mutable_fingerprint != trial.applied_fingerprint:
+        raise ValueError("P1 applied authority fingerprint changed")
+    return frozen
+
+
+def p1_gain_trial_has_save_authority(trial: GainTrialP1) -> bool:
+    """Return False until real E4 can mint a sealed on-motor capability."""
+    # E4 is an honest RED stub.  This must remain a reviewed code boundary,
+    # never an environment/configuration bypass.
+    return False
+
+
+def _freeze_p1_transaction_identity(value):
+    """Canonicalize a JSON-like stable drive identity for exact comparison."""
+    if value is None or isinstance(value, (str, bytes, bool, int)):
+        return value
+    if isinstance(value, float):
+        if not math.isfinite(value):
+            raise ValueError("non-finite transaction identity component")
+        return value
+    if isinstance(value, dict):
+        items = [(_freeze_p1_transaction_identity(k),
+                  _freeze_p1_transaction_identity(v))
+                 for k, v in value.items()]
+        return ("mapping", tuple(sorted(items, key=repr)))
+    if isinstance(value, (tuple, list)):
+        return ("sequence", tuple(
+            _freeze_p1_transaction_identity(v) for v in value))
+    if isinstance(value, (set, frozenset)):
+        items = [_freeze_p1_transaction_identity(v) for v in value]
+        return ("set", tuple(sorted(items, key=repr)))
+    raise TypeError("unsupported transaction identity type %s" %
+                    type(value).__name__)
+
+
+def _p1_link_identity(link):
+    """Return a stable canonical identity, or None when unavailable."""
+    identity_fn = getattr(link, "transaction_identity", None)
+    if not callable(identity_fn):
+        return None
+    try:
+        identity = identity_fn()
+        if identity is None:
+            return None
+        return _freeze_p1_transaction_identity(identity)
+    except Exception:
+        return None
+
+
+def _p1_link_session_token(link):
+    """Return the connection-generation token, with exact-link fallback."""
+    missing = object()
+    try:
+        session_fn = getattr(link, "transaction_session_identity", missing)
+    except Exception:
+        return None
+    if session_fn is missing:
+        return ("link-object", id(link))
+    if not callable(session_fn):
+        return None
+    try:
+        # An exposed API returning None explicitly means that no live session
+        # authority exists. Only links without the API receive the fallback.
+        return session_fn()
+    except Exception:
+        return None
+
+
+def _p1_persistence_unknown_latched(link) -> bool:
+    """Read the optional link-wide UNKNOWN latch without drive I/O."""
+    try:
+        getter = getattr(link, "persistence_unknown_latched", None)
+    except Exception:
+        return True
+    if not callable(getter):
+        return False
+    try:
+        return bool(getter())
+    except Exception:
+        # Once a link exposes the safety API, inability to read it cannot grant
+        # fresh RAM-write authority.
+        return True
+
+
+def _p1_latch_persistence_unknown(link) -> None:
+    """Best-effort idempotent latch for transports/test doubles exposing it."""
+    try:
+        setter = getattr(link, "latch_persistence_unknown", None)
+    except Exception:
+        return
+    if not callable(setter):
+        return
+    try:
+        setter()
+    except Exception:
+        # The trial state still becomes UNKNOWN below; never replace the
+        # original SV transport exception with a helper failure.
+        pass
+
+
+def _capture_p1_session(link) -> tuple[object, object]:
+    """Capture identity between two reads of one exact session generation."""
+    token_before = _p1_link_session_token(link)
+    if token_before is None:
+        raise RuntimeError("P1 link session identity unavailable")
+    stable_identity = _p1_link_identity(link)
+    token_after = _p1_link_session_token(link)
+    if token_after is None or token_after != token_before:
+        raise RuntimeError("P1 link session changed during identity capture")
+    return stable_identity, token_before
+
+
+def _p1_session_matches(link, stable_identity, session_token) -> bool:
+    """Check token, optional stable identity, then token again."""
+    if session_token is None:
+        return False
+    token_before = _p1_link_session_token(link)
+    if token_before is None or token_before != session_token:
+        return False
+    if stable_identity is not None:
+        current_identity = _p1_link_identity(link)
+        if current_identity != stable_identity:
+            return False
+    token_after = _p1_link_session_token(link)
+    return token_after is not None and token_after == session_token
+
+
+def _bind_gain_trial_p1(link, trial: GainTrialP1, *, stable_identity,
+                        session_token) -> None:
+    """Bind a prepared trial to the exact live link/session before writes."""
+    trial.owner_link = link
+    trial.stable_identity = stable_identity
+    trial.session_token = session_token
+    trial.restore_only = False
+
+
+def _p1_same_session(link, trial: GainTrialP1) -> bool:
+    if trial.owner_link is not link:
+        return False
+    return _p1_session_matches(
+        link, trial.stable_identity, trial.session_token)
+
+
+def _read_p1_gain_values(link) -> dict:
+    values = {}
+    for name in P1_GAIN_NAMES:
+        value = _to_num(link.command(name))
+        if not isinstance(value, (int, float)) or not math.isfinite(float(value)):
+            raise RuntimeError("%s 되읽기 실패: %r" % (name, value))
+        value = float(value)
+        if value <= 0.0:
+            raise RuntimeError("%s 되읽기 값이 0/음수: %.9g" % (name, value))
+        values[name] = value
+    return values
+
+
+def _assert_p1_motor_off(link) -> None:
+    mo = _to_num(link.command("MO"))
+    if mo != 0:
+        raise RuntimeError("모터 OFF 필요(MO=%r)" % mo)
+
+
+def _p1_values_match(actual: dict, expected: dict) -> tuple[bool, str]:
+    for name in P1_GAIN_NAMES:
+        av, ev = float(actual[name]), float(expected[name])
+        if abs(av - ev) > APPLY_READBACK_RTOL * abs(ev):
+            return False, ("%s RAM 값 불일치: 기대 %.9g, 현재 %.9g (SV 금지)" %
+                           (name, ev, av))
+    return True, ""
+
+
+def _write_p1_gain_values(link, values: dict) -> tuple[dict, list]:
+    """Write and read back the complete P1 set; never send ``SV``."""
+    literals, sent = _p1_wire_values(values)
+    details = []
+    for name in P1_GAIN_NAMES:
+        link.command("%s=%s" % (name, literals[name]))
+        rb = _to_num(link.command(name))
+        if not isinstance(rb, (int, float)) or not math.isfinite(float(rb)):
+            raise RuntimeError("%s 되읽기 실패: %r" % (name, rb))
+        rb = float(rb)
+        expected = sent[name]
+        if rb <= 0.0 or abs(rb - expected) > APPLY_READBACK_RTOL * abs(expected):
+            raise RuntimeError(
+                "%s 쓰기 불일치: 전송 %s, 되읽기 %.9g (SV 금지)" %
+                (name, literals[name], rb))
+        details.append("%s=%s(되읽기 %.6g)" % (name, literals[name], rb))
+    return sent, details
+
+
+def restore_gain_trial_p1(link, trial: GainTrialP1):
+    """Restore and verify the pre-trial P1 RAM gains; never send ``SV``."""
+    if not isinstance(trial, GainTrialP1):
+        return False, "복원 불가: 유효한 P1 RAM 시험 스냅숏이 없음"
+    state = trial.persistence_state
+    allowed = (P1_TRIAL_PREPARING, P1_TRIAL_RAM,
+               P1_TRIAL_RESTORE_FAILED, P1_TRIAL_AUTHORITY_INVALID)
+    if state not in allowed:
+        return False, ("P1 restore blocked: trial state %s; no RAM write and "
+                       "no SV executed" % state)
+    if not _p1_same_session(link, trial):
+        return False, ("P1 restore blocked: different or unbound link session; "
+                       "use verified restore-only adoption after reconnect")
+    try:
+        _assert_p1_motor_off(link)
+        literals, expected = _p1_rollback_plan(trial)
+    except Exception as exc:
+        trial.persistence_state = P1_TRIAL_RESTORE_FAILED
+        return False, "P1 원래 게인 복원 사전검사 실패: %s (SV 미실행)" % exc
+
+    if not _p1_same_session(link, trial):
+        return False, ("P1 restore blocked: link session changed before "
+                       "rollback writes; no RAM write and no SV executed")
+
+    trial.persistence_state = P1_TRIAL_RESTORING
+    write_warnings = []
+    for name in P1_GAIN_NAMES:
+        try:
+            link.command("%s=%s" % (name, literals[name]))
+        except Exception as exc:
+            # A transport error on one register must not suppress the other
+            # rollback attempt. The final independent readback decides what
+            # is actually known about RAM.
+            write_warnings.append("%s write failed: %s" % (name, exc))
+
+    errors = []
+    actual = {}
+    for name in P1_GAIN_NAMES:
+        try:
+            raw = _to_num(link.command(name))
+            if not isinstance(raw, (int, float)) or not math.isfinite(float(raw)):
+                raise ValueError("invalid value %r" % (raw,))
+            actual[name] = float(raw)
+        except Exception as exc:
+            errors.append("%s full readback failed: %s" % (name, exc))
+
+    for name in P1_GAIN_NAMES:
+        if name not in actual:
+            continue
+        observed, target = actual[name], expected[name]
+        if observed <= 0.0 or abs(observed - target) > \
+                APPLY_READBACK_RTOL * abs(target):
+            errors.append("%s restore mismatch: expected %.9g, readback %.9g" %
+                          (name, target, observed))
+
+    readback = ", ".join(
+        "%s=%.9g" % (name, actual[name]) if name in actual
+        else "%s=UNKNOWN" % name
+        for name in P1_GAIN_NAMES)
+    if errors:
+        trial.persistence_state = P1_TRIAL_RESTORE_FAILED
+        all_errors = write_warnings + errors
+        return False, ("P1 원래 게인 복원 실패: %s; full readback: %s "
+                       "(SV 미실행)" % ("; ".join(all_errors), readback))
+    trial.persistence_state = P1_TRIAL_RESTORED
+    warning = ("; warning: " + "; ".join(write_warnings)
+               + "; exact full readback is authoritative") \
+        if write_warnings else ""
+    return True, ("P1 원래 게인 복원·되읽기 완료: " + ", ".join(
+        "%s=%.9g" % (name, expected[name]) for name in P1_GAIN_NAMES)
+        + "; full readback: " + readback + warning + " (SV 미실행)")
+
+
+def begin_gain_trial_p1(link, result: AutotuneResult):
+    """Apply P1 gains to RAM as a rollback-capable, unsaved trial."""
+    if result is None or result.status not in (GREEN, YELLOW):
+        return False, "P1 RAM 적용 불가: 결과 상태 %s" % (
+            result.status if result else None), None
+    if not _p1_gain_trial_is_explicit_synthetic(link):
+        return False, (
+            "P1 RAM gain trial locked: durable pre-assignment trial WAL is "
+            "not available for hardware-capable links; no drive command "
+            "executed"), None
+    if _p1_persistence_unknown_latched(link):
+        return False, ("P1 RAM trial blocked: link persistence state UNKNOWN; "
+                       "no drive command executed"), None
+    try:
+        requested = {"KP[1]": result.kp_v_per_a, "KI[1]": result.ki_hz}
+        _, applied = _p1_wire_values(requested)
+        stable_identity, session_token = _capture_p1_session(link)
+        _assert_p1_motor_off(link)
+        original = _read_p1_gain_values(link)
+        # A RAM trial is rollback-capable only if every original value has a
+        # safe, representable wire literal. Freeze that plan before the first
+        # trial write so restoration cannot discover a formatting problem late.
+        rollback_literals, rollback_expected = _p1_wire_values(original)
+        trial = GainTrialP1(
+            original=original,
+            applied=applied,
+            rollback_literals=rollback_literals,
+            rollback_expected=rollback_expected,
+        )
+        _bind_gain_trial_p1(
+            link, trial, stable_identity=stable_identity,
+            session_token=session_token)
+        if not _p1_same_session(link, trial):
+            raise RuntimeError(
+                "P1 link session changed before first RAM trial write")
+        if _p1_persistence_unknown_latched(link):
+            raise RuntimeError(
+                "link persistence state became UNKNOWN before first P1 "
+                "RAM trial write")
+        try:
+            _, details = _write_p1_gain_values(link, requested)
+        except Exception as exc:
+            restored, restore_msg = restore_gain_trial_p1(link, trial)
+            return False, ("P1 RAM 임시 적용 실패: %s; %s" %
+                           (exc, restore_msg)), (None if restored else trial)
+        trial.persistence_state = P1_TRIAL_RAM
+        return True, ("P1 RAM 임시 적용·되읽기 통과: %s (SV 미실행)" %
+                      ", ".join(details)), trial
+    except Exception as exc:
+        return False, "P1 RAM 임시 적용 불가: %s (SV 미실행)" % exc, None
+
+
+def commit_gain_trial_p1(link, trial: GainTrialP1):
+    """Persist an unchanged P1 trial after a final full-set readback."""
+    if not isinstance(trial, GainTrialP1):
+        return False, "P1 저장 불가: 유효한 RAM 시험 스냅숏이 없음"
+    if _p1_persistence_unknown_latched(link):
+        return False, ("P1 save blocked: link persistence state UNKNOWN; "
+                       "SV not executed")
+    if trial.restore_only:
+        return False, ("P1 save blocked: reconnect-adopted trial is "
+                       "restore-only; SV not executed")
+    if trial.persistence_state != P1_TRIAL_RAM:
+        return False, ("P1 save blocked: trial state %s; SV not executed" %
+                       trial.persistence_state)
+    if not _p1_same_session(link, trial):
+        return False, ("P1 save blocked: different or unbound link session; "
+                       "SV not executed")
+    try:
+        applied = _p1_applied_plan(trial)
+    except Exception as exc:
+        trial.persistence_state = P1_TRIAL_AUTHORITY_INVALID
+        return False, ("P1 applied authority invalid: %s; SV not executed" %
+                       exc)
+    if not p1_gain_trial_has_save_authority(trial):
+        return False, (
+            "P1 save blocked: session-bound on-motor verification capability "
+            "is unavailable while E4 remains RED; SV not executed")
+    try:
+        _assert_p1_motor_off(link)
+        actual = _read_p1_gain_values(link)
+        match, mismatch = _p1_values_match(actual, applied)
+        if not match:
+            return False, mismatch + "; SV not executed"
+    except Exception as exc:
+        return False, "P1 저장 사전검사 실패: %s; SV not executed" % exc
+    if not _p1_same_session(link, trial):
+        return False, ("P1 save blocked: link session changed during final "
+                       "readback; SV not executed")
+    if _p1_persistence_unknown_latched(link):
+        return False, ("P1 save blocked: link persistence state UNKNOWN "
+                       "after final readback; SV not executed")
+    # A real ElmoLink implements a write-ahead persistence journal.  Record
+    # the frozen transaction before SV so a process exit cannot erase the
+    # ambiguity.  Legacy test doubles without this optional API retain the
+    # existing in-memory-only behaviour.
+    prepare_attempt = getattr(link, "prepare_persistence_attempt", None)
+    complete_attempt = getattr(link, "complete_persistence_attempt", None)
+    mark_unknown = getattr(link, "mark_persistence_attempt_unknown", None)
+    attempt_id = None
+    if callable(prepare_attempt):
+        if not callable(complete_attempt) or not callable(mark_unknown):
+            return False, ("P1 persistence journal API incomplete; "
+                           "SV not executed")
+        try:
+            _rollback_literals, rollback_expected = _p1_rollback_plan(trial)
+            attempt_id = prepare_attempt(
+                phase="P1",
+                registers=P1_GAIN_NAMES,
+                original=rollback_expected,
+                applied=applied,
+            )
+        except Exception as exc:
+            return False, ("P1 persistence journal preflight failed: %s; "
+                           "SV not executed" % exc)
+    # Crossing this state transition consumes the one-shot save authority.
+    # No later return path may make the same trial eligible for another SV.
+    trial.persistence_state = P1_TRIAL_PERSISTING
+    try:
+        if attempt_id is not None:
+            link.command("SV", _persistence_attempt_id=attempt_id)
+        else:
+            # Legacy/offline test doubles without the persistence journal do
+            # not expose the private capability keyword.
+            link.command("SV")
+    except Exception as exc:
+        _p1_latch_persistence_unknown(link)
+        ledger_error = None
+        if attempt_id is not None:
+            try:
+                mark_unknown(attempt_id, type(exc).__name__)
+            except Exception as ledger_exc:
+                # The pre-SV PERSISTING record remains active and fail-closed.
+                ledger_error = ledger_exc
+        # Once SV was issued, a timeout cannot distinguish rejection from a
+        # completed save whose response was lost. Repeating SV is not safe.
+        trial.persistence_state = P1_TRIAL_UNKNOWN
+        return False, ("P1 response failed after SV command issuance: %s; "
+                       "persistence state UNKNOWN; do not repeat SV; verify "
+                       "after reset before relying on stored gains%s" %
+                       (exc, ("; ledger update failed: %s" % ledger_error)
+                        if ledger_error is not None else ""))
+    if attempt_id is not None:
+        try:
+            complete_attempt(attempt_id)
+        except Exception as exc:
+            # SV replied, but losing durable close-out would be fail-open after
+            # restart.  Keep the write-ahead record active and require audit.
+            _p1_latch_persistence_unknown(link)
+            trial.persistence_state = P1_TRIAL_UNKNOWN
+            return False, ("P1 SV replied, but persistence journal close-out "
+                           "failed: %s; persistence state UNKNOWN" % exc)
+    trial.persistence_state = P1_TRIAL_PERSISTED
+    return True, "P1 RAM 게인 최종 되읽기 일치 — SV 영구저장 완료"
+
+
+def adopt_gain_trial_p1_for_restore(link, trial: GainTrialP1):
+    """Adopt a reconnect-surviving trial for restoration only.
+
+    Adoption never grants commit authority. It requires a stable identity match,
+    MO=0, and a complete finite readback equal either to the frozen applied set
+    or the frozen rollback set. UNKNOWN/PERSISTED save states are terminal and
+    cannot be adopted without an external reset/persistence audit.
+    """
+    if not isinstance(trial, GainTrialP1):
+        return False, "P1 adoption rejected: invalid trial"
+    if trial.persistence_state not in (P1_TRIAL_RAM,
+                                        P1_TRIAL_RESTORE_FAILED,
+                                        P1_TRIAL_AUTHORITY_INVALID):
+        return False, ("P1 adoption rejected: trial state %s" %
+                       trial.persistence_state)
+    if trial.stable_identity is None:
+        return False, "P1 adoption rejected: original stable identity unavailable"
+    try:
+        candidate_identity, candidate_session_token = _capture_p1_session(link)
+    except Exception as exc:
+        return False, ("P1 adoption rejected: reconnect session unavailable: "
+                       "%s" % exc)
+    if candidate_identity is None:
+        return False, "P1 adoption rejected: reconnect stable identity unavailable"
+    if candidate_identity != trial.stable_identity:
+        return False, "P1 adoption rejected: stable identity mismatch"
+
+    try:
+        _assert_p1_motor_off(link)
+        actual = _read_p1_gain_values(link)
+        applied = _p1_frozen_applied_plan(trial)
+        _, rollback = _p1_rollback_plan(trial)
+    except Exception as exc:
+        return False, "P1 adoption readback/precheck failed: %s" % exc
+
+    rollback_match, _ = _p1_values_match(actual, rollback)
+    applied_match, _ = _p1_values_match(actual, applied)
+    if not rollback_match and not applied_match:
+        current = ", ".join(
+            "%s=%.9g" % (name, actual[name]) for name in P1_GAIN_NAMES)
+        return False, ("P1 adoption rejected: RAM drift from both applied and "
+                       "rollback sets (%s)" % current)
+
+    if not _p1_session_matches(
+            link, candidate_identity, candidate_session_token):
+        return False, ("P1 adoption rejected: reconnect session changed during "
+                       "full readback")
+
+    # Mutate ownership only after every identity and readback gate has passed.
+    trial.owner_link = link
+    trial.session_token = candidate_session_token
+    trial.restore_only = True
+    if rollback_match:
+        trial.persistence_state = P1_TRIAL_RESTORED
+        return True, ("P1 restore-only adoption complete: RAM already restored; "
+                      "no write and no SV executed")
+    if trial.persistence_state == P1_TRIAL_AUTHORITY_INVALID:
+        # Save authority stays permanently blocked. RESTORE_FAILED is the
+        # worker-visible recovery state that permits only verified rollback.
+        trial.persistence_state = P1_TRIAL_RESTORE_FAILED
+    return True, ("P1 restore-only adoption complete: applied RAM set verified; "
+                  "Restore P1 is allowed, SV is permanently blocked")
+
+
 def _apply_tail(applied, observed=None, unknown=None) -> str:
     parts = ["SV not executed",
              "verified prior RAM: %s" % (", ".join(applied) or "none")]
@@ -1444,11 +2450,23 @@ def _apply_tail(applied, observed=None, unknown=None) -> str:
 
 def apply_gains(link, result: AutotuneResult, persist: bool = False):
     """E3: write KP[1]/KI[1] from a GREEN/YELLOW result.  MO must be 0.
-    SV only on explicit persist=True and only after both write readbacks pass.
+    The compatibility API is RAM-only; persistent saves require GainTrialP1.
     Returns (ok, message).  Live behavior pending hardware verification."""
+    if persist:
+        return False, ("legacy persist=True blocked before RAM write; use "
+                       "begin_gain_trial_p1 then commit_gain_trial_p1; "
+                       "SV not executed")
+    if not _p1_gain_trial_is_explicit_synthetic(link):
+        return False, (
+            "P1 RAM gain apply locked: durable pre-assignment trial WAL is "
+            "not available for hardware-capable links; no drive command "
+            "executed")
     if result is None or result.status not in (GREEN, YELLOW) \
             or result.kp_v_per_a is None or result.ki_hz is None:
         return False, "적용 불가: 결과 상태 %s" % (result.status if result else None)
+    if _p1_persistence_unknown_latched(link):
+        return False, ("RAM apply blocked: link persistence state UNKNOWN; "
+                       "no drive command executed")
     applied = []
     try:
         if _to_num(link.command("MO")) == 1:
@@ -1477,6 +2495,11 @@ def apply_gains(link, result: AutotuneResult, persist: bool = False):
                                 100.0 * GAIN_ROUND_RTOL, requested, literal,
                                 _apply_tail(applied)))
             prepared.append((name, requested, literal, sent))
+
+        if _p1_persistence_unknown_latched(link):
+            return False, ("RAM apply blocked: link persistence state became "
+                           "UNKNOWN before first gain write; no gain write "
+                           "executed")
 
         for name, requested, literal, sent in prepared:
             try:
