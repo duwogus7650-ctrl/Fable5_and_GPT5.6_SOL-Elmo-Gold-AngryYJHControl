@@ -17,6 +17,7 @@ NUL
 .omc/state/autotune_vp_snapshot_*.json
 .omc/state/verify_vp_result_*.json
 .omc/state/verify_vp_snapshot_*.json
+.omc/state/autotune_snapshot_*.json
 .omc/state/jog_result_*.json
 
 # OMC/bkit per-session & tool runtime state (regenerated each session, not source)
