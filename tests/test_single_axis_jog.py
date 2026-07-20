@@ -5,10 +5,50 @@ signature interlock, command-freshness deadman, max-duration timebox, ramp-aware
 overspeed + absolute ceiling, current-vector cap, two-tier stop chain
 (operator = JV=0/BG decel, fault/runaway = immediate ST->MO=0), restore only when
 torque-disable is GREEN-verified, no-rotation honesty, and never sending SV.
+
+P2 CONTRACT CHANGE (fable-physics SPEC freeze 2026-07-21): the fixed
+motor-specific limits (3000 rpm ceiling / 5.0 A cap / 3.0 A default) were
+REPLACED by MotorProfile-derived values:
+    jog_ceiling_rpm  = 1.0  * effective_rated_rpm  (invalid profile -> 300)
+    cap ceiling      = 0.25 * CL[1]   (f_I_def; opt-in hard max 0.50 * CL[1])
+    default cap      = 0.15 * CL[1]   (f_I_run)
+    voltage warn     = 0.90 * rated   (N_WARN, confirm gate -- not a block)
+The mock registers therefore encode the REAL bench unit (failure-ledger
+2026-07-15 mock-vs-field discipline): CL[1]=21.2132 A (=15 Arms*sqrt2),
+PL[1]=70.7107 A, VH[2]=3,932,160 counts/s (=3600 rpm at CA[18]=65536), and the
+requests carry a matching MotorProfile.  Assertions were re-anchored to the
+derived expectations WITHOUT weakening: over-ceiling is still a pre-write
+reject, the cap is still enforced through PL[1]==CL[1]==cap.
 """
+import dataclasses
+
 import pytest
 
 import single_axis_motion as sam
+from motor_profile import MotorProfile
+
+# Real bench unit (실기 확정치): 3600 rpm rated, CL[1]=15 Arms*sqrt2.
+UNIT_DRIVE = {
+    "CA[18]": 65536.0, "TS": 100e-6,
+    "CL[1]": 21.2132, "PL[1]": 70.7107,
+    "CA[19]": 21.0, "CA[28]": 0.0,
+    "VH[2]": 3932160.0,
+}
+UNIT_PROFILE = MotorProfile.from_sources("unit21", UNIT_DRIVE)
+
+# Virtual 8-pole-pair motor: 3000 rpm rated, low-current (CL[1]=2.5 A).
+VIRT_DRIVE = {
+    "CA[18]": 4096.0, "TS": 50e-6,
+    "CL[1]": 2.5, "PL[1]": 7.07,
+    "CA[28]": 1.0,
+    "VH[2]": 204800.0,      # 204800*60/4096 = 3000 rpm exactly
+}
+VIRT_PROFILE = MotorProfile.from_sources("virt8", VIRT_DRIVE,
+                                         {"pole_pairs": 8})
+# Same drive readings but NO pole pairs from any source -> profile invalid.
+INVALID_PROFILE = MotorProfile.from_sources("virt8-nopp", VIRT_DRIVE)
+assert UNIT_PROFILE.is_valid and VIRT_PROFILE.is_valid
+assert not INVALID_PROFILE.is_valid
 
 
 class Clock:
@@ -64,7 +104,9 @@ def _base_reg():
         "XM[1]": -2_000_000, "XM[2]": 2_000_000,
         "SP": 100_000, "AC": 1_000_000, "DC": 1_000_000,
         "FS": 123, "SF[1]": 0, "SF[2]": 2, "SD": 1_000_000_000,
-        "PL[1]": 10.0, "CL[1]": 5.0,
+        # Real bench-unit current limits (mock-vs-field ledger discipline);
+        # they also feed the live-CL[1] leg of the P2 cap derivation.
+        "PL[1]": 70.7107, "CL[1]": 21.2132,
     }
     for index in range(1, 13):
         reg.setdefault("FC[%d]" % index, 1)
@@ -189,8 +231,11 @@ class JogSimLink:
 
 
 def _jr(**overrides):
+    # P2: requests carry the connected motor's profile (planning authority);
+    # the explicit 1.30 A cap sits inside the derived ceiling 0.25*21.2132.
     values = dict(max_speed_rpm=100.0, accel_rpm_s=30.0,
-                  current_cap_a=1.30, timebox_s=60.0)
+                  current_cap_a=1.30, timebox_s=60.0,
+                  profile=UNIT_PROFILE)
     values.update(overrides)
     return sam.JogRequest(**values)
 
@@ -236,32 +281,45 @@ def test_jog_preflight_rejects_unsafe_state_without_write(key, value, needle):
 
 
 def test_jog_speed_over_ceiling_is_rejected():
+    # P2 contract change: the ceiling is the profile rated speed (3600 rpm for
+    # this unit), not a fixed 3000; one rpm above it is still a pre-write REJECT
+    # (silent clamping of the request remains forbidden).
+    ceiling = sam.jog_rpm_ceiling(UNIT_PROFILE)
+    assert ceiling == pytest.approx(3600.0)
     drive = JogSimLink()
     result = _run(drive, JogCmd(Clock(), [(100.0, False)]),
-                  max_speed_rpm=sam.JOG_MAX_RPM_CEILING + 1.0)
+                  max_speed_rpm=ceiling + 1.0)
     assert result.status == sam.RED
     assert drive.writes == []
 
 
 def test_jog_current_cap_over_ceiling_is_rejected():
+    # P2 contract change: the cap ceiling derives as f_I_def*CL[1]
+    # (0.25*21.2132 = 5.3033 A) instead of the fixed 5.0 A; above it is still
+    # a reject before any write.
+    ceiling = sam.jog_current_cap_ceiling_a(UNIT_PROFILE)
+    assert ceiling == pytest.approx(0.25 * 21.2132)
     drive = JogSimLink()
     result = _run(drive, JogCmd(Clock(), [(50.0, False)]),
-                  current_cap_a=sam.MAX_CURRENT_CAP_A + 0.5)
+                  current_cap_a=ceiling + 0.5)
     assert result.status == sam.RED
     assert "current_cap" in result.reason.lower()
     assert drive.writes == []
 
 
 def test_jog_runs_at_raised_max_current_cap():
-    # The peak cap was raised 1.30 -> 3.50 A: 1.30 A sat inside the static-friction
-    # band so the closed-loop enable/hold transient current-limited the drive (SR
-    # bit 13) and the enable SR check aborted. The raised max must be accepted and
-    # drive a real jog.
-    assert sam.MAX_CURRENT_CAP_A >= 3.5
+    # The peak cap was raised 1.30 -> 3.50 A historically: 1.30 A sat inside the
+    # static-friction band so the closed-loop enable/hold transient current-limited
+    # the drive (SR bit 13) and the enable SR check aborted.  P2 contract change:
+    # the ceiling is now profile-derived (f_I_def*CL[1] = 5.3033 A for this unit,
+    # comfortably above that 3.5 A field need) and running AT the ceiling must
+    # still drive a real jog.
+    ceiling = sam.jog_current_cap_ceiling_a(UNIT_PROFILE)
+    assert ceiling >= 3.5
     drive = JogSimLink()
     clock = Clock()
     cmd = JogCmd(clock, [(50.0, False), (50.0, False), (0.0, True)])
-    result = _run(drive, cmd, clock=clock, current_cap_a=sam.MAX_CURRENT_CAP_A)
+    result = _run(drive, cmd, clock=clock, current_cap_a=ceiling)
     assert result.status == sam.GREEN, result.reason
     assert any(w.startswith("JV=") for w in drive.writes)
     assert int(drive.reg["MO"]) == 0 and "SV" not in drive.writes
@@ -443,7 +501,7 @@ def test_restore_failure_after_disable_reports_unknown_not_green():
     # Torque-off verifies GREEN, but the CL[1] restore write fails -> the session
     # settings are polluted; must be UNKNOWN (not a GREEN "restored"), never SV.
     drive = JogSimLink(
-        fail_write=lambda k, raw: k == "CL[1]" and float(raw) == 5.0)
+        fail_write=lambda k, raw: k == "CL[1]" and float(raw) == 21.2132)
     clock = Clock()
     result = _run(drive, JogCmd(clock, [(100.0, False), (0.0, True)]), clock=clock)
     assert result.status == sam.UNKNOWN
@@ -699,6 +757,209 @@ def test_jog_stuck_feedback_after_release_still_red_despite_slow_tick():
     assert int(drive.reg["MO"]) == 0
     # the frozen speed sat above the guard floor (the fault was catchable)
     assert abs(drive.vx_trace[-1][2]) > _WINDOW_LO
+
+
+# --- P2 profile-derived ceilings / caps / warning thresholds ---------------------
+#
+# Acceptance criterion 4 of the P2 segment contract: prove on TWO virtual
+# profiles (real unit 3600 rpm / virtual 8-pole-pair 3000 rpm) that the
+# ceilings, caps and warning thresholds come out exactly per the frozen SPEC
+# derivations, each cross-checked by literal arithmetic (two-path check).
+
+
+def test_p2_derivations_current_unit_3600():
+    # jog_ceiling_rpm = 1.0 * effective_rated_rpm (no fraction)
+    assert sam.jog_rpm_ceiling(UNIT_PROFILE) == pytest.approx(3600.0)
+    assert UNIT_PROFILE.effective_rated_rpm == pytest.approx(
+        3932160.0 * 60.0 / 65536.0)          # cross-path: VH[2]*60/CA[18]
+    # cap ceiling = f_I_def * CL[1]
+    assert sam.jog_current_cap_ceiling_a(UNIT_PROFILE) == pytest.approx(
+        0.25 * 21.2132)                       # = 5.3033 A
+    # default cap = f_I_run * CL[1] (rounded to drive-safe 4 decimals)
+    assert sam.jog_default_current_cap_a(UNIT_PROFILE) == pytest.approx(
+        round(0.15 * 21.2132, 4))             # = 3.182 A
+    # opt-in hard max = f_I_max * CL[1]
+    assert sam.jog_current_cap_ceiling_a(
+        UNIT_PROFILE, allow_high_current=True) == pytest.approx(0.5 * 21.2132)
+    # voltage warn threshold = N_WARN * rated
+    assert sam.jog_voltage_warn_rpm(UNIT_PROFILE) == pytest.approx(
+        0.90 * 3600.0)                        # = 3240 rpm
+
+
+def test_p2_derivations_virtual_8pp_3000():
+    assert sam.jog_rpm_ceiling(VIRT_PROFILE) == pytest.approx(3000.0)
+    assert VIRT_PROFILE.effective_rated_rpm == pytest.approx(
+        204800.0 * 60.0 / 4096.0)             # cross-path
+    assert sam.jog_current_cap_ceiling_a(VIRT_PROFILE) == pytest.approx(
+        0.25 * 2.5)                           # = 0.625 A
+    assert sam.jog_default_current_cap_a(VIRT_PROFILE) == pytest.approx(
+        round(0.15 * 2.5, 4))                 # = 0.375 A
+    assert sam.jog_voltage_warn_rpm(VIRT_PROFILE) == pytest.approx(2700.0)
+
+
+def test_p2_jog_at_full_rated_speed_is_accepted():
+    # 3600 rpm = the profile ceiling AND exactly the live VH[2]; the request is
+    # accepted (<= on both authorities) and the JV target equals VH[2].
+    drive = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(3600.0, False), (3600.0, False), (0.0, True)])
+    result = _run(drive, cmd, clock=clock, max_speed_rpm=3600.0,
+                  current_cap_a=3.0)
+    assert result.status == sam.GREEN, result.reason
+    jv = [int(w.split("=")[1]) for w in drive.writes if w.startswith("JV=")]
+    assert int(round(3600.0 * 65536 / 60.0)) in jv     # = 3,932,160 = VH[2]
+    assert int(drive.reg["MO"]) == 0
+
+
+def test_p2_virtual_profile_speed_bounds():
+    # 3000 rpm passes; 3001 rpm is rejected before any write.
+    d1 = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(3000.0, False), (0.0, True)])
+    r1 = _run(d1, cmd, clock=clock, profile=VIRT_PROFILE,
+              max_speed_rpm=3000.0, current_cap_a=0.5)
+    assert r1.status == sam.GREEN, r1.reason
+    d2 = JogSimLink()
+    r2 = _run(d2, JogCmd(Clock(), [(100.0, False)]), profile=VIRT_PROFILE,
+              max_speed_rpm=3001.0, current_cap_a=0.5)
+    assert r2.status == sam.RED
+    assert d2.writes == []
+
+
+def test_p2_virtual_profile_current_bounds_min_wins():
+    # Profile CL[1]=2.5 A although the live drive still reports 21.2132 A:
+    # min wins (fail-closed), so the ceiling is 0.625 A and 0.7 A is rejected.
+    d1 = JogSimLink()
+    r1 = _run(d1, JogCmd(Clock(), [(50.0, False)]), profile=VIRT_PROFILE,
+              current_cap_a=0.7)
+    assert r1.status == sam.RED
+    assert "ceiling" in r1.reason.lower()
+    assert d1.writes == []
+    # A None cap resolves to the f_I_run default 0.375 A and is applied as
+    # PL[1]==CL[1]==0.375 in the RAM profile.
+    d2 = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(50.0, False), (0.0, True)])
+    r2 = _run(d2, cmd, clock=clock, profile=VIRT_PROFILE, current_cap_a=None)
+    assert r2.status == sam.GREEN, r2.reason
+    assert r2.evidence["applied_settings"]["CL[1]"] == pytest.approx(0.375)
+    assert r2.evidence["cap_derivation"]["default_used"] is True
+    assert r2.evidence["cap_derivation"]["basis_a"] == pytest.approx(2.5)
+
+
+def test_p2_invalid_profile_falls_back_to_300_and_live_cl1():
+    # Invalid profile (no pole pairs): ceiling = JOG_MAX_RPM_DEFAULT = 300 rpm
+    # (never 3000/3600), current basis = live CL[1] alone.
+    d1 = JogSimLink()
+    r1 = _run(d1, JogCmd(Clock(), [(100.0, False)]), profile=INVALID_PROFILE,
+              max_speed_rpm=301.0)
+    assert r1.status == sam.RED
+    assert "300" in r1.reason
+    assert d1.writes == []
+    d2 = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(250.0, False), (0.0, True)])
+    r2 = _run(d2, cmd, clock=clock, profile=INVALID_PROFILE,
+              max_speed_rpm=250.0, current_cap_a=None)
+    assert r2.status == sam.GREEN, r2.reason
+    # default = f_I_run * live CL[1] = 0.15*21.2132 = 3.182 (4-decimal wire)
+    assert r2.evidence["applied_settings"]["CL[1]"] == pytest.approx(3.182)
+    assert r2.evidence["cap_derivation"]["profile_valid"] is False
+    assert r2.evidence["cap_derivation"]["basis_a"] == pytest.approx(21.2132)
+
+
+def test_p2_no_profile_behaves_like_invalid_profile():
+    drive = JogSimLink()
+    result = _run(drive, JogCmd(Clock(), [(100.0, False)]), profile=None,
+                  max_speed_rpm=301.0)
+    assert result.status == sam.RED
+    assert drive.writes == []
+    d2 = JogSimLink()
+    clock = Clock()
+    r2 = _run(d2, JogCmd(clock, [(100.0, False), (0.0, True)]), clock=clock,
+              profile=None, max_speed_rpm=100.0, current_cap_a=None)
+    assert r2.status == sam.GREEN, r2.reason
+    assert r2.evidence["applied_settings"]["CL[1]"] == pytest.approx(3.182)
+
+
+def test_p2_opt_in_high_current_ceiling():
+    # 8.0 A is above the default ceiling (5.3033 A) -> reject without the
+    # explicit opt-in; with allow_high_current it sits under f_I_max*CL[1]
+    # (10.6066 A) and runs.
+    d1 = JogSimLink()
+    r1 = _run(d1, JogCmd(Clock(), [(50.0, False)]), current_cap_a=8.0)
+    assert r1.status == sam.RED
+    assert d1.writes == []
+    d2 = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(50.0, False), (0.0, True)])
+    r2 = _run(d2, cmd, clock=clock, current_cap_a=8.0, allow_high_current=True)
+    assert r2.status == sam.GREEN, r2.reason
+    assert r2.evidence["applied_settings"]["CL[1]"] == pytest.approx(8.0)
+    assert r2.evidence["cap_derivation"]["fraction"] == pytest.approx(0.5)
+
+
+def test_p2_voltage_warn_evidence_flag():
+    # The kernel records (does not block on) the N_WARN band: 3300 rpm > 3240
+    # flags over_voltage_warn; 3200 rpm does not.
+    d1 = JogSimLink()
+    clock = Clock()
+    r1 = _run(d1, JogCmd(clock, [(3300.0, False), (0.0, True)]), clock=clock,
+              max_speed_rpm=3300.0, current_cap_a=3.0)
+    assert r1.status == sam.GREEN, r1.reason
+    sd = r1.evidence["speed_derivation"]
+    assert sd["over_voltage_warn"] is True
+    assert sd["voltage_warn_rpm"] == pytest.approx(3240.0)
+    assert sd["jog_ceiling_rpm"] == pytest.approx(3600.0)
+    d2 = JogSimLink()
+    clock2 = Clock()
+    r2 = _run(d2, JogCmd(clock2, [(3200.0, False), (0.0, True)]), clock=clock2,
+              max_speed_rpm=3200.0, current_cap_a=3.0)
+    assert r2.status == sam.GREEN, r2.reason
+    assert r2.evidence["speed_derivation"]["over_voltage_warn"] is False
+
+
+def test_p2_hold_current_advisory_from_i_ba_history():
+    # SPEC: the fixed "hold current ~3.25 A" comment is replaced by the
+    # profile's measured i_ba_history with the k_hold=1.5 margin (advisory,
+    # never a gate).
+    prof = dataclasses.replace(UNIT_PROFILE, i_ba_history=(3.0, 2.1))
+    d1 = JogSimLink()
+    clock = Clock()
+    r1 = _run(d1, JogCmd(clock, [(50.0, False), (0.0, True)]), clock=clock,
+              profile=prof, current_cap_a=4.0)
+    assert r1.status == sam.GREEN, r1.reason
+    adv = r1.evidence["hold_current_advisory"]
+    assert adv["required_cap_a"] == pytest.approx(1.5 * 3.0)
+    assert adv["cap_ok"] is False            # 4.0 < 4.5: advisory only
+    d2 = JogSimLink()
+    clock2 = Clock()
+    r2 = _run(d2, JogCmd(clock2, [(50.0, False), (0.0, True)]), clock=clock2,
+              profile=prof, current_cap_a=5.0)
+    assert r2.status == sam.GREEN, r2.reason
+    assert r2.evidence["hold_current_advisory"]["cap_ok"] is True
+
+
+def test_p2_px_overflow_projection_recorded_and_gate_fail_closed():
+    # Normal run records the projection numbers (comment constants moved to
+    # evidence per SPEC); a huge live PX with a fast/long session still
+    # rejects before any write.
+    d1 = JogSimLink()
+    clock = Clock()
+    r1 = _run(d1, JogCmd(clock, [(100.0, False), (0.0, True)]), clock=clock)
+    assert r1.status == sam.GREEN, r1.reason
+    proj = r1.evidence["px_overflow_projection"]
+    assert proj["gate_counts"] == pytest.approx(0.5 * 2 ** 31)
+    assert proj["v_cap_counts_per_s"] == pytest.approx(100.0 * 65536 / 60.0)
+    assert proj["projected_abs_counts"] < proj["gate_counts"]
+    d2 = JogSimLink(reg_overrides={"PX": 1_000_000_000})
+    r2 = _run(d2, JogCmd(Clock(), [(3600.0, False)]),
+              max_speed_rpm=3600.0, current_cap_a=3.0, timebox_s=120.0)
+    assert r2.status == sam.RED
+    assert "overflow" in r2.reason.lower()
+    assert d2.writes == []
+    assert (r2.evidence["px_overflow_projection"]["projected_abs_counts"]
+            >= r2.evidence["px_overflow_projection"]["gate_counts"])
 
 
 def test_jog_runaway_during_decel_still_red():

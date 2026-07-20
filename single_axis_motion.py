@@ -27,16 +27,33 @@ MAX_ACCEL_RPM_S = 600.0
 MAX_STOP_DECEL_RPM_S = 600.0
 MAX_TRAVEL_LIMIT_REV = 1.0
 MAX_STEP_REV = 0.25
-# Peak session cap (drive clamps PL[1]=CL[1] to this).  Sized for the 3000 rpm
-# supervised jog: fable-physics worst-case hold current is ~3.25 A, so 5.0 A
-# leaves ~1.7 A disturbance headroom.  5 A amplitude = 3.54 Arms = 33% of the
-# 15 Arms continuous rating; a sustained stall dissipates ~4.7 W in the phases
-# (thermally harmless over a supervised run).  NOTE: because PL[1]==CL[1] there
-# is NO peak-vs-continuous excess for the drive to integrate, so there is no
-# I2t trip backstop at this cap -- over-current protection is the current-vector
-# guard (sqrt(ID^2+IQ^2) > cap+margin) plus the operator DRIVE STOP, not I2t.
-MAX_CURRENT_CAP_A = 5.0
-MIN_CURRENT_CAP_A = 0.10
+# --- P2 profile-derived current caps (fable-physics SPEC freeze 2026-07-21) ------
+# The session peak cap (drive clamps PL[1]=CL[1] to it) is no longer a fixed
+# motor-specific constant (the old 5.0 A was sized for one bench motor).  It
+# derives from the connected motor's continuous current limit CL[1] (drive
+# AMPLITUDE ampere convention -- no sqrt2 conversion anywhere in this chain):
+#   jog cap ceiling  = JOG_CAP_F_I_DEF * CL[1]   (replaces the fixed 5.0 A cap)
+#   jog default cap  = JOG_CAP_F_I_RUN * CL[1]   (replaces the fixed 3.0 A default)
+#   opt-in hard max  = JOG_CAP_F_I_MAX * CL[1]   (never a default; explicit opt-in)
+# CL[1] basis = the MotorProfile (planning time), min-merged with the live drive
+# CL[1] at run time (conflict -> min wins, fail-closed downward).  An invalid
+# profile falls back to live CL[1] alone; no CL[1] source at all -> reject.
+# Hold-current sizing is no longer a hard-coded 3.25 A comment: when the profile
+# carries measured breakaway currents (i_ba_history) the kernel records a
+# JOG_HOLD_MARGIN_K advisory in evidence["hold_current_advisory"] instead.
+# NOTE: because PL[1]==CL[1]==cap there is NO peak-vs-continuous excess for the
+# drive to integrate, so there is no I2t trip backstop at this cap -- over-current
+# protection is the current-vector guard (sqrt(ID^2+IQ^2) > cap+margin) plus the
+# operator DRIVE STOP, not I2t.
+JOG_CAP_F_I_DEF = 0.25         # cap ceiling fraction of CL[1] (SPEC f_I_def)
+JOG_CAP_F_I_RUN = 0.15         # default request cap fraction  (SPEC f_I_run)
+JOG_CAP_F_I_MAX = 0.50         # hard opt-in-only fraction     (SPEC f_I_max)
+JOG_HOLD_MARGIN_K = 1.5        # advisory margin over max(i_ba_history) (SPEC k_hold)
+MIN_CURRENT_CAP_A = 0.10       # SPEC MIN
+# Wire discipline: derived caps that get WRITTEN (PL[1]/CL[1]) are rounded to
+# 4 decimals -- the drive firmware silently mis-stores long decimal strings
+# (failure ledger 2026-07-15, KP[2] silent-zero defect).
+_CAP_WIRE_DECIMALS = 4
 SMOOTHING_MS = 20
 
 # Active supervision uses a short per-command deadline and rejects a host-side
@@ -75,18 +92,30 @@ _RESTORE_ORDER = (
 # so the finite-move position-envelope guard gives ZERO protection here.  The
 # endless mode is bounded instead by: a command-freshness deadman, a mandatory
 # max-duration timebox, a ramp-aware overspeed guard with an absolute ceiling,
-# the reused current-vector cap, and a two-tier stop chain.  JOG_MAX defaults
-# conservative (rated 3600 rpm = the drive voltage-limit speed with zero torque
-# margin, so continuous jog stays well below it) and is always re-clamped to the
-# live VH[2] speed limit at runtime.
-JOG_MAX_RPM_DEFAULT = 300.0        # 8.3% of rated; runaway trips in 1-2 polls
-JOG_MAX_RPM_CEILING = 3000.0       # -17% of the 3600 rpm voltage limit
+# the reused current-vector cap, and a two-tier stop chain.
+#
+# P2 SPEC (fable-physics freeze 2026-07-21): the session speed ceiling is no
+# longer a fixed motor-specific 3000 rpm.  It derives from the connected motor:
+#   jog_ceiling_rpm = 1.0 * MotorProfile.effective_rated_rpm  (no fraction)
+# with the double-clamp chain: request validation against the profile ceiling
+# (over-ceiling = REJECT, never a silent clamp) -> UI voltage-margin confirm
+# gate -> preflight against the LIVE VH[2] (runtime final authority; conflict
+# -> min wins) -> per-tick command clamp -> ramp-aware overspeed guard.
+# An invalid/missing profile falls back to JOG_MAX_RPM_DEFAULT (300 rpm) --
+# NEVER to an arbitrary 3000/3600 constant.  Near-rated operation approaches
+# the voltage-limit speed (zero torque margin), so requests above
+# JOG_VOLTAGE_WARN_FRAC * rated require an explicit operator confirmation
+# (a warning gate, not a block); continuous operation is recommended at or
+# below JOG_CONTINUOUS_RECOMMEND_FRAC * rated.
+JOG_MAX_RPM_DEFAULT = 300.0        # fail-closed ceiling without a valid profile
+JOG_VOLTAGE_WARN_FRAC = 0.90       # SPEC N_WARN: confirm gate above this x rated
+JOG_CONTINUOUS_RECOMMEND_FRAC = 0.85   # recommended continuous-jog fraction
 JOG_MIN_RPM = 1.0
-JOG_ACCEL_RPM_S = 300.0            # start/stop ramp; ~10 s to 3000 rpm (accel current negligible)
+JOG_ACCEL_RPM_S = 300.0            # start/stop ramp (rpm/s); accel current negligible
 JOG_MAX_ACCEL_RPM_S = 600.0
 JOG_POLL_S = 0.03                  # 30 ms tick (>=1-2 poll runaway detection)
 JOG_DEADMAN_AGE_S = 0.25           # stale jog command -> demote to stop
-JOG_TIMEBOX_DEFAULT_S = 120.0      # 3000 rpm x 120 s = 393M cnt = 37% of the live-PX overflow gate; the gate (fail-closed, uses live PX) rejects the run if the projection would overflow, prompting Session Zero
+JOG_TIMEBOX_DEFAULT_S = 120.0      # default timebox; the PX int32 overflow gate (fail-closed, live PX) projects |PX| + v_cap*timebox per run with v_cap = the session speed cap in counts/s, rejects on overflow risk (prompting Session Zero), and records the numbers in evidence["px_overflow_projection"]
 JOG_TIMEBOX_HARD_S = 180.0
 JOG_OVERSPEED_FACTOR = 1.25
 JOG_OVERSPEED_FLOOR_RPM = 15.0     # low-speed false-positive floor
@@ -96,6 +125,124 @@ JOG_STOP_RPM = 1.0                 # |VX| below this (rpm) counts as stopped
 JOG_PROFILE_VELOCITY_MODE = 3      # OV[2] during a JV jog (CR :9450), not 1
 
 
+# --- P2 profile-derivation helpers (SPEC freeze 2026-07-21) ----------------------
+# These are the ONLY places jog/motion ceilings come from.  They read the P1
+# MotorProfile contract (motor_profile.py -- read-only; is_valid,
+# effective_rated_rpm [rpm], cont_current_a [A amplitude], i_ba_history [A])
+# via duck-typed attributes so offline probes can pass lightweight doubles.
+
+
+def _profile_is_valid(profile: Any) -> bool:
+    try:
+        return bool(profile is not None and getattr(profile, "is_valid"))
+    except Exception:
+        return False
+
+
+def _positive_finite(value: Any) -> Optional[float]:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    numeric = float(value)
+    if not math.isfinite(numeric) or numeric <= 0.0:
+        return None
+    return numeric
+
+
+def profile_rated_rpm(profile: Any = None) -> Optional[float]:
+    """effective_rated_rpm of a VALID profile, else None (no guessing)."""
+    if not _profile_is_valid(profile):
+        return None
+    return _positive_finite(getattr(profile, "effective_rated_rpm", None))
+
+
+def jog_rpm_ceiling(profile: Any = None) -> float:
+    """SPEC: jog_ceiling_rpm = 1.0 * effective_rated_rpm (no fraction).
+
+    Invalid/missing profile -> JOG_MAX_RPM_DEFAULT (300 rpm).  NEVER an
+    arbitrary 3000/3600 fallback.  The live VH[2] stays the runtime final
+    authority downstream (preflight reject + per-tick clamp), so a stale
+    profile can only ever be tightened by the drive, not loosened.
+    """
+    rated = profile_rated_rpm(profile)
+    return rated if rated is not None else JOG_MAX_RPM_DEFAULT
+
+
+def jog_voltage_warn_rpm(profile: Any = None) -> Optional[float]:
+    """N_WARN gate: requests above 0.90 * rated need operator confirmation.
+
+    None when no valid rated speed exists (the 300 rpm fail-closed ceiling is
+    then far below any voltage-limit region, so the gate cannot arm).
+    """
+    rated = profile_rated_rpm(profile)
+    return JOG_VOLTAGE_WARN_FRAC * rated if rated is not None else None
+
+
+def jog_current_cap_basis_a(profile: Any = None,
+                            live_cl1_a: Optional[float] = None,
+                            ) -> Optional[float]:
+    """CL[1] basis for cap derivation: min of available sources (fail-closed).
+
+    Valid profile -> its cont_current_a participates; live CL[1] participates
+    whenever supplied; conflict -> min wins (current only ever derates).  An
+    invalid profile contributes nothing (SPEC: invalid -> live CL[1] alone).
+    Returns None when no source exists -> callers must REJECT, not guess.
+    """
+    sources = []
+    if _profile_is_valid(profile):
+        cont = _positive_finite(getattr(profile, "cont_current_a", None))
+        if cont is not None:
+            sources.append(cont)
+    live = _positive_finite(live_cl1_a)
+    if live is not None:
+        sources.append(live)
+    return min(sources) if sources else None
+
+
+def jog_current_cap_ceiling_a(profile: Any = None,
+                              live_cl1_a: Optional[float] = None,
+                              *, allow_high_current: bool = False,
+                              ) -> Optional[float]:
+    """Jog cap ceiling = f_I_def * CL[1] (f_I_max * CL[1] on explicit opt-in)."""
+    basis = jog_current_cap_basis_a(profile, live_cl1_a)
+    if basis is None:
+        return None
+    fraction = JOG_CAP_F_I_MAX if allow_high_current else JOG_CAP_F_I_DEF
+    return fraction * basis
+
+
+def jog_default_current_cap_a(profile: Any = None,
+                              live_cl1_a: Optional[float] = None,
+                              ) -> Optional[float]:
+    """Default jog cap = f_I_run * CL[1], floored at MIN_CURRENT_CAP_A.
+
+    Rounded to the drive-safe wire precision because this value is written to
+    PL[1]/CL[1] (ledger 2026-07-15: long decimal strings mis-store silently).
+    """
+    basis = jog_current_cap_basis_a(profile, live_cl1_a)
+    if basis is None:
+        return None
+    return round(max(MIN_CURRENT_CAP_A, JOG_CAP_F_I_RUN * basis),
+                 _CAP_WIRE_DECIMALS)
+
+
+def motion_current_cap_ceiling_a(profile: Any = None,
+                                 live_cl1_a: Optional[float] = None,
+                                 ) -> Optional[float]:
+    """Finite-move (PTP) operator cap ceiling.
+
+    With a valid profile the P2 jog fraction applies unchanged
+    (f_I_def * min(profile CL[1], live CL[1])).  Without a profile the ceiling
+    is the LIVE continuous limit CL[1] itself: the finite move is additionally
+    bounded by the downward min-clamp to live PL[1]/CL[1], the 0.25 rev step
+    hard limit and the position envelope, and the GUI always supplies the
+    profile -- this fallback only serves headless probes.  No fixed ampere
+    constant remains on any path.
+    """
+    if _profile_is_valid(profile):
+        return jog_current_cap_ceiling_a(profile, live_cl1_a)
+    return _positive_finite(live_cl1_a)
+
+
 @dataclass(frozen=True)
 class JogRequest:
     """One endless JV jog session; the kernel always auto-disables on exit.
@@ -103,12 +250,20 @@ class JogRequest:
     ``max_speed_rpm`` is the per-session ceiling the operator may command in
     either direction; the live signed jog target is supplied per-tick by the
     command hook and clamped to +-this value (and to the live VH[2]).
+
+    P2 contract: ``profile`` is the connected motor's MotorProfile (planning
+    authority for the speed ceiling and current-cap derivation).
+    ``current_cap_a=None`` means "derive the default" (f_I_run * CL[1]).
+    ``allow_high_current`` opts in to the f_I_max ceiling; it is never a
+    default and the GUI does not set it.
     """
 
     max_speed_rpm: float = JOG_MAX_RPM_DEFAULT
     accel_rpm_s: float = JOG_ACCEL_RPM_S
-    current_cap_a: float = 3.0
+    current_cap_a: Optional[float] = None
     timebox_s: float = JOG_TIMEBOX_DEFAULT_S
+    profile: Optional[Any] = None
+    allow_high_current: bool = False
 
 
 @dataclass(frozen=True)
@@ -126,6 +281,9 @@ class PositionMoveRequest:
     accel_rpm_s: float = 30.0
     travel_limit_rev: float = 0.25
     current_cap_a: float = 1.30
+    # P2: connected-motor MotorProfile; the current-cap ceiling derives from it
+    # (see motion_current_cap_ceiling_a).  None -> live-CL[1] fallback ceiling.
+    profile: Optional[Any] = None
 
 
 @dataclass
@@ -306,10 +464,19 @@ def _validate_request(request: PositionMoveRequest) -> dict[str, float | str]:
     if abs(target_rev) > MAX_STEP_REV and request.mode == "relative":
         raise _MotionRejected(
             "relative step exceeds hard limit %.3f rev" % MAX_STEP_REV)
-    if not MIN_CURRENT_CAP_A <= current_cap_a <= MAX_CURRENT_CAP_A:
+    if not current_cap_a >= MIN_CURRENT_CAP_A:
         raise _MotionRejected(
-            "current_cap_a must be %.2f..%.2f A" %
-            (MIN_CURRENT_CAP_A, MAX_CURRENT_CAP_A))
+            "current_cap_a must be >= %.2f A" % MIN_CURRENT_CAP_A)
+    # P2: the upper bound is profile-derived, not a fixed constant.  With a
+    # valid profile it can be rejected here before any I/O; the live-CL[1]
+    # re-check (min-wins, fail-closed) happens after preflight in
+    # run_position_move.
+    pre_ceiling = motion_current_cap_ceiling_a(
+        getattr(request, "profile", None))
+    if pre_ceiling is not None and current_cap_a > pre_ceiling * (1 + 1e-9):
+        raise _MotionRejected(
+            "current_cap_a %.2f A exceeds the profile-derived ceiling %.2f A"
+            % (current_cap_a, pre_ceiling))
     return {
         "mode": request.mode,
         "target_rev": target_rev,
@@ -596,6 +763,30 @@ def run_position_move(
                             evidence=evidence)
 
     originals = {name: state[name] for name in TEMPORARY_SETTING_ORDER}
+    # P2 live re-check: the ceiling basis min-merges the profile with the live
+    # CL[1] (conflict -> min wins), so a drive that derated since the profile
+    # snapshot tightens the bound.  Over-ceiling = explicit reject, never a
+    # silent clamp upward; the min() below only ever clamps DOWN (fail-closed).
+    motion_ceiling = motion_current_cap_ceiling_a(
+        getattr(request, "profile", None), originals["CL[1]"])
+    evidence["cap_derivation"] = {
+        "profile_valid": _profile_is_valid(getattr(request, "profile", None)),
+        "profile_cont_current_a": getattr(
+            getattr(request, "profile", None), "cont_current_a", None),
+        "live_cl1_a": originals["CL[1]"],
+        "ceiling_a": motion_ceiling,
+        "requested_cap_a": values["current_cap_a"],
+    }
+    if motion_ceiling is None:
+        return MotionResult(
+            RED, "no CL[1] basis for the current-cap ceiling "
+            "(invalid profile and live CL[1] unavailable)",
+            target_counts=target_counts, evidence=evidence)
+    if values["current_cap_a"] > motion_ceiling * (1 + 1e-9):
+        return MotionResult(
+            RED, "current_cap_a %.2f A exceeds the derived ceiling %.2f A"
+            % (values["current_cap_a"], motion_ceiling),
+            target_counts=target_counts, evidence=evidence)
     cap = min(values["current_cap_a"], originals["PL[1]"], originals["CL[1]"])
     if cap < MIN_CURRENT_CAP_A:
         return MotionResult(
@@ -862,22 +1053,45 @@ def run_position_move(
     )
 
 
-def _validate_jog_request(request: JogRequest) -> dict[str, float]:
+def _validate_jog_request(request: JogRequest) -> dict[str, Any]:
+    """P2 request validation: profile-derived ceilings, over-limit = REJECT.
+
+    Silent clamping of an over-ceiling REQUEST is forbidden (the per-tick
+    clamp downstream only bounds the live streamed target within the already
+    validated session ceiling).  ``current_cap_a=None`` passes through and is
+    resolved to the f_I_run default after preflight, when the live CL[1] is
+    known (the ceiling re-check happens there too, min-wins fail-closed).
+    """
+    profile = getattr(request, "profile", None)
     max_speed = _finite(request.max_speed_rpm, "max_speed_rpm")
     accel = _finite(request.accel_rpm_s, "accel_rpm_s")
-    current_cap = _finite(request.current_cap_a, "current_cap_a")
     timebox = _finite(request.timebox_s, "timebox_s")
-    if not JOG_MIN_RPM <= max_speed <= JOG_MAX_RPM_CEILING:
+    rpm_ceiling = jog_rpm_ceiling(profile)
+    if not JOG_MIN_RPM <= max_speed <= rpm_ceiling:
         raise _MotionRejected(
-            "max_speed_rpm must be in [%.1f, %.1f]"
-            % (JOG_MIN_RPM, JOG_MAX_RPM_CEILING))
+            "max_speed_rpm must be in [%.1f, %.1f] "
+            "(ceiling = %s; over-ceiling requests are rejected, not clamped)"
+            % (JOG_MIN_RPM, rpm_ceiling,
+               "profile effective_rated_rpm" if _profile_is_valid(profile)
+               else "JOG_MAX_RPM_DEFAULT, no valid MotorProfile"))
     if not 0.0 < accel <= JOG_MAX_ACCEL_RPM_S:
         raise _MotionRejected(
             "accel_rpm_s must be >0 and <= %.1f" % JOG_MAX_ACCEL_RPM_S)
-    if not MIN_CURRENT_CAP_A <= current_cap <= MAX_CURRENT_CAP_A:
-        raise _MotionRejected(
-            "current_cap_a must be in [%.2f, %.2f]"
-            % (MIN_CURRENT_CAP_A, MAX_CURRENT_CAP_A))
+    current_cap: Optional[float] = None
+    if request.current_cap_a is not None:
+        current_cap = _finite(request.current_cap_a, "current_cap_a")
+        if not current_cap >= MIN_CURRENT_CAP_A:
+            raise _MotionRejected(
+                "current_cap_a must be >= %.2f A" % MIN_CURRENT_CAP_A)
+        # Early profile-based ceiling reject (no I/O yet); the live CL[1]
+        # min-merge re-check follows after preflight in run_jog.
+        pre_ceiling = jog_current_cap_ceiling_a(
+            profile, allow_high_current=bool(
+                getattr(request, "allow_high_current", False)))
+        if pre_ceiling is not None and current_cap > pre_ceiling * (1 + 1e-9):
+            raise _MotionRejected(
+                "current_cap_a %.2f A exceeds the profile-derived jog ceiling "
+                "%.2f A" % (current_cap, pre_ceiling))
     if not 0.0 < timebox <= JOG_TIMEBOX_HARD_S:
         raise _MotionRejected(
             "timebox_s must be >0 and <= %.1f" % JOG_TIMEBOX_HARD_S)
@@ -917,10 +1131,28 @@ def run_jog(
         "settings_restored": None,
         "current_convention": dict(CURRENT_CONVENTION),
     }
+    profile = getattr(request, "profile", None)
     try:
         if cancel_fn():
             raise _MotionRejected("STOP/cancel superseded jog before I/O")
         values = _validate_jog_request(request)
+        # P2 speed-derivation evidence: how the session ceiling was obtained
+        # and whether the request sits in the voltage-limit warning band
+        # (>N_WARN x rated => the GUI must have shown the confirm gate; this
+        # kernel records the fact but does not block on it).
+        warn_rpm = jog_voltage_warn_rpm(profile)
+        evidence["speed_derivation"] = {
+            "profile_valid": _profile_is_valid(profile),
+            "effective_rated_rpm": profile_rated_rpm(profile),
+            "jog_ceiling_rpm": jog_rpm_ceiling(profile),
+            "voltage_warn_rpm": warn_rpm,
+            "continuous_recommend_rpm": (
+                JOG_CONTINUOUS_RECOMMEND_FRAC * profile_rated_rpm(profile)
+                if profile_rated_rpm(profile) is not None else None),
+            "requested_max_rpm": values["speed_rpm"],
+            "over_voltage_warn": bool(
+                warn_rpm is not None and values["speed_rpm"] > warn_rpm),
+        }
         if not signature_green:
             raise _MotionRejected("session commutation signature is not GREEN")
         if _persistence_unknown(link):
@@ -938,19 +1170,79 @@ def run_jog(
     idle_speed = ca18 / 60.0
     max_counts_per_s = values["speed_rpm"] * ca18 / 60.0
     # PX must not risk signed-32-bit overflow across the whole timebox (jog is
-    # endless and does not stop at software limits).
+    # endless and does not stop at software limits).  v_cap here is the session
+    # speed cap in counts/s (jog ceiling derivation upstream bounds it); the
+    # projection numbers are recorded as evidence instead of a comment constant.
     projected = abs(state["PX"]) + max_counts_per_s * values["timebox_s"]
+    evidence["px_overflow_projection"] = {
+        "px_counts": state["PX"],
+        "v_cap_counts_per_s": max_counts_per_s,
+        "timebox_s": values["timebox_s"],
+        "projected_abs_counts": projected,
+        "gate_counts": 0.5 * (2 ** 31),
+    }
     if projected >= 0.5 * (2 ** 31):
         return MotionResult(
             RED, "jog max-speed x timebox risks PX int32 overflow; reduce "
             "speed/timebox or Set Session Zero first", evidence=evidence)
 
     originals = {name: state[name] for name in TEMPORARY_SETTING_ORDER}
-    cap = min(values["current_cap_a"], originals["PL[1]"], originals["CL[1]"])
+    # P2 current-cap resolution against the LIVE CL[1] (min-wins with the
+    # profile, fail-closed downward).  A None request cap resolves to the
+    # f_I_run default; an over-ceiling cap is REJECTED, never silently clamped.
+    allow_high = bool(getattr(request, "allow_high_current", False))
+    cap_ceiling = jog_current_cap_ceiling_a(
+        profile, originals["CL[1]"], allow_high_current=allow_high)
+    requested_cap = values["current_cap_a"]
+    default_used = requested_cap is None
+    if default_used:
+        requested_cap = jog_default_current_cap_a(profile, originals["CL[1]"])
+    evidence["cap_derivation"] = {
+        "profile_valid": _profile_is_valid(profile),
+        "profile_cont_current_a": getattr(profile, "cont_current_a", None),
+        "live_cl1_a": originals["CL[1]"],
+        "basis_a": jog_current_cap_basis_a(profile, originals["CL[1]"]),
+        "fraction": JOG_CAP_F_I_MAX if allow_high else JOG_CAP_F_I_DEF,
+        "allow_high_current": allow_high,
+        "ceiling_a": cap_ceiling,
+        "default_used": default_used,
+        "requested_cap_a": requested_cap,
+    }
+    if cap_ceiling is None or requested_cap is None:
+        return MotionResult(
+            RED, "no CL[1] basis for the jog current cap "
+            "(invalid profile and live CL[1] unavailable)", evidence=evidence)
+    if requested_cap > cap_ceiling * (1 + 1e-9):
+        return MotionResult(
+            RED, "current_cap_a %.2f A exceeds the derived jog ceiling %.2f A"
+            % (requested_cap, cap_ceiling), evidence=evidence)
+    if requested_cap < MIN_CURRENT_CAP_A:
+        return MotionResult(
+            RED, "current_cap_a must be >= %.2f A" % MIN_CURRENT_CAP_A,
+            evidence=evidence)
+    values["current_cap_a"] = requested_cap
+    cap = min(requested_cap, originals["PL[1]"], originals["CL[1]"])
     if cap < MIN_CURRENT_CAP_A:
         return MotionResult(
             RED, "existing PL[1]/CL[1] is below the supported current floor",
             evidence=evidence)
+    # Hold-current advisory (SPEC k_hold): the fixed "worst-case hold current
+    # ~3.25 A" comment is replaced by the profile's measured i_ba_history.
+    try:
+        history = tuple(getattr(profile, "i_ba_history", ()) or ())
+    except Exception:
+        history = ()
+    i_ba_values = [v for v in (
+        _positive_finite(item) for item in history) if v is not None]
+    if i_ba_values:
+        i_ba_max = max(i_ba_values)
+        evidence["hold_current_advisory"] = {
+            "i_ba_max_a": i_ba_max,
+            "k_hold": JOG_HOLD_MARGIN_K,
+            "required_cap_a": JOG_HOLD_MARGIN_K * i_ba_max,
+            "cap_a": cap,
+            "cap_ok": bool(cap >= JOG_HOLD_MARGIN_K * i_ba_max),
+        }
     speed_counts = max(1, int(round(max_counts_per_s)))
     accel_counts = max(10, int(round(values["accel_rpm_s"] * ca18 / 60.0)))
     stop_decel_counts = max(100, int(round(

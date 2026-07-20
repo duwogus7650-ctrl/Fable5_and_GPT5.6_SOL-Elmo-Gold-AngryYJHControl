@@ -50,6 +50,7 @@ import expert_summary_transaction_evidence
 import expert_page_status
 import expert_user_units
 import single_axis_motion
+import motor_profile
 import single_axis_status
 import single_axis_enable_contract
 import single_axis_authority_evidence
@@ -4308,10 +4309,15 @@ class MainWindow(QtWidgets.QMainWindow):
         self.spn_motion_envelope.setRange(0.01, single_axis_motion.MAX_TRAVEL_LIMIT_REV)
         self.spn_motion_envelope.setDecimals(3); self.spn_motion_envelope.setValue(0.25)
         self.spn_motion_current = QtWidgets.QDoubleSpinBox()
+        # P2: the current-cap ceiling is profile-derived at connect time
+        # (_apply_profile_motion_limits).  Offline there is no CL[1] basis, so
+        # the spinbox stays fail-closed at the minimum instead of exposing a
+        # motor-specific constant.
         self.spn_motion_current.setRange(
             single_axis_motion.MIN_CURRENT_CAP_A,
-            single_axis_motion.MAX_CURRENT_CAP_A)
-        self.spn_motion_current.setDecimals(2); self.spn_motion_current.setValue(1.30)
+            single_axis_motion.MIN_CURRENT_CAP_A)
+        self.spn_motion_current.setDecimals(2)
+        self.spn_motion_current.setValue(single_axis_motion.MIN_CURRENT_CAP_A)
         fields = (
             ("Target [rev]", self.spn_motion_target),
             ("Speed cap [rpm]", self.spn_motion_speed),
@@ -4351,17 +4357,25 @@ class MainWindow(QtWidgets.QMainWindow):
         jform = QtWidgets.QGridLayout()
         jform.setHorizontalSpacing(10); jform.setVerticalSpacing(6)
         self.spn_jog_speed = QtWidgets.QDoubleSpinBox()
+        # P2: the jog speed ceiling derives from the connected MotorProfile at
+        # connect time (1.0 x effective_rated_rpm; requests above 0.90 x rated
+        # additionally require the voltage-margin confirm dialog).  Without a
+        # profile the ceiling is the fail-closed JOG_MAX_RPM_DEFAULT, never a
+        # motor-specific 3000/3600 constant.
         self.spn_jog_speed.setRange(single_axis_motion.JOG_MIN_RPM,
-                                    single_axis_motion.JOG_MAX_RPM_CEILING)
+                                    single_axis_motion.jog_rpm_ceiling(None))
         self.spn_jog_speed.setDecimals(0); self.spn_jog_speed.setSingleStep(10.0)
         self.spn_jog_speed.setValue(single_axis_motion.JOG_MAX_RPM_DEFAULT)
         self.spn_jog_speed.setToolTip(
             "Signed jog speed streamed while a direction button is held/latched; "
             "clamped to this value and to the live VH[2].")
         self.spn_jog_current = QtWidgets.QDoubleSpinBox()
+        # P2: cap ceiling/default derive from CL[1] at connect
+        # (f_I_def / f_I_run x CL[1]); offline stays fail-closed at the minimum.
         self.spn_jog_current.setRange(single_axis_motion.MIN_CURRENT_CAP_A,
-                                      single_axis_motion.MAX_CURRENT_CAP_A)
-        self.spn_jog_current.setDecimals(2); self.spn_jog_current.setValue(3.0)
+                                      single_axis_motion.MIN_CURRENT_CAP_A)
+        self.spn_jog_current.setDecimals(2)
+        self.spn_jog_current.setValue(single_axis_motion.MIN_CURRENT_CAP_A)
         jform.addWidget(QtWidgets.QLabel("Jog speed [rpm]"), 0, 0)
         jform.addWidget(self.spn_jog_speed, 0, 1)
         jform.addWidget(QtWidgets.QLabel("Temporary current cap [A peak]"), 1, 0)
@@ -5990,6 +6004,7 @@ class MainWindow(QtWidgets.QMainWindow):
             accel_rpm_s=float(self.spn_motion_accel.value()),
             travel_limit_rev=float(self.spn_motion_envelope.value()),
             current_cap_a=float(self.spn_motion_current.value()),
+            profile=getattr(self, "_motor_profile", None),
         )
         preview = (
             "Mode: %s\nTarget: %.4f rev\nSpeed cap: %.1f rpm\n"
@@ -6026,9 +6041,37 @@ class MainWindow(QtWidgets.QMainWindow):
         rpm = float(direction) * float(self.spn_jog_speed.value())
         self._jog_active_rpm = rpm
         if not self._jog_active:
+            prof = getattr(self, "_motor_profile", None)
+            speed = float(self.spn_jog_speed.value())
+            # P2 voltage-margin confirm gate (warning, NOT a block): requests
+            # above N_WARN x rated approach the voltage-limit speed where the
+            # torque margin collapses to zero.  Operator approval proceeds.
+            warn_rpm = single_axis_motion.jog_voltage_warn_rpm(prof)
+            if warn_rpm is not None and speed > warn_rpm:
+                rated = single_axis_motion.profile_rated_rpm(prof)
+                answer = QtWidgets.QMessageBox.warning(
+                    self, "전압한계 접근 확인",
+                    "요청 조그 속도 %.0f rpm이 정격 %.0f rpm의 %.0f%% "
+                    "(%.0f rpm)를 초과합니다.\n"
+                    "전압한계 속도에 접근하면 토크 여유가 0에 수렴합니다 — "
+                    "외란 시 실속·추종오차 정지 위험.\n"
+                    "상시 운전 권장은 정격의 %.0f%% (%.0f rpm) 이하입니다.\n\n"
+                    "계속 진행하시겠습니까?"
+                    % (speed, rated,
+                       100.0 * single_axis_motion.JOG_VOLTAGE_WARN_FRAC,
+                       warn_rpm,
+                       100.0 * single_axis_motion.JOG_CONTINUOUS_RECOMMEND_FRAC,
+                       single_axis_motion.JOG_CONTINUOUS_RECOMMEND_FRAC * rated),
+                    QtWidgets.QMessageBox.StandardButton.Yes |
+                    QtWidgets.QMessageBox.StandardButton.No,
+                    QtWidgets.QMessageBox.StandardButton.No)
+                if answer != QtWidgets.QMessageBox.StandardButton.Yes:
+                    self._jog_active_rpm = 0.0
+                    return
             request = single_axis_motion.JogRequest(
-                max_speed_rpm=float(self.spn_jog_speed.value()),
-                current_cap_a=float(self.spn_jog_current.value()))
+                max_speed_rpm=speed,
+                current_cap_a=float(self.spn_jog_current.value()),
+                profile=prof)
             self._jog_active = True
             self.worker.run_jog(request)
             self._jog_timer.start()
@@ -13031,6 +13074,75 @@ class MainWindow(QtWidgets.QMainWindow):
         f["poles"].setText(self._fmt(mp.get("poles")))
         for k in ("R", "L", "Ke"):
             f[k].setText("— (Current ID가 산출)")
+        # P2: the connect-time Motor Settings read is the profile source.
+        # The MotorProfile (P1 contract, read-only) then drives the jog/motion
+        # spinbox ceilings and the voltage-margin warning threshold.
+        try:
+            ident = (getattr(self, "_connected_identity", None)
+                     or {}).get("drive_identity")
+            name = str(ident) if ident else "connected-motor"
+            self._motor_profile = motor_profile.MotorProfile.from_sources(
+                name,
+                drive_readings={
+                    "VH[2]": mp.get("vh"), "CA[18]": mp.get("ca18"),
+                    "CA[19]": mp.get("poles"), "CA[28]": mp.get("mtype"),
+                    "CL[1]": mp.get("cl_amp"), "PL[1]": mp.get("pl_amp"),
+                })
+        except Exception:
+            self._motor_profile = None   # fail-closed: ceilings fall back
+        self._apply_profile_motion_limits()
+
+    def _apply_profile_motion_limits(self):
+        """P2: derive the jog/motion spinbox ceilings from the MotorProfile.
+
+        Fail-closed: without a valid profile the jog speed ceiling stays at
+        JOG_MAX_RPM_DEFAULT and the current-cap spinboxes stay locked at the
+        minimum (no CL[1] basis -> no cap authority).  The kernel re-validates
+        every request against the profile AND the live drive limits, so these
+        ranges are an operator convenience, not the safety boundary.
+        """
+        sam = single_axis_motion
+        prof = getattr(self, "_motor_profile", None)
+        if not hasattr(self, "spn_jog_speed"):
+            return
+
+        def _floor_to(value, decimals):
+            # Spinbox maxima are FLOORED to the widget precision: rounding up
+            # would let the operator select a value the kernel must reject.
+            scale = 10.0 ** decimals
+            return math.floor(float(value) * scale) / scale
+
+        ceiling_rpm = _floor_to(sam.jog_rpm_ceiling(prof),
+                                self.spn_jog_speed.decimals())
+        self.spn_jog_speed.setMaximum(ceiling_rpm)
+        rated = sam.profile_rated_rpm(prof)
+        warn = sam.jog_voltage_warn_rpm(prof)
+        if rated is not None and warn is not None:
+            self.spn_jog_speed.setToolTip(
+                "Signed jog speed streamed while a direction button is "
+                "held/latched; clamped to this value and to the live VH[2].\n"
+                "정격 %.0f rpm (프로필 파생) · %.0f rpm 초과 요청은 전압한계 "
+                "확인 다이얼로그 · 상시운전 권장 ≤ %.0f rpm."
+                % (rated, warn, sam.JOG_CONTINUOUS_RECOMMEND_FRAC * rated))
+        cap_ceiling = sam.jog_current_cap_ceiling_a(prof)
+        default_cap = sam.jog_default_current_cap_a(prof)
+        if cap_ceiling is not None:
+            self.spn_jog_current.setMaximum(
+                _floor_to(cap_ceiling, self.spn_jog_current.decimals()))
+            if default_cap is not None and not getattr(
+                    self, "_jog_active", False):
+                self.spn_jog_current.setValue(default_cap)
+        else:
+            self.spn_jog_current.setMaximum(sam.MIN_CURRENT_CAP_A)
+        motion_ceiling = sam.motion_current_cap_ceiling_a(prof)
+        if motion_ceiling is not None:
+            motion_max = _floor_to(
+                motion_ceiling, self.spn_motion_current.decimals())
+            self.spn_motion_current.setMaximum(motion_max)
+            if self.spn_motion_current.value() <= sam.MIN_CURRENT_CAP_A:
+                self.spn_motion_current.setValue(min(1.30, motion_max))
+        else:
+            self.spn_motion_current.setMaximum(sam.MIN_CURRENT_CAP_A)
 
     def _on_feedback(self, fb):
         source = self.sender()
