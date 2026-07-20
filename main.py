@@ -6059,9 +6059,31 @@ class MainWindow(QtWidgets.QMainWindow):
         self._jog_active = False
         self._jog_timer.stop()
         self._jog_active_rpm = 0.0
+        self._dump_jog_result(result)
         self._flash("Jog %s · %s" % (getattr(result, "status", "?"),
                                      getattr(result, "reason", "")))
         self._update_motion_controls()
+
+    def _dump_jog_result(self, res):
+        """Persist the full jog MotionResult to .omc/state so the enable-transient
+        current trace (evidence['enable_samples']) can be read off disk. This is the
+        H1 (commutation-delta, |I|~=cap while VX~=0) vs H2 (electrical, |I|<<cap)
+        discriminator for the field jog investigation."""
+        try:
+            import json as _json, dataclasses as _dc, time as _time
+            d = os.path.join(".omc", "state")
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(d, "jog_result_%d.json" % int(_time.time() * 1000))
+            payload = _dc.asdict(res) if _dc.is_dataclass(res) else {
+                "status": getattr(res, "status", None),
+                "reason": getattr(res, "reason", None),
+                "evidence": getattr(res, "evidence", None),
+            }
+            with open(path, "w", encoding="utf-8") as fh:
+                _json.dump(payload, fh, ensure_ascii=False, indent=1, default=str)
+            return path
+        except Exception:
+            return None
 
     def _on_jog_sample(self, sample):
         # During a jog the worker owns the link, so this is the live telemetry.

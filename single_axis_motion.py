@@ -89,14 +89,6 @@ JOG_OVERSPEED_FACTOR = 1.25
 JOG_OVERSPEED_FLOOR_RPM = 15.0     # low-speed false-positive floor
 JOG_STOP_SETTLE_TIMEOUT_S = 2.0    # operator stop: minimum |VX|~0 settle floor
 JOG_STOP_SETTLE_TIMEOUT_S_MAX = 15.0  # cap on the decel-sized settle wait
-# The closed-loop enable inrush (backlash unwind + stiction breakaway) can clamp
-# at the current cap (SR bit 13 / LC) for one settling cycle (~5/KP3 + re-seat,
-# 100-300 ms). That transient is tolerated ONLY inside the enable poll loop and
-# ONLY for bit 13; if LC is still clamping past this window the drive is treated
-# as stalled / mis-commutated and the enable aborts. 0.5 s = >3x the slowest
-# observed transient and bounds exposure to ~0.5 A^2s below the stall-thermal budget.
-JOG_LC_SETTLE_TIMEBOX_S = 0.5
-JOG_LC_CLEAR_POLLS_REQUIRED = 2    # consecutive LC-clear polls to confirm settle
 JOG_STOP_RPM = 1.0                 # |VX| below this (rpm) counts as stopped
 JOG_PROFILE_VELOCITY_MODE = 3      # OV[2] during a JV jog (CR :9450), not 1
 
@@ -208,8 +200,17 @@ def _current_vector_a(id_a: float, iq_a: float) -> float:
     return math.hypot(float(id_a), float(iq_a))
 
 
+# SR bit 13 (LC) is deliberately NOT here.  Per the Gold command reference
+# (LC, p185) LC is a *selector* of which limit is presently dominant, not a
+# saturation event: LC=0 => current limited by PL[1] (peak) or motor off;
+# LC=1 => limited by CL[1] (continuous).  With the motor enabled one of the
+# two is ALWAYS asserted, and run_jog writes PL[1]==CL[1]==cap, which removes
+# the peak-budget window and pins LC=1 permanently regardless of the real
+# current (measured 0.1 A against a 3 A cap on the bench).  Real over-current
+# is caught by the current-vector guard (sqrt(ID^2+IQ^2) > cap+margin), not by
+# this status bit.  EAS jogs the same drive with LC=1 continuously.
 _UNSAFE_SR_MASK = (
-    0xF | (1 << 6) | (1 << 7) | (1 << 12) | (1 << 13) | (1 << 28))
+    0xF | (1 << 6) | (1 << 7) | (1 << 12) | (1 << 28))
 
 
 def _validate_enabled_state(sample: Mapping[str, float], context: str) -> None:
@@ -399,7 +400,7 @@ def _preflight(link: Any, values: Mapping[str, Any], *,
         raise _MotionRejected("both STO status inputs must permit enable (SR bits 14/15)")
     if sr & _UNSAFE_SR_MASK:
         raise _MotionRejected(
-            "drive status is not clear (SR bits 0..3/6/7/12/13/28)")
+            "drive status is not clear (SR bits 0..3/6/7/12/28)")
     ca18 = state["CA[18]"]
     if ca18 <= 0:
         raise _MotionRejected("CA[18] counts/rev must be positive")
@@ -971,6 +972,10 @@ def run_jog(
         "jog_max_rpm": values["speed_rpm"],
         "timebox_s": values["timebox_s"],
         "session_token_present": True,
+        # Per-poll enable-transient trace: distinguishes "real current, no torque"
+        # (I_vec ~= cap while VX ~= 0 -> commutation delta) from "command capped but
+        # current not delivered" (I_vec << cap -> electrical / phase-wire high R).
+        "enable_samples": [],
     })
 
     motion_started = False
@@ -990,8 +995,6 @@ def run_jog(
         link.command("MO=1", allow_motion=True)
         mo1_at = clock_fn()
         enable_deadline = mo1_at + 1.5
-        lc_settle_deadline = mo1_at + JOG_LC_SETTLE_TIMEBOX_S
-        lc_clear_polls = 0
         while True:
             es, _age = _read_active_sample(
                 link, ("MO", "SO", "MF", "PS", "SR", "VX", "ID", "IQ"),
@@ -999,38 +1002,34 @@ def run_jog(
             if cancel_fn():
                 raise _MotionAborted("operator cancel during enable sample")
             sr = int(es["SR"])
+            if len(evidence["enable_samples"]) < 128:
+                evidence["enable_samples"].append({
+                    "t_s": clock_fn() - mo1_at,
+                    "SR": sr, "lc": bool(sr & (1 << 13)),
+                    "ID": es["ID"], "IQ": es["IQ"],
+                    "I_vec_a": _current_vector_a(es["ID"], es["IQ"]),
+                    "VX": es["VX"], "cap_a": cap,
+                })
             if int(es["MF"]) != 0:
                 raise _MotionAborted("drive fault while enabling")
             if int(es["PS"]) == 1:
                 raise _MotionAborted("user program started while enabling (PS=1)")
-            # Every unsafe bit EXCEPT bit 13 (LC / current-limit) aborts on sight.
-            # Bit 13 during the closed-loop enable inrush is a transient clamp at the
-            # cap (handled below); the exemption is local to this poll loop only —
-            # _preflight, the pre-BG re-check, and the jog runtime loop keep the full
-            # _UNSAFE_SR_MASK.
-            if sr & (_UNSAFE_SR_MASK & ~(1 << 13)):
+            if sr & _UNSAFE_SR_MASK:
                 raise _MotionAborted("unsafe SR status while enabling (SR=%s)" % sr)
             if not (sr & (1 << 14)) or not (sr & (1 << 15)):
                 raise _MotionAborted("STO permission dropped while enabling")
+            # Real over-current / unintended motion still aborts on sight.  The LC
+            # status bit (SR 13) is a limit *selector*, not a saturation signal
+            # (see _UNSAFE_SR_MASK) — the current-vector magnitude is what bounds
+            # actual current here.
             if (abs(es["VX"]) > idle_speed
                     or _current_vector_a(es["ID"], es["IQ"]) > (
                         cap * (1.0 + CURRENT_LIMIT_REL_MARGIN)
                         + CURRENT_LIMIT_ABS_MARGIN_A)):
                 raise _MotionAborted("unintended motion/current while enabling")
-            if sr & (1 << 13):
-                # LC still clamping at the cap: reset the consecutive-clear count and
-                # abort only if it stays clamped past the bounded settle window (a
-                # persistent limit is a stall / mis-commutation, not an inrush).
-                lc_clear_polls = 0
-                if clock_fn() >= lc_settle_deadline:
-                    raise _MotionAborted(
-                        "enable current-limit did not settle (persistent); "
-                        "check axis restraint / commutation")
-            else:
-                lc_clear_polls += 1
-            if (int(es["MO"]) == 1 and int(es["SO"]) == 1
-                    and bool(sr & (1 << 4))
-                    and lc_clear_polls >= JOG_LC_CLEAR_POLLS_REQUIRED):
+            # Enable is complete once the drive reports servo-on (MO=1, SO=1,
+            # SR bit 4).  EAS energises and jogs immediately at this point.
+            if int(es["MO"]) == 1 and int(es["SO"]) == 1 and bool(sr & (1 << 4)):
                 break
             if clock_fn() >= enable_deadline:
                 raise _MotionAborted("MO=1 issued but SO=1 was not observed")

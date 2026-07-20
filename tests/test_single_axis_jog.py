@@ -268,9 +268,9 @@ def test_jog_runs_at_raised_max_current_cap():
 
 
 def test_jog_enable_tolerates_transient_current_limit_then_runs():
-    # The closed-loop enable inrush clamps at the cap (SR bit 13) for a few polls,
-    # then settles. The enable must WAIT it out (not abort on the first poll) and
-    # complete once LC clears for two consecutive polls.
+    # SR bit 13 (LC) is a limit *selector*, not a saturation event, so it is not
+    # in _UNSAFE_SR_MASK. Whether it is set on a few enable polls or not, the
+    # enable completes on servo-on and the jog runs.
     drive = JogSimLink(lc_active_polls=3)
     clock = Clock()
     cmd = JogCmd(clock, [(50.0, False), (50.0, False), (50.0, False),
@@ -281,22 +281,25 @@ def test_jog_enable_tolerates_transient_current_limit_then_runs():
     assert int(drive.reg["MO"]) == 0
 
 
-def test_jog_enable_aborts_when_current_limit_never_settles():
-    # A persistent clamp (stall / mis-commutation) must still abort — after the
-    # bounded LC settle window, not the 1.5 s SO deadline.
-    drive = JogSimLink(lc_active_polls=10_000)
-    result = _run(drive, JogCmd(Clock(), [(50.0, False)]))
-    assert result.status == sam.RED
-    assert "settle" in result.reason.lower()
-    # never latched a jog velocity; torque-off on the way out
-    assert not any(w.startswith("JV=") and not w.startswith("JV=0") for w in drive.writes)
+def test_jog_enable_ignores_persistent_current_limit_selector():
+    # Regression for the field bug: run_jog writes PL[1]==CL[1]==cap, which pins
+    # LC (SR bit 13) set for the WHOLE enable+jog (no peak-budget window), exactly
+    # as the real drive did (measured 0.1 A against a 3 A cap). LC is a selector,
+    # not over-current, so a permanently-set bit 13 must still enable and jog
+    # GREEN. Real over-current is bounded by the current-vector guard, not LC.
+    drive = JogSimLink(lc_active_polls=10_000)   # bit 13 set on every MO=1 poll
+    clock = Clock()
+    cmd = JogCmd(clock, [(50.0, False), (50.0, False), (0.0, True)])
+    result = _run(drive, cmd, clock=clock)
+    assert result.status == sam.GREEN, result.reason
+    assert any(w.startswith("JV=") for w in drive.writes)   # actually jogged
     assert int(drive.reg["MO"]) == 0
 
 
 def test_jog_enable_still_aborts_immediately_on_other_unsafe_sr_bit():
-    # The bit-13 exemption is surgical: an unsafe bit that appears DURING the enable
-    # transient (here bit 6, clean at the MO=0 preflight) still aborts on sight in
-    # the enable loop. LC tolerance must not widen to the rest of the mask.
+    # Dropping bit 13 (LC selector) from the mask must not weaken the rest of it:
+    # a genuinely unsafe bit that appears DURING the enable transient (here bit 6,
+    # clean at the MO=0 preflight) still aborts on sight in the enable loop.
     drive = JogSimLink(sr_mo1_extra=(1 << 6))
     result = _run(drive, JogCmd(Clock(), [(50.0, False)]))
     assert result.status == sam.RED
