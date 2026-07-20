@@ -374,3 +374,39 @@ MotorProfile이 실드라이브 값 정독 → effective_rated_rpm=3600·jog_cei
   맞는 값. 메모리의 "극쌍 21"은 과거 AngryYJH의 *다른 모터* — 이 모터에 적용 금지.
 - **실기 TS 명령은 µs 반환**(TS='100'=100µs). from_sources는 초 단위 기대 →
   라이브 프로필 배선 시 ×1e-6 변환 필요(P3/오토튠이 TS 사용). 정격 파생엔 무관.
+
+## P3 물리게이트 SPEC 동결 (fable-physics 2026-07-21) — 구현 대기(오프라인)
+핵심: 기존 매직상수가 모두 모터-불문 공식임을 발견 — UM3_DRAG=0.4·CL/√2(=6.0 정확),
+"토크효율70%"=1/√2=cos45° 커뮤문턱, GUARD=rated/3(=1200), verify=[0.10,0.25]·rated,
+서명대역=[0.5,1.5]·i_ba_ref. 드라이브-규칙 상수(0.2010/1.2705/2.0=KI-TS결속)는 존치,
+모터-특정(R/L/K_a/i_ba/FF1/EAS게인)만 프로필 파생. 신규 physics_gates.py(순수함수 GateVerdict),
+서명 첫런 닭-달걀=방향+expect-slip(I=i_ba/√2, follow=δ≥45° RED), K_a드롭·서명대역 프로필별,
+FF[1]/EAS대조→advisory 강등(게이트서 제거). 다중모터 시뮬 4종(A~D)+결함주입 RED+리터럴 트립와이어.
+실기확인필요: κ_R경계·verify v1 300→360·GUARD클립.
+
+## 서명 RED 진단 (2026-07-21 01:17, autotune_vp_result_1784564221124.json)
+status=RED, reason="모터 폴트 MF=0x80". abort evidence: segment='idle',
+steps_done=['A_mo MO=0','A_lim restore']. 즉 **MF=0x80이 MO=1 인에이블 직후(idle)에
+발생** — 램프/브레이크어웨이 전. i_ba 미검출, 방향 -. abort 체인 정상(MO=0·리밋복원).
+현재 드라이브 MF=0(Axis 스냅숏 확인, 폴트 클리어됨). 기어드 16극쌍.
+가설(미검증): 커뮤 미확립 상태로 enable→speed-tracking 폴트. 내일 재커뮤 전략 필요
+(출력축 프리무빙, P0 후보 A/B/C, 전류 상향). reason 문자열 인코딩 깨짐(cp949 함정) 별건.
+
+## Admin PDF 판독 (2026-07-21) — MF·위저드 확정
+- MF=0x80(128)="Speed tracking error"(Admin p.85 비트표). 오늘 서명 RED=커뮤 미확립 enable→추종실패 셧.
+- EAS 위저드=UM=3 스테퍼 phasing(로터가 전기장 TC정토크로 따라감, 512cnt/극쌍). 후보 B-2와 일치.
+  기어드 위저드 실패=±대칭이동 백래쉬 파손. P0 §7#6 프리미티브 해소, 앱은 후보 B로 재현 가능.
+
+## P4 커뮤 자립 SPEC 동결 (fable-physics 2026-07-21) → docs/commutation-id-p4-spec.md
+핵심: 180°플립 프리앰블이 MF=0x80 idle 해결(cos δ·cos(δ−180°) 동시 음 불가). 모델 교차검증
+i_ba비4.566→|δ|102.7° vs 관측103°. 주경로 A(CA[7]재기록+플립)·폴백 B(CS)·최후 C(봉인).
+신규 commutation_id.py 상태기계(S0~S6), CommutGearLashSim 시뮬 7시나리오, 내일 실기 런북 R0~R6.
+실기확인 3건: CA[7] 부호 s·CS UM5생존·전원 δ재추첨. P3 구현 완료 후 P4 시뮬 구현 착수(같은 파일 충돌회피).
+
+## P3 진행 (2026-07-21, Opus 자체구현)
+위임 fable-driver 사일런트 데스(6h 무출력) → Opus 직접 구현. 1차 슬라이스 완료:
+physics_gates.py(순수함수 12: p1_pm/wc_band/rho/r_relative/l_relative, sig_band/first_run,
+ka_drop, derive_drag_current/guard_rpm/verify_speeds, p2_g1d, advisory_eas, combine) +
+tests/test_physics_gates.py 25 passed(경계·상수재현 6.0/1200/360-900·다중모터A~D·결함주입·트립와이어).
+SPEC 정정 1건: verify GUARD 캡 0.6→0.8(내부모순, 동결 900rpm 보존). **미착수(다음): autotune_current/
+velpos 배선 = EAS오라클→physics_gates 소비(프로덕션 회귀 슬라이스), P4 시뮬 구현, P5 UI.**

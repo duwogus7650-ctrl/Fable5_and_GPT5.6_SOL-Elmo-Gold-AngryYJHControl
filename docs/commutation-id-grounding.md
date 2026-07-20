@@ -3,7 +3,8 @@
 > 출처: fable-reader 정밀독해 2026-07-20. 주 문서 `docs/command-reference.txt`
 > (MAN-G-CR Ver. 1.406, 2013), 보조 `docs/firmware-release-notes.txt`
 > (우리 FW = Ch.12 `01.01.16.00 05Mar2020B01`, 줄 974~1216). Admin PDF는
-> 에이전트 환경에 poppler 부재로 **미독** — EAS 위저드 실제 시퀀스 확정 미완.
+> 2026-07-21 fitz로 판독 완료(맨 아래 "Admin PDF 판독 보강" 섹션) — MF=0x80 의미와
+> 위저드 프리미티브(UM=3 스테퍼 phasing) 확정.
 
 ## 결론 — A2 판정: 경로 존재 (YES)
 
@@ -90,3 +91,21 @@ EAS 통신 캡처 필요.
 ## P4 배치 권고
 후보 A = 1차 경로, 후보 B(CS) = 매-전원 폴백, 후보 C = δ 측정 실패 시 최후 수단.
 CR 단정 금지 — enum/인덱스 의미는 2020 FW에서 다를 수 있음(EnDat ID 9→30 전례).
+
+## Admin PDF 판독 보강 (2026-07-21, man-g-adming Ver.1.100)
+
+**MF=0x80(128) 확정 = "Speed tracking error"** (MF 비트필드 표, p.85):
+1=Main feedback err · 2=Aux(reserved) · 4=Hall mismatch · 8=Current>peak ·
+16=External inhibit · 32=Reserved · 64=Hall speed too high · **128=Speed tracking error**.
+→ 오늘 서명 RED(MF=0x80, idle 발생)는 servo가 지령속도 추종 실패로 셧. 커뮤 미확립 상태로
+MO=1 시 코히런트 모션이 안 나와 발생하는 것으로 해석(기어드 δ 재추첨과 정합).
+
+**EAS 위저드 메커니즘 확정 (p.91, §16.3.10.4):** "Unit mode 3 is stepper mode... open-loop
+mode that moves the electric field in internal stepping counts. The rotor follows the
+electric field, allowing a motion with a constant torque (TC). Stepping resolution = 512
+counts per pole pair (360°). **Stepper mode is mainly used for internal purposes during
+wizard and phasing sequences.**"
+→ 위저드/phasing = UM=3 스테퍼로 로터를 기지 전기각으로 당겨 절대엔코더 대비 오프셋 산출
+(= 후보 B-2와 일치). 기어드 위저드 실패("Movements Uneven") = ±대칭 이동이 백래쉬에 깨져서.
+→ **P0 §7 #6 부분 해소**: 위저드 프리미티브(UM=3 스테퍼 phasing) 확정. 상세 명령 시퀀스는
+여전히 EAS 내부(문서 미기재)지만, 앱 자체 구현은 후보 B(CS/UM=3)로 충분히 재현 가능.
