@@ -405,17 +405,20 @@ def _preflight(link: Any, values: Mapping[str, Any], *,
         raise _MotionRejected(
             "FC scaling is not unity (%s); v1 cannot prove rev/count conversion" %
             ", ".join(non_unity))
-    vl, vh, xm1, xm2 = (state["VL[3]"], state["VH[3]"],
-                         state["XM[1]"], state["XM[2]"])
-    if not vl < vh:
-        raise _MotionRejected("drive position limits are invalid (VL[3] < VH[3] required)")
-    if vl == vh == xm1 == xm2 == 0:
-        raise _MotionRejected("32-bit modulo/no-limit mode is not supported")
-    non_modulo = ((xm1 == 0 and xm2 == 0) or (xm1 <= vl and xm2 >= vh))
-    if not non_modulo:
-        raise _MotionRejected("position modulo mode is not supported by finite-motion v1")
-
     if require_target:
+        # Software position limits (VL[3]/VH[3]) and modulo bound a FINITE PA move.
+        # An endless JV jog ignores VH[3]/VL[3] at the drive (CR p175), so these
+        # checks — and the PA target computation — apply only to a position move,
+        # never to a jog (which calls with require_target=False).
+        vl, vh, xm1, xm2 = (state["VL[3]"], state["VH[3]"],
+                             state["XM[1]"], state["XM[2]"])
+        if not vl < vh:
+            raise _MotionRejected("drive position limits are invalid (VL[3] < VH[3] required)")
+        if vl == vh == xm1 == xm2 == 0:
+            raise _MotionRejected("32-bit modulo/no-limit mode is not supported")
+        non_modulo = ((xm1 == 0 and xm2 == 0) or (xm1 <= vl and xm2 >= vh))
+        if not non_modulo:
+            raise _MotionRejected("position modulo mode is not supported by finite-motion v1")
         target_counts = _target_from_px(state["PX"], values, state)
     requested_speed_counts = values["speed_rpm"] * ca18 / 60.0
     if state["VH[2]"] <= 0 or requested_speed_counts > state["VH[2]"]:

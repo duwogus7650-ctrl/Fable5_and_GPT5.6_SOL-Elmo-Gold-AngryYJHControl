@@ -226,6 +226,23 @@ def test_jog_speed_over_ceiling_is_rejected():
     assert drive.writes == []
 
 
+def test_jog_proceeds_with_zero_position_limits_that_a_ptp_move_would_reject():
+    # Real Gold drives on this bench run with VL[3]=VH[3]=0 (no software position
+    # window). A finite PA move requires a valid VL[3] < VH[3]; an endless JV jog
+    # ignores VH[3]/VL[3] at the drive (CR p175), so the jog preflight must NOT
+    # inherit that position-limit reject (regression: it did, blocking real jogs).
+    drive = JogSimLink(reg_overrides={"VL[3]": 0, "VH[3]": 0,
+                                      "XM[1]": 0, "XM[2]": 0})
+    clock = Clock()
+    cmd = JogCmd(clock, [(100.0, False), (100.0, False), (100.0, False),
+                         (0.0, True)])
+    result = _run(drive, cmd, clock=clock)
+    assert result.status == sam.GREEN, result.reason
+    assert "VL[3]" not in (result.reason or "")
+    assert any(w.startswith("JV=") for w in drive.writes)   # actually energised
+    assert int(drive.reg["MO"]) == 0 and "SV" not in drive.writes
+
+
 # --- green run / stop / restore --------------------------------------------------
 
 def test_green_jog_runs_then_operator_stop_disables_and_restores():
