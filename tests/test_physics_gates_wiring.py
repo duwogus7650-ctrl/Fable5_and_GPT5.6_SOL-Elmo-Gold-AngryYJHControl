@@ -420,10 +420,10 @@ _BANNED = (
 _ALLOWED_EXAMPLES = ("0.2010", "1.2705", "2.0")  # drive-rule constants stay
 
 
-# The 1.30 A signature ENERGIZE ceiling is a SAFETY constant (operator
-# low-current envelope), not a motor-specific decision-band literal.  Lines that
-# define/use it are exempt from the ban.
-_EXEMPT_MARKERS = ("SIGNATURE_ENERGIZE_ABS_MAX_A",)
+# The signature ENERGIZE envelope constants are SAFETY constants (operator
+# low-current envelope / hard ceiling), not motor-specific decision-band
+# literals.  Lines that define/use them are exempt from the ban.
+_EXEMPT_MARKERS = ("SIGNATURE_ENERGIZE_ABS_MAX_A", "SIGNATURE_FIRST_RUN_CAP_A")
 
 
 @pytest.mark.parametrize("fname", ["autotune_current.py",

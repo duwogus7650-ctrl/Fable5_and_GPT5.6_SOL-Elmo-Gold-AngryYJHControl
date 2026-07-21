@@ -20,6 +20,7 @@ import pytest
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import autotune_velpos as vp
+import physics_gates
 from autotune_velpos import (AutotuneVPParams, AutotuneVPResult,
                              run_velpos_autotune, apply_gains_vp, verify_run_vp,
                              vel_pos_margins, design_vp_gains, window_slope,
@@ -751,18 +752,20 @@ def test_signature_gate_rejects_cap_above_absolute_limit_before_enable(tmp_path)
 
 
 def test_signature_first_run_cap_clamped_to_safety_ceiling_not_rejected(tmp_path):
-    """A system-DERIVED first-run cap above the ceiling (0.2*CL = 4.24 A on this
-    unit) is CLAMPED to SIGNATURE_ENERGIZE_ABS_MAX_A and the run proceeds — it is
-    NOT rejected.  Guards the 2026-07-21 safety restoration: the energize ramp
-    must never command more than the ceiling on a first (baseline-free) run."""
+    """A baseline-free run stays in the FIRST-RUN envelope and is NOT rejected.
+
+    Guards the 2026-07-21 safety restoration: before it, the P3 wiring let the
+    first-run cap derive to 0.2*CL = 4.24 A.  Nothing is known about the motor
+    on a first run, so the cap is the fixed low-current envelope — asserted
+    against SIGNATURE_FIRST_RUN_CAP_A, not the absolute ceiling, so raising the
+    ceiling for baselined motors (2026-07-22) cannot silently loosen this."""
     drive = VPSim(i_c=0.6, vel_noise=0.0)
-    # no profile baseline -> first-run derives cap = ramp_frac*CL = 4.24 A
     res = run_velpos_autotune(
         drive, _signature_params(drive, tmp_path))  # signature_cap_a=None
     # the run must NOT be rejected for the cap (it clamps); MO=1 is reached
     assert "통전 상한" not in (res.reason or "")
     ramp_cmds = [c for c in _motion_commands(drive) if c.startswith("TC=")]
-    # every commanded TC during the signature ramp stays <= the safety ceiling
+    # every commanded TC during the signature ramp stays <= the first-run cap
     tc_vals = []
     for c in ramp_cmds:
         try:
@@ -770,8 +773,52 @@ def test_signature_first_run_cap_clamped_to_safety_ceiling_not_rejected(tmp_path
         except ValueError:
             pass
     if tc_vals:
-        assert max(tc_vals) <= vp.SIGNATURE_ENERGIZE_ABS_MAX_A + 1e-6, \
-            "signature energize exceeded the safety ceiling: %.3f A" % max(tc_vals)
+        assert max(tc_vals) <= vp.SIGNATURE_FIRST_RUN_CAP_A + 1e-6, \
+            "first-run signature energize exceeded %.2f A: %.3f A" % (
+                vp.SIGNATURE_FIRST_RUN_CAP_A, max(tc_vals))
+
+
+# --------------------------------------------------------------------------------------
+# Signature energize cap: must reach the top of the band it judges (field 2026-07-22)
+# --------------------------------------------------------------------------------------
+def test_signature_cap_first_run_is_the_low_current_envelope():
+    assert vp.signature_energize_cap(None) == vp.SIGNATURE_FIRST_RUN_CAP_A
+    assert vp.signature_energize_cap(0.0) == vp.SIGNATURE_FIRST_RUN_CAP_A
+    assert vp.signature_energize_cap(float("nan")) == vp.SIGNATURE_FIRST_RUN_CAP_A
+
+
+def test_signature_cap_with_baseline_is_the_green_band_top():
+    """This is the invariant the field violated: a cap BELOW the band top
+    censors the measurement, so GREEN becomes an artifact of the clamp rather
+    than a decision.  Live case: i_ba_ref=1.3298 A, band [0.665, 1.995] A, cap
+    was pinned at 1.30 A — every i_ba the signature could report was forced
+    under 1.30 while Phase 2 (4.24 A cap) kept measuring 1.33-1.77 A."""
+    ref = 1.3297826865671643              # the live baseline
+    cap = vp.signature_energize_cap(ref)
+    band_top = physics_gates.SIG_GREEN[1] * ref
+    assert cap == pytest.approx(band_top)
+    assert cap == pytest.approx(1.9947, abs=1e-3)
+    assert cap > 1.30                     # the censoring ceiling is gone
+    assert cap <= vp.SIGNATURE_ENERGIZE_ABS_MAX_A
+
+
+@pytest.mark.parametrize("ref", [0.4, 0.757, 1.0, 1.3298, 1.6])
+def test_signature_cap_always_reaches_the_band_it_judges(ref):
+    """General form: for any baseline whose band top fits under the absolute
+    ceiling, the cap must reach that top — no reachable GREEN verdict may be
+    unmeasurable."""
+    cap = vp.signature_energize_cap(ref)
+    band_top = physics_gates.SIG_GREEN[1] * ref
+    if band_top <= vp.SIGNATURE_ENERGIZE_ABS_MAX_A:
+        assert cap >= band_top - 1e-12
+    else:
+        assert cap == vp.SIGNATURE_ENERGIZE_ABS_MAX_A
+
+
+def test_signature_cap_clamps_a_high_baseline_to_the_absolute_ceiling():
+    """A very high-stiction baseline cap-outs at the ceiling rather than
+    scaling without bound — the safety envelope is still an envelope."""
+    assert vp.signature_energize_cap(100.0) == vp.SIGNATURE_ENERGIZE_ABS_MAX_A
 
 
 # ======================================================================================

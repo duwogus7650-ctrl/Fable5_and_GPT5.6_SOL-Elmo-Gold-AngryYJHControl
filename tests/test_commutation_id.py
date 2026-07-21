@@ -240,8 +240,12 @@ def test_wrap_and_delta_tick_spec_oracle():
 
 def test_cap_above_ceiling_rejected_before_any_write(tmp_path):
     drive = CommutGearLashSim()
+    # "above the ceiling" must track the constant, not a frozen number: the
+    # ceiling moved 2026-07-22 when a fixed cap was found to censor the
+    # measurement (see autotune_velpos SIGNATURE_ENERGIZE_ABS_MAX_A).
+    over_cap = vp.SIGNATURE_ENERGIZE_ABS_MAX_A + 0.01
     res = run_commutation_id(
-        drive, _cid_params(drive, tmp_path, signature_cap_a=1.31))
+        drive, _cid_params(drive, tmp_path, signature_cap_a=over_cap))
     assert res.status == RED
     assert "안전천장" in res.reason or "cap" in res.reason
     assert drive.enable_count == 0

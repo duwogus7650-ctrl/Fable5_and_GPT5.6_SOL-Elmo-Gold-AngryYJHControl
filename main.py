@@ -11812,12 +11812,15 @@ class MainWindow(QtWidgets.QMainWindow):
         prof = getattr(self, "_motor_profile", None)
         band = getattr(prof, "signature_band", None) if prof is not None else None
         ref = band.get("i_ba_ref_a") if isinstance(band, dict) else None
-        _SIG_CEIL_A = 1.30  # absolute signature energize ceiling (safety)
+        # the number shown is the number the kernel enforces (single source)
+        cap_a = autotune_velpos.signature_energize_cap(ref)
         if isinstance(ref, (int, float)) and ref > 0:
             band_line = ("• 합격 대역(프로필 파생): i_ba [0.5,1.5]×%.3f A,"
                          " 피드백 방향 +\n"
-                         "• 통전 상한: min(2.0×기준, 안전천장) = %.2f A\n"
-                         % (ref, min(2.0 * ref, _SIG_CEIL_A)))
+                         "• 통전 상한 = 대역 상단 1.5×기준 = %.2f A"
+                         " (절대 천장 %.2f A로 클램프)\n"
+                         % (ref, cap_a,
+                            autotune_velpos.SIGNATURE_ENERGIZE_ABS_MAX_A))
         else:
             band_line = ("• 이 모터 프로필에 서명 베이스라인이 아직 없음 —"
                          " 첫 런 프로토콜(대역 OFF, 방향 게이트 +"
@@ -11826,8 +11829,8 @@ class MainWindow(QtWidgets.QMainWindow):
         btn = QtWidgets.QMessageBox.warning(
             self, "커뮤테이션 서명 실행 확인 (실제 저전류 동작)",
             "커뮤테이션 서명 전용 시험을 실행합니다.\n\n"
-            "• +TC를 0에서 최대 %.2f A(안전천장) 이내로만, 최대 2.0초 램프\n"
-            % _SIG_CEIL_A
+            "• +TC를 0에서 최대 %.2f A 이내로만, 최대 2.0초 램프\n"
+            % cap_a
             + band_line +
             "• 식별 펄스, JV 속도 운전은 실행하지 않음\n"
             "• 모든 종료 경로에서 TC=0, MO=0 및 임시 제한 복귀 확인\n"
@@ -11869,7 +11872,7 @@ class MainWindow(QtWidgets.QMainWindow):
         prof = getattr(self, "_motor_profile", None)
         band = getattr(prof, "signature_band", None) if prof is not None else None
         ref = band.get("i_ba_ref_a") if isinstance(band, dict) else None
-        cap_a = autotune_velpos.SIGNATURE_ENERGIZE_ABS_MAX_A     # 1.30 A 천장
+        cap_a = autotune_velpos.signature_energize_cap(ref)   # 커널과 동일 규칙
         ladder = commutation_id.CommutationIDParams().um3_align_i_ladder
         ladder_txt = " → ".join("%.2f" % float(i) for i in ladder)
         if isinstance(ref, (int, float)) and ref > 0:
@@ -11881,8 +11884,9 @@ class MainWindow(QtWidgets.QMainWindow):
         btn = QtWidgets.QMessageBox.warning(
             self, "Commutation ID 실행 확인 (실제 통전 · CA[7] 재기록)",
             "백래시 내성 커뮤테이션 자립 ID(S0~S6)를 실행합니다.\n\n"
-            "• 서명 통전은 최대 %.2f A(안전천장) 이내 — 초과 요청은 거부\n"
-            % cap_a
+            "• 서명 통전은 최대 %.2f A 이내 — 초과 요청은 거부"
+            " (절대 천장 %.2f A)\n"
+            % (cap_a, autotune_velpos.SIGNATURE_ENERGIZE_ABS_MAX_A)
             + ref_line +
             "• UM3 정렬 사다리 %s A는 단계별로만 진행 — 8.49 A 자동 경로 없음"
             "(오퍼레이터 승인 전용, 이 실행에서 미사용)\n" % ladder_txt +

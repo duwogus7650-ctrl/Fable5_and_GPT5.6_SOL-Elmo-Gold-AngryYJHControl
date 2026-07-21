@@ -161,14 +161,31 @@ RAMP_FRAC_ABS_MAX = 0.4   # automatic ramp/pulse current ceiling [frac of CL[1]]
 # band is [0.5,1.5]x i_ba_ref (red_hi x ref of headroom to OBSERVE the RED
 # boundary); without one the first-run protocol runs (band gate OFF).  The band
 # judges the MEASURED i_ba — it is NOT the energize limit.
-# Signature ENERGIZE current is ALWAYS clamped to this absolute safety ceiling
-# (operator low-current envelope, matches the confirmation dialog).  It is
-# motor-agnostic by degradation, not by scaling: a higher-stiction motor whose
-# breakaway exceeds this ceiling simply cap-outs here and routes to the drag
-# oracle.  This is a SAFETY constant, not a gate band literal (P4 spec: the
-# signature energize envelope stays fixed, not scaled).  [restored 2026-07-21
-# after the P3 wiring inadvertently let the first-run cap rise to 0.2*CL=4.24 A]
-SIGNATURE_ENERGIZE_ABS_MAX_A = 1.30  # absolute A ceiling on signature energize
+# Signature ENERGIZE current envelope.  Two constants, two jobs:
+#
+#   SIGNATURE_FIRST_RUN_CAP_A   the envelope with NO baseline.  Nothing is known
+#                               about the motor yet, so stay in the operator
+#                               low-current envelope and accept a cap-out.
+#   SIGNATURE_ENERGIZE_ABS_MAX_A  the hard ceiling.  A DERIVED cap is clamped to
+#                               it; an EXPLICIT operator override above it is
+#                               REJECTED — the safety envelope cannot be raised
+#                               from the UI.
+#
+# With a baseline the derived cap is the TOP OF THE GREEN BAND (beta x i_ba_ref).
+# Field defect 2026-07-22 that forced this: pinning the ceiling at the first-run
+# envelope CENSORED the measurement on this unit.  Every i_ba the signature could
+# report came back under that cap (0.757/0.950/1.009 A) while every i_ba Phase 2
+# measured under its 4.24 A cap came back above it (1.330/1.456/1.773 A) — the
+# true breakaway straddles the old ceiling, so the signature only ever sampled
+# the low tail and REDded intermittently.  Worse, it was self-contradictory: the
+# recorded band was [0.665, 1.995] A while the test using that band could not
+# report anything in its upper half, leaving that half permanently unverifiable.
+# Rule: the signature must at least be able to reach the top of its own GREEN
+# band, otherwise GREEN is not a decision, it is an artifact of the clamp.
+# [the fixed first-run envelope was restored 2026-07-21 after the P3 wiring let
+# the first-run cap rise to 0.2*CL=4.24 A; that regression stays fixed]
+SIGNATURE_FIRST_RUN_CAP_A = 1.30     # no baseline -> operator low-current envelope
+SIGNATURE_ENERGIZE_ABS_MAX_A = 2.50  # absolute A ceiling on signature energize
 RAMP_FRAC_OPERATOR_ONLY = 0.6   # NEVER automatic — operator-approved sessions
                           # may edit this constant deliberately (자동 램프 금지)
 RAMP_FAST_POLL_ABOVE_A = 2.0    # above this TC: VX-only polls at 10 ms (the
@@ -735,6 +752,21 @@ def _i_net(i0: float, i_ba) -> float:
     if isinstance(i_ba, (int, float)) and i_ba > 0:
         return max(i0 - NET_FRICTION_FRAC * float(i_ba), 0.25 * i0)
     return i0
+
+
+def signature_energize_cap(i_ba_ref_a=None) -> float:
+    """The signature energize cap the kernel will apply — SINGLE SOURCE.
+
+    With a baseline it is the top of the GREEN band (beta x i_ba_ref) clamped to
+    the absolute ceiling; without one it is the fixed first-run envelope.  The
+    confirmation dialogs call this instead of restating the rule, so the number
+    the operator approves cannot drift from the number the kernel enforces.
+    """
+    if (isinstance(i_ba_ref_a, (int, float)) and math.isfinite(i_ba_ref_a)
+            and i_ba_ref_a > 0):
+        return min(physics_gates.SIG_GREEN[1] * float(i_ba_ref_a),
+                   SIGNATURE_ENERGIZE_ABS_MAX_A)
+    return SIGNATURE_FIRST_RUN_CAP_A
 
 
 def _pulse_sleep_with_cut(ctx: _Ctx, dur_s: float, vx_cut_cnt: float,
@@ -2650,22 +2682,26 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         else:
             band_src = "override"
         if cap is None:
-            # profile: red_hi x ref = just enough headroom to OBSERVE the RED
-            # boundary; first run: the Phase-2 ramp cap (same safety envelope)
-            cap = (physics_gates.SIG_RED_HI * ref if ref is not None
-                   else p.ramp_frac * ctx.cl1)
+            # With a baseline: the TOP OF THE GREEN BAND (beta x ref), so the
+            # band this run judges against is fully reachable — a cap below it
+            # censors the measurement (field defect 2026-07-22, see the constant
+            # block).  Without one: the fixed low-current envelope.
+            cap = signature_energize_cap(ref)
             # DERIVED cap: clamp to the absolute safety ceiling so a
             # high-stiction motor still runs (breakaway above the ceiling
             # cap-outs here and routes to the drag oracle) rather than being
             # refused.  An EXPLICIT operator override above the ceiling is
             # REJECTED below instead — the safety envelope cannot be raised.
-            # (Restored 2026-07-21: the P3 wiring had let this rise to 4.24 A.)
             if (isinstance(cap, (int, float)) and math.isfinite(cap)
                     and cap > SIGNATURE_ENERGIZE_ABS_MAX_A):
                 ctx.warnings.append(
                     "서명 통전 상한을 안전천장 %.2f A로 클램프(파생 %.2f A)"
                     % (SIGNATURE_ENERGIZE_ABS_MAX_A, float(cap)))
                 cap = SIGNATURE_ENERGIZE_ABS_MAX_A
+            ctx.evidence.setdefault("signature_cap", {}).update(
+                {"cap_a": float(cap), "source":
+                 ("green_band_top" if ref is not None else "first_run_fixed"),
+                 "i_ba_ref_a": (float(ref) if ref is not None else None)})
         max_cap = min(SIGNATURE_ENERGIZE_ABS_MAX_A, ctx.cl1)
         if (not isinstance(cap, (int, float)) or not math.isfinite(cap)
                 or cap <= 0.0 or cap > max_cap + 1e-12):

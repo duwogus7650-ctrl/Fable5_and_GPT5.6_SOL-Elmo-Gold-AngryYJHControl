@@ -355,8 +355,11 @@ def test_kernel_refuses_cap_above_absolute_ceiling():
     worker = _GlueWorker(sim)
     results = []
     worker.commutation_result.connect(results.append)
+    # tracks the constant, not a frozen number (ceiling moved 2026-07-22)
     worker._run_commutation_id(
-        sim, {"i_ba_ref_a": IBA_REF, "signature_cap_a": 1.31})
+        sim, {"i_ba_ref_a": IBA_REF,
+              "signature_cap_a":
+                  autotune_velpos.SIGNATURE_ENERGIZE_ABS_MAX_A + 0.01})
     res = results[0]
     assert res.status == commutation_id.RED
     assert sim.enable_count == 0
