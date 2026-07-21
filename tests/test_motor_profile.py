@@ -268,3 +268,75 @@ def test_json_payload_is_plain_and_keyed_by_name(tmp_path):
     assert raw["name"] == "unit 21/gold"
     assert raw["schema"] == 1
     assert raw["rated_rpm_drive"] == pytest.approx(3600.0)
+
+
+# ============================== 학습상태 이월 (실기 결함 2026-07-22: 쓰기 전용)
+
+_LIVE_IBA = 1.3297826865671643      # 실기 GREEN 런이 남긴 값
+_LIVE_KA = 1792123.278946844
+
+
+def _learned(name="m", readings=None):
+    """GREEN 런을 한 번 통과한 프로필."""
+    p = MotorProfile.from_sources(name, readings or CURRENT_UNIT)
+    return p.with_green_run(i_ba_a=_LIVE_IBA, k_a=_LIVE_KA)
+
+
+def test_with_learned_from_carries_only_the_learned_fields():
+    """저장본이 주는 것은 ka_baseline/signature_band/i_ba_history **뿐**이다.
+    드라이브 파생 필드는 살아있는 리드에서 와야 한다 — 같은 드라이브에 다른
+    모터를 물렸을 때 이전 모터의 정격·전류한계가 되살아나면 안 된다."""
+    saved = _learned()
+    fresh = MotorProfile.from_sources("m", VIRTUAL_8PP)   # 다른 모터를 실측
+    merged = fresh.with_learned_from(saved)
+
+    for f in MotorProfile.LEARNED_FIELDS:
+        assert getattr(merged, f) == getattr(saved, f), f
+    for fld in dataclasses.fields(MotorProfile):
+        if fld.name in MotorProfile.LEARNED_FIELDS:
+            continue
+        assert getattr(merged, fld.name) == getattr(fresh, fld.name), (
+            "드라이브 파생 필드 %s 는 실측에서 와야 함" % fld.name)
+
+
+def test_with_learned_from_none_is_identity():
+    """모터와 첫 대면: 저장본이 없으면 이월할 것도 없다."""
+    fresh = MotorProfile.from_sources("m", CURRENT_UNIT)
+    assert fresh.with_learned_from(None) == fresh
+    assert fresh.has_learned_state() is False
+
+
+def test_learned_state_survives_a_save_load_cycle(tmp_path):
+    """끊겨 있던 고리 자체: GREEN → save → (새 세션) load → 실측에 병합 →
+    베이스라인이 다시 살아난다.  이게 안 돌아서 서명이 영원히 첫런 상한에
+    묶였고 자기 측정을 검열했다."""
+    saved = _learned()
+    saved.save(str(tmp_path))
+
+    reloaded = MotorProfile.load(saved.name, str(tmp_path))
+    next_session = MotorProfile.from_sources(
+        saved.name, CURRENT_UNIT).with_learned_from(reloaded)
+
+    assert next_session.has_learned_state() is True
+    assert next_session.ka_baseline == pytest.approx(_LIVE_KA)
+    assert next_session.signature_band["i_ba_ref_a"] == pytest.approx(_LIVE_IBA)
+    assert next_session.i_ba_history == saved.i_ba_history
+
+
+def test_learned_state_is_not_shared_between_names(tmp_path):
+    """격리 유지: 한 모터의 베이스라인이 다른 모터의 통전 봉투를 승인하면 안 된다."""
+    _learned("motor-a").save(str(tmp_path))
+    with pytest.raises(FileNotFoundError):
+        MotorProfile.load("motor-b", str(tmp_path))
+
+
+def test_has_learned_state_detects_each_slot():
+    base = MotorProfile.from_sources("m", CURRENT_UNIT)
+    assert base.has_learned_state() is False
+    assert dataclasses.replace(base, ka_baseline=1.0).has_learned_state()
+    assert dataclasses.replace(
+        base, signature_band={"i_ba_ref_a": 1.0}).has_learned_state()
+    assert dataclasses.replace(base, i_ba_history=(1.0,)).has_learned_state()
+    # 기준값 없는 대역은 쓸 수 있는 상태가 아니다
+    assert dataclasses.replace(
+        base, signature_band={"alpha": 0.5}).has_learned_state() is False

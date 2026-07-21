@@ -231,6 +231,37 @@ class MotorProfile:
             self, i_ba_history=hist,
             signature_band=(band or None), ka_baseline=ka_new)
 
+    LEARNED_FIELDS = ("ka_baseline", "signature_band", "i_ba_history")
+
+    def with_learned_from(self, other: Optional["MotorProfile"]
+                          ) -> "MotorProfile":
+        """저장된 프로필의 **학습 상태만** 이 프로필로 옮긴다.
+
+        드라이브 파생 필드(정격·극쌍·전류한계·counts)는 **살아있는 리드가 진실**
+        이므로 건드리지 않고, GREEN 런이 축적한 ``ka_baseline`` /
+        ``signature_band`` / ``i_ba_history`` 만 가져온다.  같은 드라이브에
+        다른 모터를 물렸을 때 옛 정격이 되살아나는 사고를 막기 위한 분리다.
+
+        결함 2026-07-22: 저장은 되는데 **다시 읽히지 않아** 매 세션이
+        베이스라인 없이 시작했고, 그 결과 서명이 영원히 "첫런" 상한(1.30 A)에
+        묶여 측정이 검열됐다.  ``other`` 가 None 이면 자기 자신을 돌려준다.
+        """
+        if other is None:
+            return self
+        return dataclasses.replace(
+            self,
+            ka_baseline=other.ka_baseline,
+            signature_band=(dict(other.signature_band)
+                            if other.signature_band else None),
+            i_ba_history=tuple(other.i_ba_history))
+
+    def has_learned_state(self) -> bool:
+        """서명 대역 판정과 δ 정량이 가능한 상태인가."""
+        band = self.signature_band
+        return bool(self.ka_baseline
+                    or (isinstance(band, Mapping) and band.get("i_ba_ref_a"))
+                    or self.i_ba_history)
+
     # ------------------------------------------------------------ validity
 
     @property

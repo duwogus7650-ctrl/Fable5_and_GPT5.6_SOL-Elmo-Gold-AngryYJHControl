@@ -12334,6 +12334,15 @@ class MainWindow(QtWidgets.QMainWindow):
             and self._motion_signature_is_current())
         self._vp_result_path = self._dump_velpos_result(res)
         evidence = res.evidence or {}
+        # A GREEN run re-baselines the motor and saves it; pull that back into
+        # the live profile NOW.  Otherwise the very next signature in this same
+        # session still sees no baseline and falls back to the first-run cap —
+        # the in-session half of the write-only defect (field 2026-07-22).
+        if evidence.get("profile_update") and self._motor_profile is not None:
+            persisted = self._load_persisted_profile(self._motor_profile.name)
+            if persisted is not None:
+                self._motor_profile = self._motor_profile.with_learned_from(
+                    persisted)
         signature = (self._vp_signature_run or
                      evidence.get("signature_gate", {}).get("mode") ==
                      "standalone_commutation_signature")
@@ -13391,16 +13400,42 @@ class MainWindow(QtWidgets.QMainWindow):
             ident = (getattr(self, "_connected_identity", None)
                      or {}).get("drive_identity")
             name = str(ident) if ident else "connected-motor"
-            self._motor_profile = motor_profile.MotorProfile.from_sources(
+            prof = motor_profile.MotorProfile.from_sources(
                 name,
                 drive_readings={
                     "VH[2]": mp.get("vh"), "CA[18]": mp.get("ca18"),
                     "CA[19]": mp.get("poles"), "CA[28]": mp.get("mtype"),
                     "CL[1]": mp.get("cl_amp"), "PL[1]": mp.get("pl_amp"),
                 })
+            # Carry the LEARNED state forward across sessions.  Without this the
+            # profile was write-only: GREEN runs saved ka_baseline /
+            # signature_band / i_ba_history and nothing ever read them back, so
+            # every session restarted with no baseline — the signature stayed
+            # permanently on the first-run cap and censored its own measurement
+            # (field 2026-07-22).  Only the learned fields cross over; the
+            # drive-derived ones stay live.  Requires a REAL drive identity:
+            # "connected-motor" is a shared fallback bucket and must never let
+            # one motor's baseline authorize another's energize.
+            self._motor_profile = prof
+            if ident:
+                self._motor_profile = prof.with_learned_from(
+                    self._load_persisted_profile(name))
         except Exception:
             self._motor_profile = None   # fail-closed: ceilings fall back
         self._apply_profile_motion_limits()
+
+    @staticmethod
+    def _load_persisted_profile(name):
+        """The saved profile for this motor, or None when there is not one.
+
+        A missing file is the normal first-contact case.  A corrupt or
+        unreadable one degrades to None (the run then behaves as a first run)
+        rather than blocking the connection.
+        """
+        try:
+            return motor_profile.MotorProfile.load(name)
+        except (FileNotFoundError, OSError, ValueError, KeyError, TypeError):
+            return None
 
     def _apply_profile_motion_limits(self):
         """P2: derive the jog/motion spinbox ceilings from the MotorProfile.

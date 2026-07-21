@@ -18,6 +18,7 @@ import pytest
 from PyQt6 import QtWidgets
 
 import main as app_main
+import motor_profile
 import single_axis_motion
 
 
@@ -265,3 +266,65 @@ def test_motion_io_safety_panel_shows_sto_unverified_never_ok(window):
     # the build path never wires telemetry into these pills, so green never appears.
     window._paint_safety_pill(window.io_sto1, "미검증", "unverified")
     assert app_main.MainWindow._PILL_STYLE["ok"][0] not in window.io_sto1.styleSheet()
+
+
+# ======================================================================================
+# Connect-time carry-over of the LEARNED profile state (field defect 2026-07-22)
+# ======================================================================================
+def _learned_profile(name="drive-xyz"):
+    return motor_profile.MotorProfile.from_sources(
+        name,
+        drive_readings={"VH[2]": 3932160.0, "CA[18]": 65536.0,
+                        "CA[19]": 16.0, "CA[28]": 0.0,
+                        "CL[1]": 21.2132, "PL[1]": 70.7107},
+    ).with_green_run(i_ba_a=1.3297826865671643, k_a=1792123.278946844)
+
+
+def test_connect_carries_learned_state_when_identity_is_known(window,
+                                                              monkeypatch):
+    """The profile used to be write-only: GREEN runs saved a baseline and the
+    next connection never read it back, so the signature stayed on its
+    first-run cap forever and censored its own measurement."""
+    learned = _learned_profile()
+    seen = []
+    monkeypatch.setattr(
+        app_main.MainWindow, "_load_persisted_profile",
+        staticmethod(lambda name: (seen.append(name), learned)[1]))
+    window._connected_identity = {"drive_identity": "drive-xyz"}
+    _arm_profile(window)
+
+    assert seen == ["drive-xyz"]
+    prof = window._motor_profile
+    assert prof.has_learned_state() is True
+    assert prof.ka_baseline == pytest.approx(1792123.278946844)
+    assert prof.signature_band["i_ba_ref_a"] == pytest.approx(
+        1.3297826865671643)
+    # ...while the drive-derived side still comes from THIS connection
+    assert prof.effective_rated_rpm == pytest.approx(3600.0)
+    assert prof.cont_current_a == pytest.approx(21.2132)
+
+
+def test_connect_without_identity_never_imports_a_baseline(window,
+                                                           monkeypatch):
+    """"connected-motor" is a shared fallback bucket.  One motor's baseline
+    must never authorize another motor's energize envelope, so an unidentified
+    drive gets no learned state at all."""
+    called = []
+    monkeypatch.setattr(
+        app_main.MainWindow, "_load_persisted_profile",
+        staticmethod(lambda name: (called.append(name), _learned_profile())[1]))
+    window._connected_identity = {}          # drive identity unavailable
+    _arm_profile(window)
+
+    assert called == [], "unidentified drive must not load a saved baseline"
+    assert window._motor_profile.has_learned_state() is False
+
+
+def test_persisted_profile_loader_degrades_on_a_bad_file(monkeypatch):
+    """A missing file is the normal first-contact case; a corrupt one must not
+    block the connection — both degrade to "no baseline"."""
+    for exc in (FileNotFoundError, OSError, ValueError, KeyError, TypeError):
+        monkeypatch.setattr(
+            motor_profile.MotorProfile, "load",
+            staticmethod(lambda *a, **k: (_ for _ in ()).throw(exc("x"))))
+        assert app_main.MainWindow._load_persisted_profile("any") is None
