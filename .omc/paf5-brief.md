@@ -422,3 +422,9 @@ autotune_current/velpos가 physics_gates 소비(EAS 게인/FF[1] 대조 폐기).
 안전천장 Opus 직접. 잔여: 기존 --smoke-velpos 1실패(P1/P2 Apply/Save vocab, baseline부터·별건),
 에이전트 재량편차(dt→wall-clock 보정으로 G1d RED 회피·암페어 하한 상대화, 코드+테스트에 고정됨).
 남은 단계: P4 시뮬 구현, P5 UI. 내일 실기 재커뮤(런북 R0~R6).
+
+## P5 완성 (2026-07-21, 커밋 795e0c8 푸시) — 나브 EAS 재배열
+DEFAULT_LAYOUT.active만 EAS 순서(canonical 순열)로 디커플링, 페이지 인덱스 불변→인덱스결합
+테스트 전부 불변. 시작 시 Motor 상단 착지. tool_organizer 유닛 6건 갱신. 전체 2115 passed.
+**오프라인 단계 P0~P5 전부 완료·푸시. 남은 것 = 내일 감독 실기(P6 + P2/P4 field): 런북 R0~R6,
+서명 통전 ≤1.30A 확정, CA[7] 부호·CS 생존·전원 δ재추첨 실기 확정, 정격 3600 조그 실기.**
