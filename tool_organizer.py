@@ -73,7 +73,23 @@ class ToolLayout:
 # integration type.  Both names denote the same frozen class.
 ToolOrganizerLayout = ToolLayout
 
-DEFAULT_LAYOUT = ToolLayout(active=CANONICAL_TOOL_IDS, available=())
+# EAS-flow default nav VISUAL order: setup (Motor/Feedback/Axis) -> Tuning ->
+# run (Motion) -> Recorder/System -> diagnostics (Status).  This is the button
+# ordering only; CANONICAL_TOOL_IDS still defines the page/stack indices (which
+# stay fixed, so index-coupled callers/tests are unaffected).  A permutation of
+# CANONICAL_TOOL_IDS, so it validates as a complete active partition.
+DEFAULT_NAV_ORDER = (
+    "motor",
+    "feedback",
+    "axis",
+    "tuning",
+    "motion",
+    "recorder",
+    "system",
+    "status",
+)
+
+DEFAULT_LAYOUT = ToolLayout(active=DEFAULT_NAV_ORDER, available=())
 
 
 def validate_layout(layout: ToolLayout) -> ToolLayout:

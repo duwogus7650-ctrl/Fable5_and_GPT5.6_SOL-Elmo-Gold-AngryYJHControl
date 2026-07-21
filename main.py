@@ -6452,7 +6452,13 @@ class MainWindow(QtWidgets.QMainWindow):
         content_col.addWidget(bc_bar, 0)
         content_col.addWidget(self.workspace_scroll, 1)
         row.addWidget(nav_col, 0); row.addLayout(content_col, 1)
+        # EAS-flow default: render the nav buttons in DEFAULT_LAYOUT (visual)
+        # order and land on the first/top tool.  Page/stack indices stay
+        # canonical (built above), so index-coupled callers are unaffected.
         self._nav_to(0)
+        self._render_tool_layout(
+            self.tool_layout,
+            preferred_index=self._TOOL_ID_TO_PAGE_INDEX[self.tool_layout.active[0]])
         return wrap
 
     def _render_tool_layout(self, layout, *, preferred_index=None):

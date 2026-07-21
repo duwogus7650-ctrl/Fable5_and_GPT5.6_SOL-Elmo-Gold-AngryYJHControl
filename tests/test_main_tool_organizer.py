@@ -185,7 +185,8 @@ def test_organizer_is_modeless_local_ui_and_cannot_hide_safety_shell(
 def test_apply_hides_active_tool_falls_back_and_preserves_all_pages(
         window, qapp):
     page_objects = tuple(window.stack.widget(i) for i in range(window.stack.count()))
-    assert window.stack.currentIndex() == 0
+    # EAS-flow default lands on the first/top tool = motor (canonical index 1)
+    assert window.stack.currentIndex() == 1
     dialog = _open_dialog(window, qapp)
 
     _select_tool(dialog.active_list, "motion")
@@ -193,9 +194,11 @@ def test_apply_hides_active_tool_falls_back_and_preserves_all_pages(
     dialog.btn_apply.click()
     qapp.processEvents()
 
+    # EAS default order (motor,feedback,axis,tuning,motion,recorder,system,status)
+    # minus the removed motion
     assert window.tool_layout.active == (
-        "motor", "feedback", "tuning", "axis",
-        "recorder", "status", "system")
+        "motor", "feedback", "axis", "tuning",
+        "recorder", "system", "status")
     assert window.stack.currentIndex() == 1
     assert not window._nav_button_by_tool_id["motion"].isVisible()
     assert all(
@@ -205,6 +208,24 @@ def test_apply_hides_active_tool_falls_back_and_preserves_all_pages(
     assert tuple(window.stack.widget(i) for i in range(8)) == page_objects
     assert window.btn_global_stop.isVisibleTo(window)
     assert window.btn_conn.isVisibleTo(window)
+
+
+def test_default_startup_nav_order_is_eas_flow(window, qapp):
+    """The fresh window renders the vertical tool nav in EAS-flow VISUAL order
+    (setup -> tuning -> run -> diagnostics), and lands on the top tool.  Page
+    indices stay canonical, so this is a presentation-only ordering."""
+    visible_buttons = sorted(
+        (button.mapTo(window, QtCore.QPoint(0, 0)).y(), tool_id)
+        for tool_id, button in window._nav_button_by_tool_id.items()
+        if button.isVisibleTo(window))
+    assert tuple(tool_id for _, tool_id in visible_buttons) \
+        == tool_organizer.DEFAULT_NAV_ORDER
+    assert tool_organizer.DEFAULT_NAV_ORDER[0] == "motor"
+    # landed on the top tool (motor = canonical page index 1)
+    assert window.stack.currentIndex() \
+        == window._TOOL_ID_TO_PAGE_INDEX["motor"]
+    # every page object still present (ordering did not drop pages)
+    assert window.stack.count() == len(tool_organizer.CANONICAL_TOOL_IDS)
 
 
 def test_reorder_and_reset_are_atomic_and_keep_menu_duplicates_consistent(
