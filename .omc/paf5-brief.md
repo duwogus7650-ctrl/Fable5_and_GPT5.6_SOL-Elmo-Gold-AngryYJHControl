@@ -428,3 +428,10 @@ DEFAULT_LAYOUT.active만 EAS 순서(canonical 순열)로 디커플링, 페이지
 테스트 전부 불변. 시작 시 Motor 상단 착지. tool_organizer 유닛 6건 갱신. 전체 2115 passed.
 **오프라인 단계 P0~P5 전부 완료·푸시. 남은 것 = 내일 감독 실기(P6 + P2/P4 field): 런북 R0~R6,
 서명 통전 ≤1.30A 확정, CA[7] 부호·CS 생존·전원 δ재추첨 실기 확정, 정격 3600 조그 실기.**
+
+## P4 GUI 배선 완료 (2026-07-21, 커밋 b4319c2 푸시)
+main.py에 Commutation ID 런북 버튼 배선(워커 job + 확인 다이얼로그 "실제 통전·CA[7] 재기록"
++ ≤1.30A 명시 + S0~S6 진행 + Abort + 결과표시). 통전은 버튼+다이얼로그에서만(무인 없음).
+엔진파일 무변경. 신규 UI 16 passed, 전체 2131 passed exit0.
+**→ 오프라인 전부 완료. 내일 실기: 앱의 'Commutation ID 실행' 버튼으로 런북 R0~R6 수행.**
+잔여 별건: --smoke-velpos "P1/P2 Apply/Save vocabulary" 기존 결함 1건(이번 작업들과 무관).
