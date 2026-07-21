@@ -255,6 +255,14 @@ JV_RECORD_S = 0.5
 JV_STOP_RPM = 30.0
 JV_STOP_TIMEOUT_S = 2.0
 DECEL_TAIL_S = 0.25       # post-pulse coast captured for the regression
+# --- ENTRANCE coast-down gate (field defect 2026-07-21) -------------------------------
+# A run that early-stopped at the motion cut releases the rotor at speed.  The
+# operator pressing Run again seconds later enabled INTO that coast-down: the
+# UM3 drag read follow=0.63 (contaminated) and the enable latched MF=0x1 (main
+# feedback error), after which every later attempt was refused at preflight.
+# The pulse pairs and the P1_CONFIG rollback already wait out a coasting rotor;
+# the ENTRANCE did not.  Same nominal-vs-physical-settling family.
+PREFLIGHT_REST_TIMEOUT_S = 12.0
 # --- WAL rollback stationary-proof coast-down budget (live relock fix 2026-07-20) ------
 # begin_persistence_ram_rollback() proves MO=SO=VX=0 in ONE sweep and raises
 # (with NO ledger state change) when the axis is not yet at rest.  Live runs
@@ -729,19 +737,54 @@ def _i_net(i0: float, i_ba) -> float:
     return i0
 
 
-def _pulse_sleep_with_cut(ctx: _Ctx, dur_s: float, vx_cut_cnt: float) -> bool:
-    """Sleep dur_s in 30 ms polls; True when |VX| crossed vx_cut_cnt (motion
-    early-stop, UNIT-DIAG pattern extended to the MAIN pulses — HIGH fix:
-    any mis-sized pulse is cut before the overspeed guard and analyzed from
-    the captured window; a correctly sized pulse never reaches the cut)."""
-    remaining = float(dur_s)
+def _pulse_sleep_with_cut(ctx: _Ctx, dur_s: float, vx_cut_cnt: float,
+                          t0: Optional[float] = None) -> bool:
+    """Hold the current torque for dur_s of WALL-CLOCK time in cut polls;
+    True when |VX| crossed vx_cut_cnt (motion early-stop, UNIT-DIAG pattern
+    extended to the MAIN pulses — HIGH fix: any mis-sized pulse is cut before
+    the overspeed guard and analyzed from the captured window; a correctly
+    sized pulse never reaches the cut).
+
+    ROOT FIX (ported from the sibling build 2026-07-17, nominal-vs-wall family
+    — same class as the P1_CONFIG rollback coast-down wait): the old loop
+    decremented a NOMINAL budget (remaining -= step) while every poll also paid
+    a VX serial round trip (~7-10 ms), so the real torque-on ran 1.63-2.02x the
+    commanded tp.  Field reproduction on this build 2026-07-21 (run
+    autotune_vp_result_1784642937526): sizing aimed target_rpm_eff=360 and BOTH
+    pulses tripped the 720 rpm cut (cut_cnt_s=786432) on their FIRST pulse.
+    The loop now runs to a wall-clock DEADLINE on params.clock_fn (the same
+    machinery unit_diag already uses for t_pulse_host).  The nominal budget is
+    kept ONLY as a liveness rail: a frozen / out-of-band clock (un-injected
+    sim) must neither spin forever nor stretch the pulse beyond the old
+    behavior.
+
+    t0 = clock reading taken by the caller BEFORE the preceding TC write: the
+    deadline is then anchored at the write-bracket MIDPOINT (unit_diag's
+    ack-latency-cancelling trick), so the torque-on window measured between the
+    drive-side TC edges is dur_s to within ~half a round trip instead of
+    dur_s + 2 round trips.  Two residues remain and are accepted: the exit can
+    overrun by one VX round trip when the deadline lands inside it, and the
+    closing TC write adds half a round trip (sibling live-wire measurement:
+    x1.05 of tp vs x1.13 un-anchored vs x1.7-2.0 pre-fix)."""
+    clock = ctx.params.clock_fn
+    now = clock()
+    start = now if t0 is None else 0.5 * (float(t0) + now)
+    t_end = start + float(dur_s)
+    nominal_left = float(dur_s)         # liveness rail (frozen clock fallback)
     prev_mode = ctx.guard_vx_only
     ctx.guard_vx_only = True            # MEDIUM: no MF/LC serial reads inside
     try:                                # the cut window (latency guard band)
-        while remaining > 1e-9:
-            step = min(PULSE_CUT_POLL_S, remaining)
+        while nominal_left > 1e-9:
+            t_left = t_end - clock()
+            if t_left <= 1e-9:
+                return False            # wall deadline reached
+            step = max(min(PULSE_CUT_POLL_S, nominal_left, t_left), 1e-6)
             _sleep(ctx, step)
-            remaining -= step
+            nominal_left -= step
+            if clock() >= t_end - 1e-9:
+                return False            # deadline hit during the sleep — hand
+                                        # back NOW (a trailing VX round trip
+                                        # would stretch the pulse past tp)
             vx = _cmd(ctx, "VX")
             if isinstance(vx, (int, float)) and abs(vx) > vx_cut_cnt:
                 return True
@@ -2674,6 +2717,19 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     ctx.evidence["snapshot_path"] = ctx.snapshot_path
     _emit(ctx, "SNAPSHOT", "스냅숏 저장: %s" % ctx.snapshot_path)
 
+    # ---- entrance coast-down gate (before ANY mutation) --------------------------------
+    # Refuse cleanly while the rotor is still turning: enabling into a coasting
+    # shaft is what latched MF=0x1 in the field.  Placed BEFORE the limits
+    # transaction so a refusal leaves the drive untouched, and after CA[18] so
+    # _wait_rest can convert its rpm threshold to counts.
+    try:
+        _wait_rest(ctx, timeout_s=PREFLIGHT_REST_TIMEOUT_S)
+    except AbortError:
+        raise PreflightError(
+            "축이 아직 회전 중 — %.0fs 대기했으나 잔존 회전이 남아 있습니다. "
+            "직전 런의 코스트다운일 수 있으니 축이 완전히 멎은 뒤 다시 실행하세요."
+            % PREFLIGHT_REST_TIMEOUT_S)
+
     # ---- P5 critical limits: full-set apply/readback proof before MO=1 ----------------
     _apply_limits_verified(ctx)
 
@@ -2884,13 +2940,14 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         _seg(ctx, "tc")
         rec_dt = _record_start(ctx, 0.4)
         _sleep(ctx, PRE_ROLL_S)
+        tb0 = ctx.params.clock_fn()             # write-bracket midpoint anchor
         _write(ctx, "TC", i_probe, allow_motion=True)
         # cap-raise: the ADAPTIVE probe current (mover-fed, up to 0.4*CL) can
         # cross the guard within 50 ms on a low-running-friction plant — the
         # same motion cut as the main pulses protects it (two-slope analysis
         # is duration-agnostic; the cut only shortens the on-window)
         probe_cut = _pulse_sleep_with_cut(
-            ctx, PROBE_T_S, MAINPULSE_STOP_FRAC * ctx.vx_guard_cnt)
+            ctx, PROBE_T_S, MAINPULSE_STOP_FRAC * ctx.vx_guard_cnt, t0=tb0)
         _write(ctx, "TC", 0.0, allow_motion=True)
         _sleep(ctx, 0.4 - PRE_ROLL_S - PROBE_T_S + 0.02)
         rec = _record_fetch(ctx)
@@ -2969,24 +3026,39 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                 cut_cnt = MAINPULSE_STOP_FRAC * ctx.vx_guard_cnt
                 _record_start(ctx, dur)
                 _sleep(ctx, PRE_ROLL_S)
+                tb0 = ctx.params.clock_fn()      # write-bracket midpoint anchors
                 _write(ctx, "TC", first_sign * i0, allow_motion=True)
-                cut1 = _pulse_sleep_with_cut(ctx, tp, cut_cnt)
+                cut1 = _pulse_sleep_with_cut(ctx, tp, cut_cnt, t0=tb0)
+                tb1 = ctx.params.clock_fn()
                 _write(ctx, "TC", -first_sign * i0, allow_motion=True)
-                cut2 = _pulse_sleep_with_cut(ctx, tp, cut_cnt)
+                cut2 = _pulse_sleep_with_cut(ctx, tp, cut_cnt, t0=tb1)
                 _write(ctx, "TC", 0.0, allow_motion=True)
                 _sleep(ctx, dur - PRE_ROLL_S - 2 * tp + 0.02)
                 rec = _record_fetch(ctx)
                 _seg(ctx, "idle")
-                if cut1 or cut2:                 # analyzed from the captured window
+                vpk_run = float(np.max(np.abs(rec["v"])))
+                # deadline follow-up (ported with the wall-clock fix): a
+                # crossing inside the LAST poll window is no longer seen at
+                # runtime — the deadline hands back before the trailing VX read,
+                # which never truncated anything anyway because the pulse was
+                # already over.  The advisory must not get lost: judge the
+                # captured window post-hoc, at zero wire cost.
+                crossed_rec = (not (cut1 or cut2)) and vpk_run > cut_cnt
+                if cut1 or cut2 or crossed_rec:  # analyzed from the captured window
                     ctx.evidence.setdefault("pulse_early_stops", []).append(
                         {"first_sign": first_sign, "cut_first": bool(cut1),
-                         "cut_second": bool(cut2), "i0_a": i0, "tp_s": tp,
+                         "cut_second": bool(cut2),
+                         "post_hoc": bool(crossed_rec), "i0_a": i0, "tp_s": tp,
                          "cut_cnt_s": cut_cnt})
                     ctx.warnings.append(
-                        "본펄스 모션 조기종료(|VX|>%.0f=%.2f·가드) — 사이징"
-                        " 여유 재검토, 캡처창으로 분석 계속"
-                        % (cut_cnt, MAINPULSE_STOP_FRAC))
-                vpk_run = float(np.max(np.abs(rec["v"])))
+                        ("본펄스 피크가 컷 레벨 초과(v_pk %.0f>%.0f=%.2f·가드,"
+                         " 마지막 폴 창 교차 — 트렁케이션 없음) — 사이징 여유"
+                         " 재검토, 캡처창으로 분석 계속"
+                         % (vpk_run, cut_cnt, MAINPULSE_STOP_FRAC))
+                        if crossed_rec else
+                        ("본펄스 모션 조기종료(|VX|>%.0f=%.2f·가드) — 사이징"
+                         " 여유 재검토, 캡처창으로 분석 계속"
+                         % (cut_cnt, MAINPULSE_STOP_FRAC)))
                 if vpk_run < ctx.ca18 * MOTION_MIN_RPM / 60.0:
                     if m_try == 0:
                         i0 = min(2.0 * i0, 0.4 * ctx.cl1)

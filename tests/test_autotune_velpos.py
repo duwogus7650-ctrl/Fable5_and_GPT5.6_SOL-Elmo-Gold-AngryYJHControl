@@ -1426,12 +1426,20 @@ def test_mainpulse_motion_cut_saves_slow_oversize(tmp_path):
     toward the guard; the motion cut TRUNCATES it and the run SURVIVES on the
     captured window (visible warning) — mis-sizing is no longer fatal.
     (The old absurd-tp_target scenario is now neutralized upstream by the
-    target clamp <= 0.8*cut, so the teeth moved to the model-mismatch path.)"""
+    target clamp <= 0.8*cut, so the teeth moved to the model-mismatch path.)
+
+    Since the wall-clock deadline fix the DETECTION POINT can be either of two
+    equivalent places, and this sim (zero serial latency) lands in the second:
+    a runtime truncation, or — when the crossing falls inside the last poll
+    window, where the deadline hands back before a trailing VX read — the
+    post-hoc judgement of the captured window.  The contract asserted here is
+    the same either way: survives, advises visibly, K_a still recovered."""
     drive = HiStictionLowRunSim(i_s=2.0, i_c=0.1)
     res = run_velpos_autotune(drive, _params(drive, tmp_path))
     assert res.status == YELLOW, (res.status, res.reason, res.warnings)
     assert "과속" not in res.reason
-    assert any("조기종료" in w for w in res.warnings)
+    assert any(("조기종료" in w) or ("컷 레벨 초과" in w)
+               for w in res.warnings), res.warnings
     assert res.evidence.get("pulse_early_stops")
     guard_cnt = CA18 * 1200.0 / 60.0
     for run in res.evidence["pulse_runs"]:
@@ -4461,3 +4469,144 @@ def test_verify_rejects_speed_at_guard(tmp_path):
     assert res.status == RED and "가드" in res.reason
     assert drive.regs["MO"] == 0
     assert not any(c == "MO=1" for c, _ in drive.log)
+
+
+# ======================================================================================
+# Pulse torque-on window: WALL-CLOCK oracle (nominal-vs-wall family)
+# ======================================================================================
+class _LatencyLink:
+    """Serial link whose every round trip costs wall-clock time.
+
+    The VPSim above advances its clock ONLY inside advance() (sleep), so a
+    round trip is free and the pre-fix nominal-budget loop looked correct in
+    simulation.  The field disagreed: on 2026-07-21 a main pulse sized for
+    target_rpm_eff=360 rpm tripped the 720 rpm cut in BOTH directions
+    (autotune_vp_result_1784642937526), because ~15 VX polls x ~8 ms of
+    round trip were never charged against the pulse budget.  This link models
+    that latency so the oracle can see it.
+    """
+
+    def __init__(self, rt_s=0.008, vx_cnt=0.0):
+        self.t = 0.0
+        self.rt_s = float(rt_s)
+        self.vx = float(vx_cnt)
+        self.cmds = 0
+
+    def command(self, cmd, **kwargs):
+        self.cmds += 1
+        self.t += self.rt_s                 # the round trip, charged honestly
+        core = "".join(str(cmd).split()).upper().rstrip(";")
+        return self.vx if core == "VX" else 0.0
+
+    def sleep(self, dur_s):
+        self.t += float(dur_s)
+
+
+def _latency_ctx(tmp_path, rt_s=0.008, vx_cnt=0.0, clock_fn=None):
+    link = _LatencyLink(rt_s=rt_s, vx_cnt=vx_cnt)
+    params = AutotuneVPParams(
+        snapshot_dir=str(tmp_path),
+        clock_fn=(lambda: link.t) if clock_fn is None else clock_fn,
+        sleep_fn=link.sleep)
+    return link, vp._Ctx(link, params)
+
+
+_TP_FIELD = 0.15548307878612855     # the tp the field run actually sized
+
+
+def test_pulse_window_holds_wall_clock_tp(tmp_path):
+    """The torque-on window is tp of WALL CLOCK, not tp of nominal bookkeeping.
+
+    Pre-fix arithmetic for this case: tp + ceil(tp/PULSE_CUT_POLL_S)*rt
+    = 0.1555 + 16*0.008 = 0.283 s = 1.82x tp -> the shaft reaches ~1.8x the
+    sized speed, which is exactly how a 360 rpm target hit the 720 rpm cut.
+    """
+    link, ctx = _latency_ctx(tmp_path)
+    t_start = link.t
+    cut = vp._pulse_sleep_with_cut(ctx, _TP_FIELD, 1e12)   # cut unreachable
+    elapsed = link.t - t_start
+
+    assert cut is False
+    pre_fix = _TP_FIELD + math.ceil(_TP_FIELD / vp.PULSE_CUT_POLL_S) * 0.008
+    assert pre_fix > _TP_FIELD * 1.7          # the defect this test locks out
+    assert elapsed <= _TP_FIELD * 1.15, (
+        "torque-on ran %.4f s for a %.4f s pulse (x%.2f)"
+        % (elapsed, _TP_FIELD, elapsed / _TP_FIELD))
+
+
+def test_pulse_window_midpoint_anchor_cancels_write_latency(tmp_path):
+    """t0 (clock BEFORE the TC write) anchors the deadline at the write-bracket
+    midpoint, so the drive-side torque-on window is not stretched by the ack."""
+    link, ctx = _latency_ctx(tmp_path)
+    tb0 = link.t
+    link.command("TC=1.0")                    # the preceding write's round trip
+    t_write_done = link.t
+    vp._pulse_sleep_with_cut(ctx, _TP_FIELD, 1e12, t0=tb0)
+    anchored = link.t - t_write_done
+
+    link2, ctx2 = _latency_ctx(tmp_path)
+    link2.command("TC=1.0")
+    t2 = link2.t
+    vp._pulse_sleep_with_cut(ctx2, _TP_FIELD, 1e12)
+    un_anchored = link2.t - t2
+
+    assert anchored < un_anchored              # half a round trip recovered
+    assert anchored <= _TP_FIELD * 1.10
+
+
+def test_pulse_cut_still_fires_above_threshold(tmp_path):
+    """The wall-clock deadline must not disarm the motion early-stop."""
+    link, ctx = _latency_ctx(tmp_path, vx_cnt=900000.0)
+    cut = vp._pulse_sleep_with_cut(ctx, _TP_FIELD, 786432.0)
+    assert cut is True
+    assert link.t - 0.0 < _TP_FIELD            # cut long before the deadline
+
+
+def test_pulse_window_frozen_clock_falls_back_to_nominal(tmp_path):
+    """A frozen / out-of-band clock (un-injected sim) must neither spin forever
+    nor stretch the pulse beyond the pre-fix behavior: the nominal budget is
+    kept as a liveness rail."""
+    link, ctx = _latency_ctx(tmp_path, clock_fn=lambda: 0.0)
+    t_start = link.t
+    cut = vp._pulse_sleep_with_cut(ctx, _TP_FIELD, 1e12)
+    elapsed = link.t - t_start
+
+    assert cut is False
+    pre_fix = _TP_FIELD + math.ceil(_TP_FIELD / vp.PULSE_CUT_POLL_S) * 0.008
+    assert elapsed <= pre_fix + 1e-6           # never worse than pre-fix
+
+
+def test_entrance_coast_down_gate_refuses_before_any_mutation(tmp_path,
+                                                              monkeypatch):
+    """A still-turning shaft is refused at preflight with the drive untouched.
+
+    Field defect 2026-07-21: run 1 early-stopped at the motion cut and released
+    the rotor at speed; run 2 started seconds later, drew a contaminated UM3
+    drag (follow=0.63) and latched MF=0x1 (main feedback error) on enable.  The
+    gate must fire BEFORE the limits transaction so a refusal cannot strand
+    temporary limits on the drive.
+    """
+    drive = VPSim()
+    seen = []
+
+    def _never_rests(ctx, timeout_s=5.0):
+        seen.append(timeout_s)
+        raise vp.AbortError("synthetic coast-down that never settles")
+
+    monkeypatch.setattr(vp, "_wait_rest", _never_rests)
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "회전 중" in res.reason
+    assert seen and seen[0] == vp.PREFLIGHT_REST_TIMEOUT_S
+    assert not any(c == "MO=1" for c, _ in drive.log)
+    assert not any("=" in c and c.startswith(("HL[", "LL[", "ER[", "SP", "AC",
+                                              "DC", "SD"))
+                   for c, _ in drive.log), "limits were mutated before refusal"
+
+
+def test_entrance_coast_down_gate_passes_at_rest(tmp_path):
+    """The gate must be invisible on a shaft that is already stopped."""
+    drive = VPSim()
+    res = run_velpos_autotune(drive, _params(drive, tmp_path))
+    assert res.status in (GREEN, YELLOW)

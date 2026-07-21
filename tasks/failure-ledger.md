@@ -63,6 +63,7 @@
 - 대안·다음엔: **리밋 복원 경로에는 이미 있는 코스트다운 재시도가 P1_CONFIG 롤백엔 없다** — 동일하게 정착 대기(`_wait_rest` 류: VX+PX 이중증인 2연속 정지)+재시도를 넣어야 한다. 기어드/관성 부하에선 MO=0 직후 항상 잔류 회전이 있으므로 이 결함은 **재현율 100%**. 복구는 전원 재인가(플래시 원본 재로드) + Persistence Audit(기록 해소)로 확인됨("ORIGINAL PROFILE OBSERVED AFTER RESET")
 - 재사용 자산: 리밋 복원의 코스트다운 재시도 로직(autotune_velpos.py 주석 :239-243), `_wait_rest` :721
 - 참조: [[gpt56sol-elmo-jog-electrical-fault]]
+- 확인 2026-07-21: 수정(`autotune_current.py::_begin_rollback_after_settle`) **실기 검증 완료**. 07-21 오전 Phase 1 런에서 경고 `"롤백 정지증명: 코스트다운 0.1s 대기 후 통과"` 발화 — 이 문자열은 `waited > 0.0`일 때만 붙으므로 **첫 `begin_rollback`이 실제로 `stationary…VX=`로 거부됐고 0.1s 후 통과**했다는 증거다(무발화였던 07-20 밤 런은 증거가 아니라고 원장에 남겨뒀던 건). 수정 전이면 그 첫 거부가 전파돼 UNKNOWN 락으로 갔을 상황. 재현성도 확인: R 0.131586→0.132791 Ω(+0.92%), L 44.0003→43.948 µH(−0.12%), KP[1] −0.12%, KI[1] 812.87 Hz 동일(TS 양자화 규칙대로), PM 51.08→51.5°
 
 ## 2026-07-21 — 자기 데드락 수정: `_restore_limits`가 일회성 종결자라 "잠깐 풀기"가 불가 → 트랜잭션 2분할로 해결
 - 시도: 커뮤 런이 자기 P2_LIMITS 트랜잭션 때문에 자기 CA[7] 쓰기를 막는 문제를, "쓰기 구간만 리밋을 복원했다 재적용"으로 풀려 함
@@ -84,3 +85,17 @@
 - 대안·다음엔: 진단은 **같은 조건을 공유하는 형제 위젯의 상태 차이**로 좁힌다 — `Verify Installed P2`(서명 조건만 요구)가 활성인데 Phase 2가 비활성이면 차단자는 서명이 아니라 나머지 조건 하나뿐이다. 설계 자체는 정상(오래된 R·L로 속도 게인을 설계하면 안 됨). 앱 재시작 후에는 **Phase 1 → 서명 → Phase 2** 순서로 한 세션 안에서 재실행할 것. `_advance_tuning_authority_generation()`은 연결 이벤트(`_on_connected`/`_on_failed`)에서만 증가하므로 Phase 1 실행이 서명을 무효화하지는 않는다(순서 자유)
 - 재사용 자산: 없음
 - 참조: 같은 날 원장 "결함 ⑤ 부트스트랩 순환" 항목
+
+## 2026-07-21 — 본펄스가 명목 tp의 1.8배 인가돼 360 rpm 목표가 720 rpm 컷을 때림 (형제 레포 수정 미이식)
+- 시도: Phase 2(Vel/Pos)를 실기 실행해 K_a 베이스라인 확립
+- 실패 이유: `_pulse_sleep_with_cut`가 **명목 예산만 차감**했다(`remaining -= step`). 매 폴마다 `_cmd(ctx,"VX")` 시리얼 왕복(~8-10 ms)이 실제 시간을 먹는데 예산에 반영되지 않아, `PULSE_CUT_POLL_S=0.01`·tp=0.1555 s 조건에서 실제 토크-온이 **×1.8~2.0**로 늘었다. 사이징은 `target_rpm_eff=360`을 겨냥했는데 축은 720 rpm 컷(`cut_cnt_s=786432`)을 **양방향 모두 첫 펄스에서** 넘었다(실기 `autotune_vp_result_1784642937526`, `pulse_early_stops` 2건 `cut_first:true`). **이 결함은 시뮬이 잡을 수 없었다 — VPSim은 `advance()`(수면)에서만 시계를 전진시켜 `command()` 왕복이 공짜였다.** 즉 "시뮬에 없는 물리(전송지연)는 시뮬로 검출 불가"
+- 대안·다음엔: **형제 레포(`C:\Users\user\Fable5-Elmo-Control-Program`)에 2026-07-17 근본수정이 이미 있었다 — 이식만 하면 됐다.** `params.clock_fn` 기반 **벽시계 데드라인** + TC 쓰기 브래킷 **중점 앵커(t0)**. 이 레포에도 `clock_fn`은 이미 있었다(unit_diag가 t_pulse_host 실측에 사용 중). 부작용 하나: 데드라인이 마지막 VX 폴을 생략하므로 종료 직전 교차가 런타임에 안 잡힘 → 형제의 **사후 판정**(`crossed_rec = vpk_run > cut_cnt`)도 함께 이식해 경고를 보존. 오라클 측정(왕복 8 ms 모델): **×1.82 → ×1.04(앵커없음) → ×0.97(t0 앵커)**. 음성 대조로 수정 전 코드에서 `test_pulse_window_holds_wall_clock_tp` 실패 확인. **교훈: 자매 빌드가 있으면 새 증상을 만났을 때 먼저 거기서 같은 증상을 검색하라 — 이미 근본원인까지 규명돼 있을 수 있다**
+- 재사용 자산: `autotune_velpos._pulse_sleep_with_cut`(벽시계판), 오라클 하네스 `tests/test_autotune_velpos.py::_LatencyLink`(**시리얼 왕복지연을 주입하는 시뮬 — 기존 VPSim이 못 보던 결함 계열 전용**), 테스트 4종
+- 참조: [[gpt56sol-elmo-jog-electrical-fault]], [[angryyjh-control-elmo]]
+
+## 2026-07-21 — 코스트다운 중 재실행이 MF=0x1(주 피드백 오류)을 래치, 앱에 폴트 해제 경로가 없어 자력 복구 불가
+- 시도: Phase 2 1회차(YELLOW) 직후 궁금해서 곧바로 2회차 실행
+- 실패 이유: 1회차가 720 rpm 컷에서 끊기며 MO=0으로 로터를 **회전 상태로 놓아줬다**. 2회차가 코스트다운 중에 시작 → UM3 드래그가 `follow=0.63`(오염, 정상 첫런은 0.0)로 나오고 회전 중 enable에서 **MF=0x1 = Main feedback error** 래치. 이후 시도는 전부 사전검증에서 즉시 RED(`모터 폴트 MF=1`). 펄스 쌍 앞(`_wait_rest`)과 P1_CONFIG 롤백에는 정착 대기가 있는데 **런 진입에는 없었다** — 같은 "명목 vs 물리적 정착" 계열의 세 번째. 더해서 **앱에 MO를 직접 쓰는 경로가 전혀 없어**(모든 통전이 MF≠0을 거부하는 커널 경유) 한번 폴트가 걸리면 전원 재인가 외에 빠져나올 방법이 없다. 사용자 지적 "eas는 안그랬는데"가 정확 — EAS는 재실행 시 폴트를 정리한다
+- 대안·다음엔: 진입 게이트 추가 — CA[18] 확보 후·**리밋 트랜잭션 열기 전**에 `_wait_rest(timeout=PREFLIGHT_REST_TIMEOUT_S=12)`, 실패 시 `PreflightError`로 무변이 거부(거부가 임시 리밋을 드라이브에 남기지 않게 순서가 중요). **미결: 감독형 폴트 해제(MO=0 → 정지증명 → MO=1 → MF 재확인) UI 경로** — 이게 없으면 EAS 동등성이 안 된다. 단, MF=1은 피드백 폴트라 무조건 자동해제는 금물이고 해제 시도 자체가 증거를 남겨야 한다
+- 재사용 자산: `autotune_velpos` 진입 게이트, `tests/test_autotune_velpos.py::test_entrance_coast_down_gate_*` 2종
+- 참조: 같은 날 원장 "본펄스가 명목 tp의 1.8배…" 항목, [[angryyjh-control-elmo]]
