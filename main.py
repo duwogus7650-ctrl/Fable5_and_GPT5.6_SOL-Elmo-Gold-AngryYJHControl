@@ -41,6 +41,49 @@ import feedback_spec
 import autotune_current
 import autotune_velpos
 import commutation_id
+import quick_tune_chain
+
+
+def _read_build_revision():
+    """Short git revision of the tree this process LOADED, or None.
+
+    Read straight out of .git — no subprocess (the app must not shell out at
+    startup) and a packaged build without .git degrades to None instead of
+    failing.  Captured once at import, which is exactly the property that makes
+    it useful: it names the code the RUNNING PROCESS holds, so a commit made
+    after launch cannot masquerade as loaded.
+
+    btw-028 / field 2026-07-22: two rounds of bench testing were spent on an app
+    instance that predated the fix under test.  The files on disk were new, the
+    process was old, and nothing on screen distinguished them.
+    """
+    try:
+        git = os.path.join(os.path.dirname(os.path.abspath(__file__)), ".git")
+        if os.path.isfile(git):                  # worktree: "gitdir: <path>"
+            with open(git, encoding="utf-8") as fh:
+                git = fh.read().split(":", 1)[1].strip()
+        with open(os.path.join(git, "HEAD"), encoding="utf-8") as fh:
+            head = fh.read().strip()
+        if not head.startswith("ref:"):
+            return head[:7] or None
+        name = head.split(" ", 1)[1].strip()
+        loose = os.path.join(git, *name.split("/"))
+        if os.path.exists(loose):
+            with open(loose, encoding="utf-8") as fh:
+                return fh.read().strip()[:7] or None
+        packed = os.path.join(git, "packed-refs")
+        if os.path.exists(packed):
+            with open(packed, encoding="utf-8") as fh:
+                for line in fh:
+                    if line.rstrip("\n").endswith(" " + name):
+                        return line.split(" ", 1)[0][:7] or None
+        return None
+    except Exception:
+        return None
+
+
+BUILD_REV = _read_build_revision()
+BUILD_LOADED_AT = time.strftime("%H:%M:%S")
 import expert_tuning_offline
 import expert_filter_scheduling_evidence
 import expert_limits_protections_evidence
@@ -3574,7 +3617,13 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def __init__(self):
         super().__init__()
-        self.setWindowTitle(APP_TITLE)
+        # The title bar names the build this PROCESS loaded (btw-028).  It costs
+        # zero layout space — the header is bound to 1366x820 for bench displays
+        # — and it is in every screenshot, which is exactly where the "is this
+        # app running my fix?" question kept being unanswerable on 2026-07-22.
+        self.setWindowTitle("%s  —  build %s · %s"
+                            % (APP_TITLE, BUILD_REV or "unknown",
+                               BUILD_LOADED_AT))
         # The compact eight-page engineering workspace is contract-tested at
         # 1366 px.  Declaring a smaller initial size caused Qt to silently grow
         # the window to the header/card minimum and made the visible contract
@@ -5997,6 +6046,10 @@ class MainWindow(QtWidgets.QMainWindow):
         This is not represented as STO.  It merely asks the worker to issue ST
         and MO=0 with readback, ahead of ordinary jobs.
         """
+        # DRIVE STOP must end the orchestration too: without this the aborted
+        # step's result would advance the chain straight into the next energize,
+        # i.e. the escape would not actually stop anything.
+        self._quick_chain_cancel("DRIVE STOP — 남은 단계는 실행되지 않습니다")
         if not (self.worker and self.worker.isRunning()):
             self._flash("드라이브가 연결되어 있지 않습니다.")
             return
@@ -10452,9 +10505,23 @@ class MainWindow(QtWidgets.QMainWindow):
         btnrow = QtWidgets.QGridLayout()
         btnrow.setHorizontalSpacing(8)
         btnrow.setVerticalSpacing(8)
+        # One-button EAS-style chain: commutation -> P1 -> signature -> P2 ->
+        # Apply, one consent up front.  The individual buttons below stay for
+        # manual/recovery use.  (btw-026: "EAS runs the whole thing on one
+        # press"; north stars: our app becomes EAS, keep the UI simple.)
+        self.btn_tune_quick = QtWidgets.QPushButton(
+            "▶  Quick Tuning (전 과정 자동 · EAS식)")
+        self.btn_tune_quick.setEnabled(False)
+        self.btn_tune_quick.setStyleSheet(
+            "QPushButton{background:%s;color:#052438;font-weight:900;"
+            "border:1px solid #79d8ff;padding:9px;}" % theme.INDIGO)
+        self.btn_tune_quick.clicked.connect(self._run_quick_tuning_clicked)
+        guided_run_layout.addWidget(self.btn_tune_quick)
         self.btn_tune = QtWidgets.QPushButton("Run Phase 1 (Current)"); self.btn_tune.setEnabled(False)
         self.btn_tune.clicked.connect(self._run_autotune_clicked)
-        self.btn_tune_signature = QtWidgets.QPushButton("Run Commutation Signature (≤1.30 A)")
+        # Label carries no fixed current: the cap is per-motor (green-band top,
+        # 2026-07-22).  The confirm dialog shows the actual number.
+        self.btn_tune_signature = QtWidgets.QPushButton("Run Commutation Signature")
         self.btn_tune_signature.setEnabled(False)
         self.btn_tune_signature.clicked.connect(self._run_signature_clicked)
         # P4 — commutation self-ID (runbook R0~R6).  Same gate class as the
@@ -10532,6 +10599,10 @@ class MainWindow(QtWidgets.QMainWindow):
                                 "실기 최초 실행은 통전·미세회전이 있으므로 감독 하에서만.")
         note.setProperty("role", "hint"); note.setWordWrap(True)
         v.addWidget(note); v.addStretch(1)
+        # one-button Quick Tuning orchestration state (None = not running)
+        self._quick_chain = None
+        # highest guided stage completed in this authority generation (-1 = none)
+        self._tune_stage_floor = -1
         # keep handles to the running results so Apply can reference them
         self._at_result = None
         self._at_result_generation = None
@@ -11349,8 +11420,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tune_dispatch_generation = getattr(
             self, "_tuning_authority_generation", 0)
         self._verify_trial_inflight = trial if kind == "verify" else None
-        for name in ("btn_tune", "btn_tune_signature", "btn_tune_commutation",
-                     "btn_tune_vp", "btn_tune_verify"):
+        for name in ("btn_tune_quick", "btn_tune", "btn_tune_signature",
+                     "btn_tune_commutation", "btn_tune_vp", "btn_tune_verify"):
             if hasattr(self, name):
                 getattr(self, name).setEnabled(False)
         if hasattr(self, "btn_motor_write"):
@@ -11413,7 +11484,17 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_tune_stage(self, active_idx, done_upto=-1):
         """Repaint the stage list: ● done, ◆ active, ○ pending.
-        Stages 0..2 = Phase 1 (current), 3..5 = Phase 2 (vel/pos)."""
+        Stages 0..2 = Phase 1 (current), 3..5 = Phase 2 (vel/pos).
+
+        ``done_upto`` is what the CURRENT run knows.  Stages completed earlier in
+        this same authority generation are remembered in ``_tune_stage_floor``
+        and stay lit, so the EAS-style 6-lamp wizard fills up across the chain
+        instead of resetting to hollow every time a new run starts (which is what
+        it did on 2026-07-22: a signature run blanked the three Phase-1 lamps).
+        The floor is cleared whenever tuning authority is invalidated, so it can
+        never claim a stage that was completed on a previous connection.
+        """
+        done_upto = max(int(done_upto), int(getattr(self, "_tune_stage_floor", -1)))
         for i, lbl in enumerate(self.tune_stage_lbls):
             base = self._AT_STAGES[i]
             if i <= done_upto:
@@ -11424,6 +11505,199 @@ class MainWindow(QtWidgets.QMainWindow):
                 mark, col = "○", theme.TEXT
             lbl.setText("%s  %s" % (mark, base))
             lbl.setStyleSheet("color:%s;" % col)
+
+    # ---- one-button Quick Tuning orchestration (btw-026, EAS parity) -----------------
+    # The chain ORDER and the accept/stop POLICY live in quick_tune_chain (pure,
+    # unit-tested offline).  This glue only dispatches and reports.  Consent is
+    # taken ONCE up front; the per-step dialogs are skipped deliberately, which
+    # is why the entry dialog must enumerate everything the chain will do.
+    _QUICK_STEP_LABEL = {
+        quick_tune_chain.COMMUTATION: "① 커뮤테이션 ID",
+        quick_tune_chain.PHASE1: "② Phase 1 (전류 R·L)",
+        quick_tune_chain.SIGNATURE: "③ 커뮤테이션 서명",
+        quick_tune_chain.PHASE2: "④ Phase 2 (속도·위치)",
+        quick_tune_chain.APPLY: "⑤ Apply → Drive RAM",
+    }
+
+    def _quick_chain_active(self) -> bool:
+        chain = getattr(self, "_quick_chain", None)
+        return chain is not None and not chain.done
+
+    def _run_quick_tuning_clicked(self):
+        if getattr(self, "_motor_write_inflight", False):
+            self._flash("Motor profile 저장 중에는 Quick Tuning을 시작할 수 없습니다.")
+            return
+        if getattr(self, "_tune_dispatch_inflight", None) is not None:
+            self._flash("이전 튜닝/검증 전송의 시작 또는 결과를 기다리는 중입니다.")
+            return
+        if self._quick_chain_active():
+            self._flash("Quick Tuning이 이미 진행 중입니다.")
+            return
+        if self._guard_unsaved_vp_trial("Quick Tuning을 실행"):
+            return
+        if not (self.worker and self.worker.isRunning()):
+            self._flash("드라이브를 먼저 연결하세요.")
+            return
+        prof = getattr(self, "_motor_profile", None)
+        band = getattr(prof, "signature_band", None) if prof is not None else None
+        ref = band.get("i_ba_ref_a") if isinstance(band, dict) else None
+        cap_a = autotune_velpos.signature_energize_cap(ref)
+        btn = QtWidgets.QMessageBox.warning(
+            self, "Quick Tuning 실행 확인 (⚠ 통전 + 실제 회전 · 승인 1회)",
+            "가이드 전 과정을 한 번에 실행합니다. 단계마다 다시 묻지 않으므로,"
+            " 아래 전부를 지금 승인하는 것입니다.\n\n"
+            "① 커뮤테이션 ID — 통전·미세회전, 필요 시 CA[7] 180° 재기록"
+            "(MO=0 게이트 + 되읽기 검증, 실패 시 원복, SV 없음)\n"
+            "② Phase 1 — 통전해 R·L 실측 (축이 최대 ±11.25° 순간 회전)\n"
+            "③ 커뮤테이션 서명 — +TC를 0에서 최대 %.2f A까지 램프\n"
+            "④ Phase 2 — ⚠ 실제 회전: ±토크 펄스 약 1바퀴 + ±300/±900 rpm 조그\n"
+            "⑤ Apply — 산출 게인을 Drive RAM에 적용 (모터 OFF, 되돌리기 가능,"
+            " SV 없음)\n\n"
+            "• 어느 단계든 RED면 즉시 중단합니다 (해당 커널이 자체 복원 수행).\n"
+            "• Phase 2가 YELLOW면 ⑤를 자동 실행하지 않고 멈춥니다 — 게인을"
+            " 확인하고 직접 적용하세요.\n"
+            "• DRIVE STOP과 Abort는 전 구간에서 살아 있습니다.\n\n"
+            "출력축 주변이 비어 자유 회전 가능하고, 케이블·치구가 안전하며,"
+            " E-stop/STO를 즉시 쓸 수 있습니까?" % cap_a,
+            QtWidgets.QMessageBox.StandardButton.Yes |
+            QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if btn != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        chain = quick_tune_chain.QuickTuneChain()
+        self._quick_chain = chain
+        self._quick_chain_apply_action(chain.start())
+
+    def _quick_chain_apply_action(self, action):
+        qtc = quick_tune_chain
+        if action.kind == qtc.DISPATCH:
+            label = self._QUICK_STEP_LABEL.get(action.step, action.step)
+            self.tune_status.setText("▶ Quick Tuning %s 시작…" % label)
+            if not self._quick_chain_dispatch(action.step):
+                self._quick_chain_finish(
+                    ok=False,
+                    reason=("%s 전송 거부 (전제 조건 미충족) — 남은 단계는"
+                            " 수동 버튼으로 진행하세요." % label))
+            return
+        if action.kind == qtc.FINISH:
+            self._quick_chain_finish(
+                ok=True,
+                reason="전 과정 완료 — 산출 게인이 Drive RAM에 적용됐습니다"
+                       " (SV 없음, Restore 가능).")
+            return
+        self._quick_chain_finish(
+            ok=action.ok, reason=action.reason,
+            needs_operator=action.needs_operator)
+
+    def _quick_chain_dispatch(self, step) -> bool:
+        """Dispatch one step without a dialog.  False = refused; the caller
+        stops the chain and hands control back to the manual buttons."""
+        qtc = quick_tune_chain
+        if not (self.worker and self.worker.isRunning()):
+            return False
+        prof = getattr(self, "_motor_profile", None)
+        prof_kw = {"profile": prof} if prof is not None else {}
+        if step == qtc.COMMUTATION:
+            if not self._claim_tune_dispatch("commutation"):
+                return False
+            self.worker.start_commutation_id(dict(prof_kw))
+            return True
+        if step == qtc.PHASE1:
+            if not self._claim_tune_dispatch("p1"):
+                return False
+            self._at_result = None
+            for k in self.tune_gain_fields:
+                self.tune_gain_fields[k].setText("—")
+            self.btn_tune_apply.setEnabled(False)
+            self.worker.start_autotune(dict(prof_kw))
+            return True
+        if step == qtc.SIGNATURE:
+            if not self._claim_tune_dispatch("signature"):
+                return False
+            self._vp_signature_run = True
+            self._vp_result = None
+            self.btn_tune_vp_apply.setEnabled(False)
+            kw = {"signature_only": True}
+            kw.update(prof_kw)
+            self.worker.start_velpos_autotune(kw)
+            return True
+        if step == qtc.PHASE2:
+            # Both of the manual button's gates, re-checked here on purpose.
+            # The motion authority is emitted just BEFORE velpos_result (worker
+            # order), so by the time the signature result advances the chain the
+            # authority is already latched — but that is a load-bearing ordering
+            # assumption.  If it ever changes, refuse and stop the chain rather
+            # than dispatch an ungated rotation.
+            if not self._motion_signature_is_current():
+                return False
+            ov = self._velpos_overrides()
+            if not all(name in ov for name in ("r_pp_ohm", "l_pp_h")):
+                return False        # no live Phase-1 R/L model: refuse, never hang
+            if not self._claim_tune_dispatch("p2"):
+                return False
+            self._vp_signature_run = False
+            self._vp_result = None
+            for k in ("k_a", "b_visc", "i_c", "kp_vel", "ki_vel", "kp_pos",
+                      "pm_vel", "pm_pos"):
+                self.tune_gain_fields[k].setText("—")
+            self.btn_tune_vp_apply.setEnabled(False)
+            self.worker.start_velpos_autotune(ov)
+            return True
+        if step == qtc.APPLY:
+            if not PRODUCTION_GAIN_APPLY_RAM_ENABLED:
+                return False
+            if getattr(self, "_vp_gain_trial", None) is not None:
+                return False
+            r = getattr(self, "_vp_result", None)
+            if (r is None
+                    or getattr(self, "_vp_result_generation", None) !=
+                    getattr(self, "_tuning_authority_generation", 0)
+                    or r.status not in (autotune_velpos.GREEN,
+                                        autotune_velpos.YELLOW)):
+                return False
+            if not self._claim_tune_dispatch("p2_begin"):
+                return False
+            self.btn_tune_vp_apply.setEnabled(False)
+            self.worker.begin_velpos_gain_trial(r)
+            return True
+        return False
+
+    def _quick_chain_on_result(self, step, status):
+        """Called at the tail of each step's result handler."""
+        chain = getattr(self, "_quick_chain", None)
+        if chain is None or chain.done:
+            return
+        if chain.current_step != step:
+            return          # a manual run interleaved; not ours to advance
+        try:
+            action = chain.on_result(step, str(status))
+        except Exception as exc:                      # noqa: BLE001
+            self._quick_chain_finish(
+                ok=False, reason="내부 오류로 중단: %r" % (exc,))
+            return
+        self._quick_chain_apply_action(action)
+
+    def _quick_chain_cancel(self, reason="Abort 요청으로 중단"):
+        if self._quick_chain_active():
+            self._quick_chain_finish(ok=False, reason=reason)
+
+    def _quick_chain_finish(self, ok, reason, needs_operator=False):
+        chain = getattr(self, "_quick_chain", None)
+        self._quick_chain = None
+        trail = ""
+        if chain is not None and chain.history:
+            trail = "  ·  " + " → ".join(
+                "%s %s" % (self._QUICK_STEP_LABEL.get(s, s), st)
+                for s, st in chain.history)
+        icon = "✅" if (ok and not needs_operator) else ("⚠" if ok else "⛔")
+        self.tune_status.setText(
+            "%s Quick Tuning — %s%s" % (icon, reason, trail))
+        self._flash("Quick Tuning %s" % (
+            "완료" if (ok and not needs_operator)
+            else ("중단 — 확인 필요" if ok else "중단")))
+        self._set_connected_ui(bool(
+            getattr(self, "_ui_connected", False)
+            and getattr(self, "_connection_admitted", False)))
 
     def _run_autotune_clicked(self):
         if getattr(self, "_motor_write_inflight", False):
@@ -11464,6 +11738,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.start_autotune(kw)            # defaults; drive already has KP[1]>0 (no bootstrap)
 
     def _abort_autotune_clicked(self):
+        # Stop the orchestration first so the aborted step's result cannot
+        # advance the chain into the next energize.
+        self._quick_chain_cancel("Abort 요청으로 중단 — 남은 단계는 실행되지 않습니다")
         if self.worker and self.worker.isRunning():
             self.worker.cancel_autotune()
             self._flash("Abort 요청 — 안전 중단 중(MO=0)…")
@@ -11573,6 +11850,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_commutation.setEnabled(False)
         self.btn_tune_abort.setEnabled(True)
         self.btn_tune_apply.setEnabled(False)
+        # a fresh Phase 1 re-does stages 0..2 — drop any remembered floor first
+        self._tune_stage_floor = -1
         self._set_tune_stage(0)
         self.tune_status.setText("▶ 튜닝 시작 — 초기화/검증 중…")
 
@@ -11584,16 +11863,32 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_tune_stage(stage if code != "DONE" else -1, done_upto=done)
         self.tune_status.setText("◆ [%s] %s" % (code, detail))
 
+    @staticmethod
+    def _result_payload(res):
+        """Result as a dict, stamped with the build that produced it.
+
+        Post-hoc analysis has to be able to answer "which code produced this
+        number?" — on 2026-07-22 that question cost two rounds of bench time
+        because nothing recorded it (btw-028).  ``_build_rev`` is the revision
+        this PROCESS loaded at startup, not whatever HEAD happens to be now.
+        """
+        import dataclasses as _dc
+        payload = _dc.asdict(res)
+        payload["_build_rev"] = BUILD_REV
+        payload["_build_loaded_at"] = BUILD_LOADED_AT
+        return payload
+
     def _dump_autotune_result(self, res):
         """Persist the full result (fields + evidence) to .omc/state so the exact
         measured numbers can be read off disk for oracle comparison (no transcription)."""
         try:
-            import json as _json, dataclasses as _dc, time as _time
+            import json as _json, time as _time
             d = os.path.join(".omc", "state")
             os.makedirs(d, exist_ok=True)
             path = os.path.join(d, "autotune_result_%d.json" % int(_time.time() * 1000))
             with open(path, "w", encoding="utf-8") as fh:
-                _json.dump(_dc.asdict(res), fh, ensure_ascii=False, indent=1, default=str)
+                _json.dump(self._result_payload(res), fh,
+                           ensure_ascii=False, indent=1, default=str)
             return path
         except Exception:
             return None
@@ -11639,6 +11934,8 @@ class MainWindow(QtWidgets.QMainWindow):
             g["pm"].setText("%.1f °" % res.pm_deg)
         adv_txt = self._advisory_eas_text(res)
         if res.status == autotune_current.GREEN:
+            # remember: stages 0..2 stay lit through the later chain steps
+            self._tune_stage_floor = self._AT_PHASE1_LAST
             self._set_tune_stage(-1, done_upto=self._AT_PHASE1_LAST)
             saved = ("  ·  저장: %s" % self._at_result_path) if self._at_result_path else ""
             self.tune_status.setText(
@@ -11646,6 +11943,10 @@ class MainWindow(QtWidgets.QMainWindow):
                 "(모터 OFF·복원 가능·SV 없음).%s%s" % (saved, adv_txt))
             self.btn_tune_apply.setEnabled(False)
         elif res.status == autotune_current.YELLOW:
+            # a YELLOW Phase 1 still produced the R/L model and the chain
+            # advances through it, so stages 0..2 are done here too
+            self._tune_stage_floor = self._AT_PHASE1_LAST
+            self._set_tune_stage(-1, done_upto=self._AT_PHASE1_LAST)
             self.tune_status.setText(
                 "⚠ YELLOW — %s (Apply P1 → Drive RAM 가능; 복원 가능·SV 없음)%s"
                 % (res.reason or "", adv_txt))
@@ -11655,6 +11956,7 @@ class MainWindow(QtWidgets.QMainWindow):
                                      % (res.status, res.reason or "실패"))
         self._set_connected_ui(bool(getattr(self, "_ui_connected", False)))
         self._flash("Auto-Tune %s" % res.status)
+        self._quick_chain_on_result(quick_tune_chain.PHASE1, res.status)
 
     @staticmethod
     def _advisory_eas_text(res) -> str:
@@ -11928,14 +12230,14 @@ class MainWindow(QtWidgets.QMainWindow):
     def _dump_commutation_result(self, res):
         """Persist the full Commutation-ID result to .omc/state (evidence off disk)."""
         try:
-            import json as _json, dataclasses as _dc, time as _time
+            import json as _json, time as _time
             d = os.path.join(".omc", "state")
             os.makedirs(d, exist_ok=True)
             path = os.path.join(
                 d, "commutation_id_result_%d.json" % int(_time.time() * 1000))
             with open(path, "w", encoding="utf-8") as fh:
-                _json.dump(_dc.asdict(res), fh, ensure_ascii=False, indent=1,
-                           default=str)
+                _json.dump(self._result_payload(res), fh,
+                           ensure_ascii=False, indent=1, default=str)
             return path
         except Exception:
             return None
@@ -11980,6 +12282,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._flash("Commutation ID %s" % res.status)
         self._set_connected_ui(bool(
             self._ui_connected and self._connection_admitted and on))
+        self._quick_chain_on_result(quick_tune_chain.COMMUTATION, res.status)
 
     def _run_velpos_clicked(self):
         if getattr(self, "_motor_write_inflight", False):
@@ -12304,12 +12607,13 @@ class MainWindow(QtWidgets.QMainWindow):
     def _dump_velpos_result(self, res):
         """Persist the full Phase-2 result to .omc/state (oracle comparison off disk)."""
         try:
-            import json as _json, dataclasses as _dc, time as _time
+            import json as _json, time as _time
             d = os.path.join(".omc", "state")
             os.makedirs(d, exist_ok=True)
             path = os.path.join(d, "autotune_vp_result_%d.json" % int(_time.time() * 1000))
             with open(path, "w", encoding="utf-8") as fh:
-                _json.dump(_dc.asdict(res), fh, ensure_ascii=False, indent=1, default=str)
+                _json.dump(self._result_payload(res), fh,
+                           ensure_ascii=False, indent=1, default=str)
             return path
         except Exception:
             return None
@@ -12365,6 +12669,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self._flash("Commutation Signature %s" % res.status)
             self._set_connected_ui(bool(
                 self._ui_connected and self._connection_admitted and on))
+            self._quick_chain_on_result(
+                quick_tune_chain.SIGNATURE, res.status)
             return
         self._vp_signature_run = False
         self._vp_result = res
@@ -12407,6 +12713,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._set_connected_ui(bool(
             self._ui_connected and self._connection_admitted and on))
         self._flash("Phase 2 Auto-Tune %s" % res.status)
+        self._quick_chain_on_result(quick_tune_chain.PHASE2, res.status)
 
     def _on_velpos_applied(self, ok, msg):
         source = self.sender()
@@ -12435,6 +12742,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._vp_verified_generation = None
                 self.tune_status.setText(
                     "P2 synthetic/retained RAM trial 완료 — Production Save 잠금; Verify 후 Restore하세요.")
+                self._quick_chain_on_result(
+                    quick_tune_chain.APPLY, quick_tune_chain.GREEN)
             else:
                 # begin returns a trial only when automatic rollback could not
                 # be proven; retain it so the operator can retry Restore.
@@ -12448,6 +12757,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 self._vp_verified_trial = None
                 self._vp_verified_generation = None
                 self.tune_status.setText("⛔ P2 RAM 임시 적용 실패 — %s" % msg)
+                self._quick_chain_on_result(
+                    quick_tune_chain.APPLY, quick_tune_chain.RED)
         elif action == "restore":
             if ok:
                 self._vp_gain_trial = None
@@ -13718,6 +14029,9 @@ class MainWindow(QtWidgets.QMainWindow):
         """
         self._at_result = None
         self._at_result_generation = None
+        # the completed-stage memory is generation-bound too: a new connection
+        # must never show stages lit that were completed on the previous one
+        self._tune_stage_floor = -1
         self._vp_result = None
         self._vp_result_generation = None
         self._vp_trial_verified_green = False
@@ -13746,6 +14060,9 @@ class MainWindow(QtWidgets.QMainWindow):
         shutdown_pending = bool(
             getattr(self, "_connection_shutdown_pending", False))
         if not on:
+            # A dropped/closed connection ends the orchestration: the remaining
+            # steps have no drive to run on and must not be dispatched.
+            self._quick_chain_cancel("연결 종료로 중단")
             self._connection_access_mode = None
             self._invalidate_tuning_result_authority()
             self._motion_session_zero_confirmed = False
@@ -13854,6 +14171,13 @@ class MainWindow(QtWidgets.QMainWindow):
             self.btn_motor_write.setEnabled(
                 mutation_trusted and not trial_active and not persistence_locked
                 and not motor_write_inflight and not dispatch_inflight)
+        if hasattr(self, "btn_tune_quick"):
+            # Same gate class as step ① (commutation), plus: never offer a new
+            # chain while one is running.
+            self.btn_tune_quick.setEnabled(
+                mutation_trusted and not trial_active and not dispatch_inflight
+                and not motor_write_inflight and not persistence_locked
+                and not self._quick_chain_active())
         if hasattr(self, "btn_tune"):
             self.btn_tune.setEnabled(
                 mutation_trusted and not trial_active and not dispatch_inflight
