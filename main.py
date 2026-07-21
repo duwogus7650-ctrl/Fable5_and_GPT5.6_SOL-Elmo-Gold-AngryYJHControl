@@ -11329,7 +11329,13 @@ class MainWindow(QtWidgets.QMainWindow):
         for k in self.tune_gain_fields:
             self.tune_gain_fields[k].setText("—")
         self.btn_tune_apply.setEnabled(False)
-        self.worker.start_autotune({})            # defaults; drive already has KP[1]>0 (no bootstrap)
+        # P3: hand the connected-motor profile to the kernel (pole-pairs
+        # NEED_DATA refusal path when CA[19] is unreadable; never fallback-16)
+        kw = {}
+        prof = getattr(self, "_motor_profile", None)
+        if prof is not None:
+            kw["profile"] = prof
+        self.worker.start_autotune(kw)            # defaults; drive already has KP[1]>0 (no bootstrap)
 
     def _abort_autotune_clicked(self):
         if self.worker and self.worker.isRunning():
@@ -11503,22 +11509,37 @@ class MainWindow(QtWidgets.QMainWindow):
             g["ki_cur"].setText("%.6g Hz" % res.ki_hz)
         if res.pm_deg is not None:
             g["pm"].setText("%.1f °" % res.pm_deg)
+        adv_txt = self._advisory_eas_text(res)
         if res.status == autotune_current.GREEN:
             self._set_tune_stage(-1, done_upto=self._AT_PHASE1_LAST)
             saved = ("  ·  저장: %s" % self._at_result_path) if self._at_result_path else ""
             self.tune_status.setText(
                 "✅ GREEN — 후보 산출 완료. Apply P1 → Drive RAM 가능"
-                "(모터 OFF·복원 가능·SV 없음).%s" % saved)
+                "(모터 OFF·복원 가능·SV 없음).%s%s" % (saved, adv_txt))
             self.btn_tune_apply.setEnabled(False)
         elif res.status == autotune_current.YELLOW:
             self.tune_status.setText(
-                "⚠ YELLOW — %s (Apply P1 → Drive RAM 가능; 복원 가능·SV 없음)"
-                % (res.reason or ""))
+                "⚠ YELLOW — %s (Apply P1 → Drive RAM 가능; 복원 가능·SV 없음)%s"
+                % (res.reason or "", adv_txt))
             self.btn_tune_apply.setEnabled(False)
         else:
-            self.tune_status.setText("⛔ RED — %s" % (res.reason or "실패"))
+            self.tune_status.setText("⛔ %s — %s"
+                                     % (res.status, res.reason or "실패"))
         self._set_connected_ui(bool(getattr(self, "_ui_connected", False)))
         self._flash("Auto-Tune %s" % res.status)
+
+    @staticmethod
+    def _advisory_eas_text(res) -> str:
+        """P3 §5: EAS residual-gain comparison is ADVISORY ONLY — a display
+        suffix, never a gate.  Empty string when the kernel recorded none."""
+        adv = (getattr(res, "evidence", None) or {}).get("advisory_eas") or {}
+        devs = adv.get("deviations") or {}
+        if not devs:
+            return ""
+        parts = ", ".join("%s %+.1f%%" % (k, 100.0 * v)
+                          for k, v in sorted(devs.items()))
+        return ("  ·  참조(비게이트) — 드라이브 잔존 게인 대비: %s"
+                " (비-EAS 튜닝 모터에선 미신뢰)" % parts)
 
     def _on_autotune_applied(self, ok, msg):
         source = self.sender()
@@ -11623,6 +11644,11 @@ class MainWindow(QtWidgets.QMainWindow):
             frac = 0.2
         overrides = {"ramp_frac": frac}
         overrides.update(self._p1_model_overrides_for_p2())
+        # P3: per-motor signature band / ka_baseline / GREEN-run history live
+        # in the MotorProfile — hand it to the kernel (immutable, thread-safe)
+        prof = getattr(self, "_motor_profile", None)
+        if prof is not None:
+            overrides["profile"] = prof
         return overrides
 
     def _guard_unsaved_vp_trial(self, action: str) -> bool:
@@ -11655,12 +11681,27 @@ class MainWindow(QtWidgets.QMainWindow):
         if not (self.worker and self.worker.isRunning()):
             self._flash("드라이브를 먼저 연결하세요.")
             return
+        prof = getattr(self, "_motor_profile", None)
+        band = getattr(prof, "signature_band", None) if prof is not None else None
+        ref = band.get("i_ba_ref_a") if isinstance(band, dict) else None
+        _SIG_CEIL_A = 1.30  # absolute signature energize ceiling (safety)
+        if isinstance(ref, (int, float)) and ref > 0:
+            band_line = ("• 합격 대역(프로필 파생): i_ba [0.5,1.5]×%.3f A,"
+                         " 피드백 방향 +\n"
+                         "• 통전 상한: min(2.0×기준, 안전천장) = %.2f A\n"
+                         % (ref, min(2.0 * ref, _SIG_CEIL_A)))
+        else:
+            band_line = ("• 이 모터 프로필에 서명 베이스라인이 아직 없음 —"
+                         " 첫 런 프로토콜(대역 OFF, 방향 게이트 +"
+                         " UM3 expect-slip 저속 판별; 잠정 판정)\n"
+                         "• 베이스라인은 Phase 2 GREEN 런이 확립합니다\n")
         btn = QtWidgets.QMessageBox.warning(
             self, "커뮤테이션 서명 실행 확인 (실제 저전류 동작)",
             "커뮤테이션 서명 전용 시험을 실행합니다.\n\n"
-            "• +TC를 0 → 최대 1.30 A로 최대 2.0초 동안만 램프\n"
-            "• 합격창: i_ba 0.50..1.30 A, 피드백 방향 +\n"
-            "• UNIT-DIAG, UM=3, 식별 펄스, JV 속도 운전은 실행하지 않음\n"
+            "• +TC를 0에서 최대 %.2f A(안전천장) 이내로만, 최대 2.0초 램프\n"
+            % _SIG_CEIL_A
+            + band_line +
+            "• 식별 펄스, JV 속도 운전은 실행하지 않음\n"
             "• 모든 종료 경로에서 TC=0, MO=0 및 임시 제한 복귀 확인\n"
             "• 게인 적용과 SV 저장 없음\n\n"
             "축 주변이 비어 있고 E-stop/STO가 즉시 사용 가능한 상태입니까?",
@@ -11674,12 +11715,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._vp_signature_run = True
         self._vp_result = None
         self.btn_tune_vp_apply.setEnabled(False)
-        self.worker.start_velpos_autotune({
-            "signature_only": True,
-            "signature_cap_a": 1.30,
-            "signature_i_min_a": 0.50,
-            "signature_i_max_a": 1.30,
-        })
+        kw = {"signature_only": True}
+        if prof is not None:
+            kw["profile"] = prof
+        self.worker.start_velpos_autotune(kw)
 
     def _run_velpos_clicked(self):
         if getattr(self, "_motor_write_inflight", False):
@@ -12077,17 +12116,20 @@ class MainWindow(QtWidgets.QMainWindow):
             g["pm_vel"].setText("%.1f °%s" % (res.pm_vel_deg, gm))
         if res.pm_pos_deg is not None:
             g["pm_pos"].setText("%.1f °" % res.pm_pos_deg)
+        adv_txt = self._advisory_eas_text(res)
         if res.status == autotune_velpos.GREEN:
             self._set_tune_stage(-1, done_upto=self._AT_PHASE2_LAST)
             saved = ("  ·  저장: %s" % self._vp_result_path) if self._vp_result_path else ""
             self.tune_status.setText(
                 "✅ Phase 2 GREEN — 후보 산출 완료. Apply P2 → Drive RAM 가능"
-                "(모터 OFF·복원 가능·SV 없음; Save→SV는 이 빌드에서 잠김).%s" % saved)
+                "(모터 OFF·복원 가능·SV 없음; Save→SV는 이 빌드에서 잠김).%s%s"
+                % (saved, adv_txt))
         elif res.status == autotune_velpos.YELLOW:
-            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (Apply P2 → Drive RAM 가능; 복원 가능·SV 없음)"
-                                     % (res.reason or ""))
+            self.tune_status.setText("⚠ Phase 2 YELLOW — %s (Apply P2 → Drive RAM 가능; 복원 가능·SV 없음)%s"
+                                     % (res.reason or "", adv_txt))
         else:
-            self.tune_status.setText("⛔ Phase 2 RED — %s" % (res.reason or "실패"))
+            self.tune_status.setText("⛔ Phase 2 %s — %s"
+                                     % (res.status, res.reason or "실패"))
         self._set_connected_ui(bool(
             self._ui_connected and self._connection_admitted and on))
         self._flash("Phase 2 Auto-Tune %s" % res.status)

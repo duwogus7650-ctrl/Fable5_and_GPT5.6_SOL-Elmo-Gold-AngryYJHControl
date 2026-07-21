@@ -74,15 +74,19 @@ from typing import Callable, Mapping, Optional, Sequence
 
 import numpy as np
 
+import physics_gates
+
 __all__ = ["AutotuneVPParams", "AutotuneVPResult", "GainTrialVP",
            "GainVerificationVP",
            "run_velpos_autotune", "begin_gain_trial_vp",
            "adopt_gain_trial_vp_for_restore", "restore_gain_trial_vp",
            "commit_gain_trial_vp",
            "verify_gain_trial_vp", "apply_gains_vp", "verify_run_vp", "vel_pos_margins",
-           "design_vp_gains", "window_slope", "GREEN", "YELLOW", "RED"]
+           "design_vp_gains", "window_slope", "GREEN", "YELLOW", "RED",
+           "NEED_DATA"]
 
 GREEN, YELLOW, RED = "GREEN", "YELLOW", "RED"
+NEED_DATA = "NEED_DATA"      # evaluation impossible (run refusal) — NOT a RED
 
 # --- calibration constants (SPEC §3 — single-point, this drive; honesty note) ---------
 WCV_TS_CAL = 0.04575      # wcv*TS (EAS reverse-engineered; Phase-1 0.2010 sibling)
@@ -103,7 +107,11 @@ KA_RANGE = (3e5, 3e8)     # G2 physicality [cnt/s^2/A]
 FRICTION_RATIO_MAX = 0.5  # G2: (B*v_peak + I_c)/I0
 G1A_TOL, G1B_TOL, G1C_TOL, G1D_TOL, G1F_TOL = 0.15, 0.10, 0.10, 0.05, 0.30
 G1E_R2_MIN = 0.98
-G3_KA_TOL, G3_KP2_TOL, G3_CFG_TOL = 0.30, 0.30, 0.02
+# G3 (EAS-residual comparison) DEMOTED to advisory (P3 spec §4.1/§5): the
+# ka_vs_1/FF[1] and gain-vs-drive deviations are recorded in
+# evidence["advisory_eas"] only — never a gate, never RED-promoted.  The
+# write-readback integrity gate lives in apply_gains_vp (unchanged).
+G3_KA_TOL = 0.30          # advisory annotation threshold only
 
 # --- B1.5 UNIT-DIAG (SPEC §9 — hard gate BEFORE the main pulses) ------------------------
 UNITDIAG_I_A = 0.5        # diagnostic pulse current FLOOR [A] — the actual pulse
@@ -149,7 +157,18 @@ PULSE_CUT_POLL_S = 0.01   # VX-only cut poll during main pulses (10 ms: worst
 # at 0.2*CL=4.24 A -> i_ba>4.24 A confirmed; cap raised to 0.4*CL=8.49 A for
 # THIS unit via params.ramp_frac=0.4; the DEFAULT stays 0.2 for bare motors) --
 RAMP_FRAC_ABS_MAX = 0.4   # automatic ramp/pulse current ceiling [frac of CL[1]]
-SIGNATURE_CAP_ABS_MAX_A = 1.30  # standalone signature absolute current cap [A]
+# standalone-signature DECISION band: PROFILE-DERIVED (P3).  With a baseline the
+# band is [0.5,1.5]x i_ba_ref (red_hi x ref of headroom to OBSERVE the RED
+# boundary); without one the first-run protocol runs (band gate OFF).  The band
+# judges the MEASURED i_ba — it is NOT the energize limit.
+# Signature ENERGIZE current is ALWAYS clamped to this absolute safety ceiling
+# (operator low-current envelope, matches the confirmation dialog).  It is
+# motor-agnostic by degradation, not by scaling: a higher-stiction motor whose
+# breakaway exceeds this ceiling simply cap-outs here and routes to the drag
+# oracle.  This is a SAFETY constant, not a gate band literal (P4 spec: the
+# signature energize envelope stays fixed, not scaled).  [restored 2026-07-21
+# after the P3 wiring inadvertently let the first-run cap rise to 0.2*CL=4.24 A]
+SIGNATURE_ENERGIZE_ABS_MAX_A = 1.30  # absolute A ceiling on signature energize
 RAMP_FRAC_OPERATOR_ONLY = 0.6   # NEVER automatic — operator-approved sessions
                           # may edit this constant deliberately (자동 램프 금지)
 RAMP_FAST_POLL_ABOVE_A = 2.0    # above this TC: VX-only polls at 10 ms (the
@@ -202,9 +221,12 @@ SYNTHETIC_SUBDIR = "synthetic"  # quarantine for sim/smoke persistence
                                 # snapshots; a link with is_synthetic=True is
                                 # auto-quarantined into this subdir)
 NET_FRICTION_FRAC = 0.75  # tp sizing net current: i_net = i0 - 0.75*i_ba
-WINDUP_LEVELS_A = (1.0, 2.0, 4.0, 6.0, 8.0)   # windup-curve capture currents
+WINDUP_LEVELS_A = tuple(float(x) for x in (1, 2, 4, 6, 8))  # windup capture [A]
 # --- PART B: UM=3 low-speed drag discrimination (commutation-agnostic) -------
-UM3_DRAG_I_A = 6.0        # held stator current [A] (torque oracle ~Kt*6=0.72 N*m)
+# Drag current is PROFILE/CL-DERIVED (P3 spec §3): I_drag = i_cap/sqrt(2)
+# where i_cap = ramp_frac*CL[1] — physics_gates.derive_drag_current().  The
+# routing gate is i_cap >= 0.25*sqrt(2)*CL[1] (= the old 6 A at CL=21.2 with
+# ramp_frac=0.4, reproduced exactly: 0.4*21.2132/sqrt2 = 6.0000).
 UM3_TICKS_PER_EREV = 512  # PA unit in UM=3: 512 ticks / electrical rev (CR)
 UM3_EREV_PER_S = 1.0      # sweep rate ~1 elec rev/s = motor 1.4 rpm (guard-free)
 UM3_REVS = 3              # per direction (motor 51 deg = output 1.7 deg)
@@ -302,10 +324,18 @@ class AutotuneVPParams:
     breakaway_k: float = 1.5            # probe = clip(k*i_ba, probe_i_a, cap)
     # Standalone commutation-signature gate.  It ends after the bounded +TC
     # breakaway/direction observation and never enters Phase-2 motion.
+    # P3: the acceptance window is PROFILE-DERIVED by default (None =
+    # physics_gates.sig_band on profile.signature_band; no baseline = the
+    # first-run protocol).  Explicit values are a per-run OVERRIDE only.
     signature_only: bool = False
-    signature_cap_a: float = SIGNATURE_CAP_ABS_MAX_A
-    signature_i_min_a: float = 0.50
-    signature_i_max_a: float = SIGNATURE_CAP_ABS_MAX_A
+    signature_cap_a: Optional[float] = None
+    signature_i_min_a: Optional[float] = None
+    signature_i_max_a: Optional[float] = None
+    # Connected-motor profile (motor_profile.MotorProfile, duck-typed): owns
+    # signature_band / ka_baseline / i_ba_history (per-motor, GREEN-run-only
+    # updates — the single-file cross-contamination path is retired when a
+    # profile is supplied).
+    profile: Optional[object] = None
     # --- HOLD-CONFIRM (fable-physics 2026-07-13: live i_ba=1.01 A was a
     # BACKLASH TRAVERSAL false positive — free-play flight, total 4166 cnt =
     # 0.76 deg output; the true load breakaway is >1.52 A).  Physics
@@ -537,6 +567,8 @@ class _Ctx:
         self.motor_on = False
         self.aborted = False
         self.segment = "idle"           # idle | tc | jv  (abort chain selector)
+        # standalone-signature resolved window (P3): (lo, hi, cap, source, ref)
+        self.sig_window: tuple = (None, None, None, "unset", None)
         self.ts_s: float = 0.0
         self.cl1: float = 0.0
         self.ca18: float = 65536.0
@@ -1027,8 +1059,7 @@ def _apply_limits_verified(ctx: _Ctx):
 
     if api is not None:
         mutation_bounds = {
-            "TC": (-max(abs(float(ctx.cl1)), UM3_DRAG_I_A),
-                   max(abs(float(ctx.cl1)), UM3_DRAG_I_A)),
+            "TC": (-abs(float(ctx.cl1)), abs(float(ctx.cl1))),
             "JV": (-abs(float(ctx.vx_guard_cnt)),
                    abs(float(ctx.vx_guard_cnt))),
             "PA": (-(1 << 31), (1 << 31) - 1),
@@ -1632,7 +1663,7 @@ def _decimate(a, max_n: int = 512):
     return [round(float(x), 3) for x in a[::step]]
 
 
-def _um3_drag(ctx: _Ctx):
+def _um3_drag(ctx: _Ctx, i_drag_a: float, expect_slip: bool = False):
     """PART B (fable-physics §4): UM=3 low-speed drag discrimination — a
     COMMUTATION-AGNOSTIC torque oracle, run only when the raised-cap ramp
     still finds no breakaway with real torque.
@@ -1660,13 +1691,14 @@ def _um3_drag(ctx: _Ctx):
         ctx.warnings.append("CA[19] 판독불가(%r) — UM3 드래그 판별 생략" % (ca19,))
         return None
     cnt_per_erev = ctx.ca18 / float(ca19)
+    i_drag = float(i_drag_a)
     _emit(ctx, "BREAKAWAY", "UM3 저속 드래그 판별: TC=%.1fA 고정, PA %d elec rev/방향"
           " (~%.1f rpm, 출력 ≈1.7°) — 커뮤 무관 토크 오라클"
-          % (UM3_DRAG_I_A, UM3_REVS, UM3_EREV_PER_S * 60.0 / float(ca19)))
+          % (i_drag, UM3_REVS, UM3_EREV_PER_S * 60.0 / float(ca19)))
     _cmd(ctx, "MO=0")
     ctx.motor_on = False
     _write(ctx, "UM", 3)
-    ev = {"i_drag_a": UM3_DRAG_I_A, "cnt_per_erev": cnt_per_erev,
+    ev = {"i_drag_a": i_drag, "cnt_per_erev": cnt_per_erev,
           "revs_per_dir": UM3_REVS, "threshold": UM3_FOLLOW_MIN,
           "directions": []}
     ctx.evidence["um3_drag"] = ev
@@ -1675,7 +1707,7 @@ def _um3_drag(ctx: _Ctx):
         _cmd(ctx, "MO=1", allow_motion=True)
         ctx.motor_on = True
         _seg(ctx, "tc")
-        _write(ctx, "TC", UM3_DRAG_I_A, allow_motion=True)
+        _write(ctx, "TC", i_drag, allow_motion=True)
         _sleep(ctx, 0.3)                # align snap (<= half elec pitch) + settle
         # NOTE: even the PA READ passes the motion-gated prefix filter
         # (prefix "PA") — allow_motion on a pure query is harmless
@@ -1716,11 +1748,19 @@ def _um3_drag(ctx: _Ctx):
                     ev["early_expected_cnt"] = round(
                         UM3_EARLY_CHECK_EREV * cnt_per_erev, 1)
                     if resp < UM3_EARLY_MIN_FRAC * UM3_EARLY_CHECK_EREV                             * cnt_per_erev:
-                        ev["pa_effective"] = False
-                        ev["directions"].append(
-                            {"sign": sign, "aborted_at_erev":
-                             UM3_EARLY_CHECK_EREV, "trace_pa_px": trace})
-                        return ev
+                        if expect_slip:
+                            # first-run expect-slip (spec §2.3): NO response
+                            # is the EXPECTED healthy outcome (slip) — do not
+                            # abort; complete the sweep so follow_ratio is a
+                            # real measurement.  The dead-PA ambiguity is
+                            # recorded, not promoted (실기확인필요 라벨).
+                            ev["early_slip_observed"] = True
+                        else:
+                            ev["pa_effective"] = False
+                            ev["directions"].append(
+                                {"sign": sign, "aborted_at_erev":
+                                 UM3_EARLY_CHECK_EREV, "trace_pa_px": trace})
+                            return ev
             pa += sign * ticks_total
             px_b = _cmd(ctx, "PX")
             dpx = (abs(float(px_b) - float(px_a))
@@ -1755,11 +1795,14 @@ def _drag_route(ctx: _Ctx, i_cap: float):
     """PART B router (fable-critic HIGH-1/HIGH-2): run the UM=3 drag oracle
     and raise the routed honest RED.
 
-    GATE: only meaningful when i_cap >= UM3_DRAG_I_A — the discrimination
-    logic needs cap torque >= drag torque, otherwise the 6 A drag exceeds the
-    cap torque and ALWAYS follows, mis-routing healthy mechanical friction to
-    a commutation RED.  Gate unmet / CA[19] unreadable / drag exception ->
-    returns None (caller raises its own generic verdict, marked 판별 유보).
+    P3: the drag current is DERIVED — I_drag = i_cap/sqrt2
+    (physics_gates.derive_drag_current, spec §3): a UM=5 breakaway failure at
+    i_cap while UM=3 follows I_drag proves cos(delta) < 1/sqrt2, i.e. the
+    commutation offset exceeds 45 deg ("torque efficiency < 70%").  GATE:
+    only meaningful when i_cap >= 0.25*sqrt2*CL[1] (route floor) — below
+    that the discrimination angle degrades and healthy friction could be
+    mis-routed.  Gate unmet / CA[19] unreadable / drag exception -> returns
+    None (caller raises its own generic verdict, marked 판별 유보).
 
     Verdicts (전류 증액 금지):
       pa_effective False -> "판별 불가" (a dead stator command and a stuck
@@ -1768,11 +1811,14 @@ def _drag_route(ctx: _Ctx, i_cap: float):
       else               -> mechanical-friction RED, honestly labeled
         "슬립 또는 PA 미실효" (partial follow proved PA works early on,
         but 실기 특성화 still owns the final word)."""
-    if i_cap < UM3_DRAG_I_A:
+    i_drag, drag_detail = physics_gates.derive_drag_current(
+        ctx.cl1, i_cap_a=i_cap)
+    ctx.evidence["drag_derivation"] = drag_detail
+    if i_drag is None or not drag_detail.get("route_ok", False):
         return None
     drag = None
     try:
-        drag = _um3_drag(ctx)
+        drag = _um3_drag(ctx, i_drag)
     except (AbortError, PermissionError):
         raise
     except Exception as e:                  # never mask the primary finding
@@ -1790,16 +1836,16 @@ def _drag_route(ctx: _Ctx, i_cap: float):
         raise AbortError(
             "UM3 드래그 추종(%.2f≥%.1f): 기계는 ≤%.2fN·m로 구동됨 — UM=5"
             " %.2fA로 브레이크어웨이 실패 = 커뮤테이션 토크효율<70%% 의심:"
-            " 재커뮤테이션 후 서명 게이트(i_ba 0.9±0.4A·방향+) 확인, 불합격시"
+            " 재커뮤테이션 후 서명 게이트(i_ba 대역·방향+) 확인, 불합격시"
             " 재커뮤 반복 (전류 더 올리지 말 것; CA[7]은 위저드 기록일 뿐"
             " 커뮤 결정자 아님)"
             % (drag["follow_ratio"], UM3_FOLLOW_MIN,
-               KT_NOMINAL * UM3_DRAG_I_A, i_cap))
+               KT_NOMINAL * i_drag, i_cap))
     raise AbortError(
         "UM3 드래그 슬립 또는 PA 미실효(%.2f<%.1f, 초기응답은 정상 — 실기"
         " 특성화 필요): 기계 마찰 T_s>%.2fN·m(출력 20+N·m) 우세 — 자유축"
         " 비정상, 기계 점검 (전류 더 올리지 말 것)"
-        % (drag["follow_ratio"], UM3_FOLLOW_MIN, KT_NOMINAL * UM3_DRAG_I_A))
+        % (drag["follow_ratio"], UM3_FOLLOW_MIN, KT_NOMINAL * i_drag))
 
 
 def _breakaway_ramp(ctx: _Ctx):
@@ -2090,16 +2136,18 @@ def _breakaway_ramp(ctx: _Ctx):
             return None
         # ---- PART B: torque real + no breakaway at the cap -> UM=3 drag
         # discrimination via _drag_route (raises the routed RED itself).
-        # HIGH-1 gate lives inside: only when i_cap >= UM3_DRAG_I_A (6 A) —
-        # below that the drag torque exceeds the cap torque and would ALWAYS
-        # follow, mis-routing healthy friction to a commutation RED.
+        # HIGH-1 gate lives inside: only when i_cap >= the route floor
+        # 0.25*sqrt2*CL[1] — below that the derived drag current loses the
+        # 45-deg discrimination and healthy friction could be mis-routed.
         _drag_route(ctx, i_cap)             # returns only when 판별 불가/생략
+        route_floor = physics_gates.DRAG_ROUTE_FRAC * ctx.cl1
         raise AbortError(
             "축 구속(클램프/브레이크?) — 브레이크어웨이 없음: TC=%.2fA"
             "(%.2f·CL[1])에서도 |ΔPX|≤%.0fcnt·|VX|≤%.0fcnt/s"
             " (IQ=%.2fA 토크 실인가 확인; UM3 판별 유보%s)"
             % (i_cap, p.ramp_frac, p.detect_dpx, p.detect_vx, iq_cap,
-               " — 캡<%.0fA" % UM3_DRAG_I_A if i_cap < UM3_DRAG_I_A else ""))
+               " — 캡<%.1fA(라우팅 하한)" % route_floor
+               if i_cap < route_floor else ""))
     return probe
 
 
@@ -2142,14 +2190,15 @@ def _unit_diag(ctx: _Ctx, i_diag: float = UNITDIAG_I_A) -> float:
             # gate allows (the live fake motion skipped the drag exactly
             # here), else mark the verdict 판별 유보.
             _drag_route(ctx, i_cap)         # raises the routed RED on success
+            route_floor = physics_gates.DRAG_ROUTE_FRAC * ctx.cl1
             raise AbortError(
                 "UNIT-DIAG: 축 구속/고마찰(기계구속) — 상향 %d회, 최종"
                 " i_diag=%.2fA(캡 %.2fA)에도 지속모션 없음 (ΔPos=%.0fcnt,"
                 " 모드=%s; IQ/기록전류로 토크 실인가 확인됨; UM3 판별 유보%s)"
                 % (len(escal) - 1, i_try, i_cap,
                    fail.get("d_pos_cnt", 0.0), fail.get("mode"),
-                   " — 캡<%.0fA" % UM3_DRAG_I_A if i_cap < UM3_DRAG_I_A
-                   else ""))
+                   " — 캡<%.1fA(라우팅 하한)" % route_floor
+                   if i_cap < route_floor else ""))
         ctx.warnings.append(
             "UNIT-DIAG %s(i=%.2fA) — i_diag %.2f→%.2fA 상향 재펄스 (%d/%d)"
             % (fail.get("mode"), i_try, i_try, ladder[idx + 1],
@@ -2536,25 +2585,66 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                 "readback" % (name, value))
         required_positive[name] = float(value)
     if p.signature_only:
-        cap = p.signature_cap_a
+        # P3: window/cap resolution — explicit override > profile band >
+        # first-run protocol (band gate OFF, spec §2.3).
         lo = p.signature_i_min_a
         hi = p.signature_i_max_a
+        cap = p.signature_cap_a
+        ref = None
+        prof_band = getattr(p.profile, "signature_band", None)
+        if isinstance(prof_band, Mapping):
+            r_ref = prof_band.get("i_ba_ref_a")
+            if isinstance(r_ref, (int, float)) and math.isfinite(r_ref) \
+                    and r_ref > 0:
+                ref = float(r_ref)
+        if lo is None and hi is None:
+            if ref is not None:
+                lo = physics_gates.SIG_GREEN[0] * ref
+                hi = physics_gates.SIG_GREEN[1] * ref
+                band_src = "profile"
+            else:
+                band_src = "first_run"          # band gate OFF (spec §2.3)
+        else:
+            band_src = "override"
+        if cap is None:
+            # profile: red_hi x ref = just enough headroom to OBSERVE the RED
+            # boundary; first run: the Phase-2 ramp cap (same safety envelope)
+            cap = (physics_gates.SIG_RED_HI * ref if ref is not None
+                   else p.ramp_frac * ctx.cl1)
+            # DERIVED cap: clamp to the absolute safety ceiling so a
+            # high-stiction motor still runs (breakaway above the ceiling
+            # cap-outs here and routes to the drag oracle) rather than being
+            # refused.  An EXPLICIT operator override above the ceiling is
+            # REJECTED below instead — the safety envelope cannot be raised.
+            # (Restored 2026-07-21: the P3 wiring had let this rise to 4.24 A.)
+            if (isinstance(cap, (int, float)) and math.isfinite(cap)
+                    and cap > SIGNATURE_ENERGIZE_ABS_MAX_A):
+                ctx.warnings.append(
+                    "서명 통전 상한을 안전천장 %.2f A로 클램프(파생 %.2f A)"
+                    % (SIGNATURE_ENERGIZE_ABS_MAX_A, float(cap)))
+                cap = SIGNATURE_ENERGIZE_ABS_MAX_A
+        max_cap = min(SIGNATURE_ENERGIZE_ABS_MAX_A, ctx.cl1)
         if (not isinstance(cap, (int, float)) or not math.isfinite(cap)
-                or cap <= 0.0 or cap > SIGNATURE_CAP_ABS_MAX_A + 1e-12
-                or cap > ctx.cl1):
+                or cap <= 0.0 or cap > max_cap + 1e-12):
             raise PreflightError(
-                "커뮤테이션 서명 전류 상한은 0 < cap <= 1.30 A 이어야 함 "
-                "(요청값=%r)" % (cap,))
-        if (not all(isinstance(x, (int, float)) and math.isfinite(x)
-                    for x in (lo, hi))
-                or not (0.0 <= lo <= hi <= cap)):
-            raise PreflightError(
-                "커뮤테이션 서명 판정창은 0 <= min <= max <= cap 이어야 함 "
-                "(min=%r, max=%r, cap=%r)" % (lo, hi, cap))
+                "커뮤테이션 서명 통전 상한은 0 < cap <= %.2f A"
+                "(안전천장) 이어야 함 (요청값=%r)"
+                % (max_cap, cap))
+        # The decision band (lo,hi) judges the MEASURED i_ba; it may extend above
+        # the energize ceiling — the ramp then cap-outs (a valid, safe outcome)
+        # rather than being rejected.  Only lo<=hi is required.
+        if band_src != "first_run":
+            if (not all(isinstance(x, (int, float)) and math.isfinite(x)
+                        for x in (lo, hi))
+                    or not (0.0 <= lo <= hi)):
+                raise PreflightError(
+                    "커뮤테이션 서명 판정창은 0 <= min <= max 이어야 함 "
+                    "(min=%r, max=%r)" % (lo, hi))
         if not (0.0 < p.ramp_time_s <= 2.0):
             raise PreflightError(
                 "커뮤테이션 서명 램프 시간은 0 < t <= 2.0 s 이어야 함 "
                 "(요청값=%r)" % (p.ramp_time_s,))
+        ctx.sig_window = (lo, hi, float(cap), band_src, ref)
         # Reuse the proven ramp state machine but replace its relative Phase-2
         # current cap with this standalone absolute cap.
         p = _dc_replace(p, ramp_frac=float(cap) / ctx.cl1)
@@ -2617,13 +2707,16 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
 
     # ---- B1.5 UNIT-DIAG (§9 hard gate — the probe B1 moved AFTER this) ----------------
     if p.signature_only:
+        sig_lo, sig_hi, sig_cap, band_src, sig_ref = ctx.sig_window
         i_ba = ba.get("i_ba_a")
         direction = ba.get("direction", 0)
         gate = {
             "mode": "standalone_commutation_signature",
-            "command_cap_a": float(p.signature_cap_a),
-            "expected_i_ba_a": [float(p.signature_i_min_a),
-                                  float(p.signature_i_max_a)],
+            "command_cap_a": float(sig_cap),
+            "band_source": band_src,
+            "expected_i_ba_a": ([float(sig_lo), float(sig_hi)]
+                                if band_src != "first_run" else None),
+            "i_ba_ref_a": sig_ref,
             "i_ba_a": i_ba,
             "direction": direction,
             "direction_basis": ba.get("direction_basis"),
@@ -2633,17 +2726,64 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
         ctx.evidence["signature_gate"] = gate
         if not ba.get("detected") or not isinstance(i_ba, (int, float)):
             raise AbortError(
-                "커뮤테이션 서명 미검출: +TC 0→1.30 A 범위에서 지속 회전이 "
-                "확인되지 않음; 전류 증대나 Phase 2 진행 금지")
+                "커뮤테이션 서명 미검출: +TC 0→%.2f A 범위에서 지속 회전이 "
+                "확인되지 않음; 전류 증대나 Phase 2 진행 금지" % (sig_cap,))
         if direction != 1:
             raise AbortError(
                 "커뮤테이션 서명 방향 불합격: +TC에 대한 피드백 방향=%r "
                 "(기대값 +1); Phase 2 진행 금지" % (direction,))
-        if not (p.signature_i_min_a <= i_ba <= p.signature_i_max_a):
-            raise AbortError(
-                "커뮤테이션 서명 전류 불합격: i_ba=%.3f A, 기대창 "
-                "%.2f..%.2f A; Phase 2 진행 금지"
-                % (i_ba, p.signature_i_min_a, p.signature_i_max_a))
+        if band_src == "profile":
+            v = physics_gates.sig_band(i_ba, p.profile)
+            gate["band_verdict"] = {"status": v.status, "detail": v.detail}
+            if v.status == RED:
+                raise AbortError(
+                    "커뮤테이션 서명 전류 불합격(대역 RED): i_ba=%.3f A,"
+                    " 기준 %.3f A 대역 [%.2f,%.2f]×ref; Phase 2 진행 금지"
+                    % (i_ba, sig_ref,
+                       physics_gates.SIG_YELLOW_LO, physics_gates.SIG_RED_HI))
+            if v.status == YELLOW:
+                ctx.warnings.append(
+                    "서명 대역 YELLOW: i_ba=%.3f A vs ref %.3f A (%s)"
+                    % (i_ba, sig_ref, v.detail))
+        elif band_src == "first_run":
+            # spec §2.3: no baseline -> band gate OFF; direction (above) +
+            # UM3 expect-slip at I_drag = i_ba/sqrt2.  slip = healthy
+            # (delta<45deg), follow = commutation RED.  K_a is not measured
+            # in the standalone gate, so the best verdict here is a
+            # PROVISIONAL YELLOW — the baseline is established only by a
+            # full Phase-2 GREEN run (ka_ok evidence).
+            i_drag, drag_detail = physics_gates.derive_drag_current(
+                ctx.cl1, i_ba_meas_a=i_ba)
+            gate["first_run_drag"] = drag_detail
+            drag = _um3_drag(ctx, i_drag, expect_slip=True)
+            fr = (drag.get("follow_ratio")
+                  if drag and drag.get("pa_effective", True) else None)
+            v = physics_gates.sig_first_run(direction == 1, fr, ka_ok=False)
+            gate["first_run_verdict"] = {"status": v.status, "detail": v.detail}
+            if v.status == RED:
+                raise AbortError(
+                    "커뮤테이션 서명 첫런 불합격: UM3 expect-slip에서 추종"
+                    "(follow=%.2f≥%.1f) — I_drag=%.2fA(=i_ba/√2)를 따라감 ="
+                    " δ≥45° 커뮤 결함 의심; 재커뮤 후 재시도" % (
+                        fr if fr is not None else -1.0,
+                        physics_gates.UM3_FOLLOW, i_drag))
+            if v.status == NEED_DATA:
+                ctx.warnings.append(
+                    "첫런 expect-slip 판별 불가(추종률 미확보) — 잠정 판정"
+                    " 유보, 실기 특성화 필요")
+            else:
+                ctx.warnings.append(
+                    "커뮤테이션 서명 첫런(베이스라인 없음) — 방향+expect-slip"
+                    "%s, K_a 미확인: 잠정 YELLOW (풀 Phase 2 GREEN 런이"
+                    " 베이스라인을 확립합니다)"
+                    % ("=slip 통과" if v.detail.get("slip") else
+                       " 미확정(follow=%.2f)" % (fr,)))
+        else:                                   # explicit per-run override
+            if not (sig_lo <= i_ba <= sig_hi):
+                raise AbortError(
+                    "커뮤테이션 서명 전류 불합격: i_ba=%.3f A, 기대창 "
+                    "%.2f..%.2f A; Phase 2 진행 금지"
+                    % (i_ba, sig_lo, sig_hi))
 
         # A passing observation is not enough: GREEN requires confirmed TC=0,
         # MO=0, and verified restoration of every temporary limit.
@@ -2659,6 +2799,67 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
             status=status,
             reason="" if status == GREEN else "; ".join(ctx.warnings),
             ts_us=int(ts), evidence=ctx.evidence, warnings=ctx.warnings)
+
+    # ---- P3 signature-band / first-run gate (full run, profile-scoped) ----------------
+    # With a profile baseline the ramp-latched i_ba is judged against the
+    # per-motor band (physics_gates.sig_band): RED aborts BEFORE any further
+    # motion on a suspect commutation; YELLOW is a warning.  No baseline =
+    # the first-run protocol (spec §2.3): band OFF, direction gate (already
+    # enforced at the ramp latch) + UM3 expect-slip at I_drag = i_ba/sqrt2.
+    if p.profile is not None and ba.get("detected") \
+            and isinstance(ba.get("i_ba_a"), (int, float)):
+        i_ba_full = float(ba["i_ba_a"])
+        v_band = physics_gates.sig_band(i_ba_full, p.profile)
+        ctx.evidence["signature_band"] = {
+            "i_ba_a": i_ba_full, "status": v_band.status,
+            "detail": v_band.detail, "source": "profile"}
+        if v_band.status == RED:
+            raise AbortError(
+                "서명 대역 RED: i_ba=%.3f A가 프로필 기준 대역을 벗어남(%s)"
+                " — 커뮤 건강 의심, Phase 2 중단 (재커뮤 후 서명 게이트"
+                " 재확인; YELLOW/RED 런은 재베이스라인 금지)"
+                % (i_ba_full, v_band.detail))
+        if v_band.status == YELLOW:
+            ctx.warnings.append(
+                "서명 대역 YELLOW: i_ba=%.3f A (%s)"
+                % (i_ba_full, v_band.detail))
+        if v_band.status == NEED_DATA:
+            # first run for THIS profile: expect-slip discrimination
+            i_drag_fr, dd_fr = physics_gates.derive_drag_current(
+                ctx.cl1, i_ba_meas_a=i_ba_full)
+            drag_fr = _um3_drag(ctx, i_drag_fr, expect_slip=True)
+            fr_ratio = (drag_fr.get("follow_ratio")
+                        if drag_fr and drag_fr.get("pa_effective", True)
+                        else None)
+            v_fr = physics_gates.sig_first_run(
+                ba.get("direction") == 1, fr_ratio, ka_ok=True)
+            ctx.evidence["sig_first_run"] = {
+                "status": v_fr.status, "detail": v_fr.detail,
+                "i_drag_a": i_drag_fr, "derivation": dd_fr}
+            if v_fr.status == RED:
+                raise AbortError(
+                    "서명 첫런 불합격: UM3 expect-slip 추종(follow=%.2f≥%.1f)"
+                    " — I_drag=%.2fA(=i_ba/√2)를 따라감 = δ≥45° 커뮤 결함"
+                    " 의심, Phase 2 중단 (재커뮤 후 재시도)"
+                    % (fr_ratio if fr_ratio is not None else -1.0,
+                       physics_gates.UM3_FOLLOW, i_drag_fr))
+            if v_fr.status == YELLOW:
+                ctx.warnings.append(
+                    "서명 첫런 미확정(follow=%s) — 백래시 오염 가능, 잠정 진행"
+                    % (("%.2f" % fr_ratio) if fr_ratio is not None else "?"))
+            if v_fr.status == NEED_DATA:
+                ctx.warnings.append(
+                    "서명 첫런 expect-slip 판별 불가(추종률 미확보) — 잠정 진행")
+            # the drag left the axis MO=0/UM=5: re-enable for UNIT-DIAG
+            _check_cancel_before_mutation(ctx)
+            _cmd(ctx, "MO=1", allow_motion=True)
+            ctx.motor_on = True
+            waited = 0.0
+            while _cmd(ctx, "SO") != 1:
+                if waited >= 2.0:
+                    raise AbortError("SO!=1 (2s) — 첫런 판별 후 재통전 실패")
+                _sleep(ctx, p.poll_s)
+                waited += p.poll_s
 
     i_diag = max(UNITDIAG_I_A, probe_adapt) if probe_adapt else UNITDIAG_I_A
     _emit(ctx, "UNIT_DIAG", "단위 진단: +%.2fA/%.0fms 펄스(적응), TR=1,"
@@ -2835,24 +3036,54 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     # is a commutation-health event, not a plant change (live: 3.82e5 =
     # 0.27 x 1.42e6 with delta~75 deg e; every LOCAL gate passed).  RED fires
     # BEFORE D1 so the motor is not spun further on a polluted commutation.
-    ka_base = _load_ka_baseline(ctx)
-    if ka_base is not None and 0 < k_a < KA_BASELINE_DROP_FRAC * ka_base:
-        ratio_b = k_a / ka_base
-        # cos(delta) = Kt_eff/Kt = K_a/baseline -> offset-angle estimate
-        delta_deg = math.degrees(math.acos(min(1.0, max(0.0, ratio_b))))
+    # P3: the baseline lives in the PER-MOTOR profile when one is supplied
+    # (cross-contamination fix — the shared single file only serves legacy
+    # profileless runs).  Verdict via physics_gates.ka_drop: RED <0.5x,
+    # YELLOW [0.5,0.7)x, NEED_DATA = no baseline (skip, fail-open).
+    if p.profile is not None:
+        vk = physics_gates.ka_drop(k_a, p.profile)
+        ka_base = getattr(p.profile, "ka_baseline", None)
+        if vk.status == RED:
+            ratio_b = vk.detail.get("frac")
+            delta_deg = math.degrees(math.acos(min(1.0, max(0.0, ratio_b))))
+            ctx.evidence["ka_baseline"] = {
+                "baseline_k_a": ka_base, "k_a": k_a, "ratio": ratio_b,
+                "delta_e_deg_est": delta_deg, "verdict": "RED",
+                "source": "profile"}
+            raise AbortError(
+                "K_a가 마지막 GREEN의 %.0f%%로 급락(%.3g vs %.3g cnt/s²/A) —"
+                " 커뮤테이션 열화 의심(δ≈%.0f°e), 재커뮤 필요"
+                % (100.0 * ratio_b, k_a, ka_base, delta_deg))
+        if vk.status == YELLOW:
+            ctx.warnings.append(
+                "K_a 베이스라인 대비 %.0f%%로 하락([0.5,0.7)× — 커뮤 열화"
+                " 조기신호 가능) — 확인 권장"
+                % (100.0 * vk.detail.get("frac", 0.0)))
         ctx.evidence["ka_baseline"] = {
-            "baseline_k_a": ka_base, "k_a": k_a, "ratio": ratio_b,
-            "delta_e_deg_est": delta_deg, "verdict": "RED",
+            "baseline_k_a": ka_base, "k_a": k_a,
+            "ratio": vk.detail.get("frac"),
+            "verdict": (vk.status if vk.status != NEED_DATA
+                        else "SKIP(기준 없음)"),
+            "source": "profile"}
+    else:
+        ka_base = _load_ka_baseline(ctx)
+        if ka_base is not None and 0 < k_a < KA_BASELINE_DROP_FRAC * ka_base:
+            ratio_b = k_a / ka_base
+            # cos(delta) = Kt_eff/Kt = K_a/baseline -> offset-angle estimate
+            delta_deg = math.degrees(math.acos(min(1.0, max(0.0, ratio_b))))
+            ctx.evidence["ka_baseline"] = {
+                "baseline_k_a": ka_base, "k_a": k_a, "ratio": ratio_b,
+                "delta_e_deg_est": delta_deg, "verdict": "RED",
+                "path": _ka_baseline_path(ctx)}
+            raise AbortError(
+                "K_a가 마지막 GREEN의 %.0f%%로 급락(%.3g vs %.3g cnt/s²/A) —"
+                " 커뮤테이션 열화 의심(δ≈%.0f°e), 재커뮤 필요"
+                % (100.0 * ratio_b, k_a, ka_base, delta_deg))
+        ctx.evidence["ka_baseline"] = {
+            "baseline_k_a": ka_base, "k_a": k_a,
+            "ratio": (k_a / ka_base) if ka_base else None,
+            "verdict": "PASS" if ka_base is not None else "SKIP(기준 없음)",
             "path": _ka_baseline_path(ctx)}
-        raise AbortError(
-            "K_a가 마지막 GREEN의 %.0f%%로 급락(%.3g vs %.3g cnt/s²/A) —"
-            " 커뮤테이션 열화 의심(δ≈%.0f°e), 재커뮤 필요"
-            % (100.0 * ratio_b, k_a, ka_base, delta_deg))
-    ctx.evidence["ka_baseline"] = {
-        "baseline_k_a": ka_base, "k_a": k_a,
-        "ratio": (k_a / ka_base) if ka_base else None,
-        "verdict": "PASS" if ka_base is not None else "SKIP(기준 없음)",
-        "path": _ka_baseline_path(ctx)}
 
     # ---- D1 JV steady states (method B friction + rotating commutation check) ---------
     jv_pts = []
@@ -2988,23 +3219,22 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
                             "pass": bool(g2_hard
                                          and fr_ratio <= FRICTION_RATIO_MAX)}
 
+    # ---- P3 §5: EAS residual-gain comparison DEMOTED to advisory ---------------------
+    # gates carry NO EAS-derived value any more; the deviations below are
+    # reference-only (evidence["advisory_eas"]) and never touch the status.
     ff1 = ctx.readings.get("FF[1]")
     g3_ka = (abs(k_a * ff1 - 1.0)
              if isinstance(ff1, (int, float)) and ff1 > 0 else None)
-    kp2_rd = ctx.readings.get("KP[2]")
-    g3_kp2 = (abs(des["kp2"] / kp2_rd - 1.0)
-              if isinstance(kp2_rd, (int, float)) and kp2_rd > 0 else None)
-    g3_cfg = []
-    for key, val in (("KI[2]", des["ki2"]), ("KP[3]", des["kp3"])):
-        rd = ctx.readings.get(key)
-        if isinstance(rd, (int, float)) and rd > 0:
-            g3_cfg.append(abs(val / rd - 1.0))
-    g3_ok = ((g3_ka is None or g3_ka <= G3_KA_TOL)
-             and (g3_kp2 is None or g3_kp2 <= G3_KP2_TOL)
-             and all(x <= G3_CFG_TOL for x in g3_cfg))
-    gates["G3_oracle"] = {"ka_vs_1_over_ff1": g3_ka, "kp2_vs_drive": g3_kp2,
-                          "cfg_devs": g3_cfg, "pass": bool(g3_ok),
-                          "note": "실패=FF[1] 가정 반증 또는 관성 변경 (U-P1/A1)"}
+    adv = physics_gates.advisory_eas(
+        {"KP[2]": ctx.readings.get("KP[2]"),
+         "KI[2]": ctx.readings.get("KI[2]"),
+         "KP[3]": ctx.readings.get("KP[3]")},
+        {"kp_vel": des["kp2"], "ki_vel_hz": des["ki2"], "kp_pos": des["kp3"]})
+    adv["ka_vs_1_over_ff1"] = g3_ka
+    adv["note"] = ("舊 G3 강등(advisory) — 드라이브 잔존 게인/FF[1] 대비"
+                   " 편차 표시만, RED 승격 금지; 쓰기-되읽기 무결 게이트는"
+                   " apply_gains_vp 3단 검증이 전담")
+    ctx.evidence["advisory_eas"] = adv
     gates["G4_margins"] = {"margins": des["margins"], "pass": bool(des["ok"])}
     ctx.evidence["gates"] = gates
     ctx.evidence["g5_note"] = ("G5 검증런(F2)은 실기 사용자 액션 — 미실시,"
@@ -3034,12 +3264,30 @@ def _pipeline(ctx: _Ctx) -> AutotuneVPResult:
     if fr_ratio > FRICTION_RATIO_MAX:
         ctx.warnings.append("G2 마찰비 %.2f>%.1f (증액 후에도)"
                             % (fr_ratio, FRICTION_RATIO_MAX))
-    if not g3_ok:
-        ctx.warnings.append("G3 오라클 이탈 — FF[1] 가정 반증 또는 관성 변경")
+    # (舊 G3 오라클 이탈 warning 제거 — advisory_eas 기록만, spec §4.1/§5)
 
     status = YELLOW if ctx.warnings else GREEN
     if status == GREEN:
-        _save_ka_baseline(ctx, k_a)     # GREEN-only re-baseline (oracle rule)
+        if p.profile is not None and hasattr(p.profile, "with_green_run"):
+            # per-motor GREEN-only history: i_ba append + i_ba_ref median +
+            # ka_baseline (atomic save reuse; YELLOW/RED never re-baseline)
+            try:
+                iba_gr = ctx.evidence.get("breakaway", {}).get("i_ba_a")
+                updated = p.profile.with_green_run(
+                    i_ba_a=(float(iba_gr)
+                            if isinstance(iba_gr, (int, float)) else None),
+                    k_a=k_a)
+                saved_path = updated.save(p.snapshot_dir)
+                ctx.evidence["profile_update"] = {
+                    "path": saved_path,
+                    "i_ba_ref_a": (updated.signature_band or {}).get(
+                        "i_ba_ref_a"),
+                    "ka_baseline": updated.ka_baseline,
+                    "n_history": len(updated.i_ba_history)}
+            except Exception as e:      # post-status: never flips the verdict
+                ctx.evidence["profile_update_error"] = repr(e)
+        else:
+            _save_ka_baseline(ctx, k_a)  # legacy single-file (profileless runs)
     m = des["margins"]
     _emit(ctx, "DESIGN", "KP[2]=%.4g KI[2]=%.3fHz KP[3]=%.2f | 속도 PM=%.1f° GM=%.1fdB"
           % (des["kp2"], des["ki2"], des["kp3"], m["pm_vel"], m["gm_db"] or -1))

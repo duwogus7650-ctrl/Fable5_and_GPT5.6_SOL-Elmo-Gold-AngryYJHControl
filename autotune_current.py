@@ -31,7 +31,7 @@ Method (SPEC §0/§3, voltage path re-grounded by fable-physics after live run #
   - Drive gain basis = PHASE-TO-PHASE (fable-physics: KP = wc*L_pp = 0.071757
     vs live 0.07177, -0.018%).  Gains: wc = 0.2010/TS_s, KP = wc*L_pp,
     KI = 2 * 1.2705 * wc/(2*pi)  — the 2x is the pp-basis factor CONFIRMED on
-    live run #6 (reproduces EAS KI=812.939 at TS=100 us to ~0%).
+    live run #6 (reproduces the EAS field KI at TS=100 us to ~0%).
   - GREEN gates (run #8 final — the in-situ SCALE gate G1 is ABOLISHED: the
     in-situ ratio measures the OPEN-LOOP GAIN |C(jw)G(jw)|, not the scale;
     live 4-point rms 0.3%, rho=1 crossing = 372 Hz = gain crossover):
@@ -87,6 +87,7 @@ from typing import Callable, Optional, Sequence
 
 import numpy as np
 import persistence_audit
+import physics_gates
 
 __all__ = ["AutotuneParams", "AutotuneResult", "run_current_autotune",
            "apply_gains", "verify_run", "loop_margins", "design_gains",
@@ -95,9 +96,10 @@ __all__ = ["AutotuneParams", "AutotuneResult", "run_current_autotune",
            "begin_gain_trial_p1", "restore_gain_trial_p1",
            "commit_gain_trial_p1", "adopt_gain_trial_p1_for_restore",
            "p1_gain_trial_has_save_authority",
-           "P1_CONFIG_NAMES", "GREEN", "YELLOW", "RED"]
+           "P1_CONFIG_NAMES", "GREEN", "YELLOW", "RED", "NEED_DATA"]
 
 GREEN, YELLOW, RED = "GREEN", "YELLOW", "RED"
+NEED_DATA = "NEED_DATA"      # run refusal (missing required data) — NOT a RED
 P1_CONFIG_NAMES = persistence_audit.PHASE_REGISTERS["P1_CONFIG"]
 _P1_CONFIG_INTEGER_NAMES = frozenset((
     "UM", "SC[8]", "CA[42]", "CA[43]", "CA[44]", "CA[70]",
@@ -107,7 +109,7 @@ _P1_CONFIG_INTEGER_NAMES = frozenset((
 # --- calibration & gate constants (SPEC §4) -------------------------------------------
 WC_TS_CAL = 0.2010        # wc*TS single-point calibration (EAS: KP/L_np*TS)
 ALPHA_EAS = 1.2705        # base ratio; design KI = KI_PP_FACTOR*ALPHA_EAS*wc/(2*pi)
-KI_PP_FACTOR = 2.0        # pp-basis 2x — live run #6 확정 (2*1.2705*wc/2pi = 812.9 = EAS)
+KI_PP_FACTOR = 2.0        # pp-basis 2x — live run #6 확정 (2*1.2705*wc/2pi = EAS field KI)
 SKEW_TAU_TS = 1.5         # recorded duty leads motor voltage by 1.5*TS (compute + ZOH/2)
 PWM_CLOCK_HZ = 150e6      # G0: PWM command counter clock (CR p.291: WS[54..57] units)
 G0_FS_RANGE = (500.0, 1e6)          # plausible duty full-scale counts
@@ -148,7 +150,8 @@ ALIGN_STEP_S = 0.10
 PREALIGN_CYCLES_MAX = 3   # ratchet upper bound (no infinite loop)
 PREALIGN_PITCH_MULT = 1.5 # relaxed PX guard during pre-align [pole pitches]
 T_PREALIGN_SETTLE_S = 0.3 # settle after each pre-align ramp leg
-POLE_PAIRS_FALLBACK = 16.0  # CA[19] unreadable -> legacy assumption + warning
+# POLE_PAIRS fallback-16 RETIRED (P3, spec §1.5): pole pairs come from CA[19]
+# or params.profile.pole_pairs; neither readable -> NEED_DATA run refusal.
 GUARD_PERIOD_S = 0.5      # I3: MF/LC/PX poll period while MO=1
 RECORDER_MAX_RL = 4096    # per-signal sample cap (CR: 16384/4 signals); longer -> TimeResolution up
 # Reference values for THIS drive at TS=100us, XP[2]=2 (tests/mock use these).
@@ -175,7 +178,7 @@ def _never_cancel() -> bool:
 @dataclass
 class AutotuneParams:
     i_frac_low: float = 0.25            # I1 = i_frac_low  * CL[1]  [A amplitude]
-    i_frac_high: float = 0.50           # I2 = i_frac_high * CL[1]
+    i_frac_high: float = 0.5            # I2 = i_frac_high * CL[1]
     # None (default) = auto-derive from the MEASURED TS at P2 via derive_freqs()
     # (f1~0.32*f_max, f2~0.64*f_max, f_max=0.125/TS — drive-agnostic; TS=50us
     # reproduces the old fixed default (800,1600), TS=100us gives (400,800)).
@@ -186,6 +189,10 @@ class AutotuneParams:
     ki_rule: str = "eas_ratio"          # "eas_ratio" | "pole_zero"
     nameplate_r_pp: Optional[float] = None      # phase-to-phase [ohm]
     nameplate_l_pp_h: Optional[float] = None    # phase-to-phase [H]
+    # Connected-motor profile (motor_profile.MotorProfile, duck-typed).  P3:
+    # supplies pole_pairs when CA[19] is unreadable (the fallback-16 is
+    # retired — neither source readable = NEED_DATA run refusal, spec §1.5).
+    profile: Optional[object] = None
     # --- injection points (headless tests replace sleep_fn with the sim clock) -------
     sleep_fn: Callable[[float], None] = time.sleep
     snapshot_dir: str = os.path.join(".omc", "state")
@@ -223,6 +230,12 @@ class AutotuneResult:
 class PreflightError(Exception):
     """P0..P2 failure BEFORE anything was written: RED without the abort chain
     (in particular: never auto-disables an already-enabled motor)."""
+
+
+class NeedDataError(Exception):
+    """Pre-write refusal: a required input (e.g. pole pairs) is unreadable and
+    no profile supplies it.  NOT a failure — the run is refused with status
+    NEED_DATA before any drive write (spec §1.5)."""
 
 
 class AbortError(Exception):
@@ -404,7 +417,7 @@ def design_gains(l_ph: float, r_ph: float, ts_s: float, params: AutotuneParams):
             ki = r_ph / (2 * math.pi * l_ph)
         else:                                       # "eas_ratio" (default)
             # KI = 2*alpha*wc/2pi — the 2x pp-basis factor was CONFIRMED on
-            # live run #6 (matches EAS KI=812.939 at TS=100us to ~0%)
+            # live run #6 (matches the EAS field KI at TS=100us to ~0%)
             ki = KI_PP_FACTOR * ALPHA_EAS * wc / (2 * math.pi)
         wx, pm = loop_margins(kp, ki, r_ph, l_ph, ts_s)
         ok = (pm >= PM_MIN_DEG and wc * ts_s <= WCTS_MAX
@@ -450,6 +463,8 @@ class _Ctx:
         self.duty_fs: float = DUTY_FS   # G0-derived duty full scale (never hardcoded)
         self.g0: dict = {}              # G0 platform-grounding gate record
         self.g1p: dict = {}             # G1' idle-leg/Vbus gate record
+        self.pole_pairs: float = 0.0    # resolved at P2 (CA[19] or profile)
+        self.pole_pairs_src: str = ""   # "CA[19]" | "profile"
         self.config_attempt_id: Optional[str] = None
         self.config_restore_finalized = False
 
@@ -1049,6 +1064,12 @@ def run_current_autotune(link, params: Optional[AutotuneParams] = None) -> Autot
     ctx = _Ctx(link, params)
     try:
         return _pipeline(ctx)
+    except NeedDataError as e:
+        # pre-write refusal: nothing was written, no abort chain, NOT a RED
+        ctx.evidence.setdefault("readings", ctx.readings)
+        return AutotuneResult(status=NEED_DATA, reason=str(e),
+                              ts_us=ctx.readings.get("TS"),
+                              evidence=ctx.evidence, warnings=ctx.warnings)
     except PreflightError as e:
         reason = str(e)
         if ctx.dirty or ctx.config_attempt_id is not None:
@@ -1110,6 +1131,28 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     mf = ctx.readings["MF"]
     if not isinstance(mf, (int, float)) or mf != 0:
         raise PreflightError("모터 폴트 존재 MF=%r — 폴트 해소 후 재시도" % (mf,))
+    # pole pairs (P3, spec §1.5): CA[19] first, profile second, NO fallback.
+    ca19 = ctx.readings.get("CA[19]")
+    if (isinstance(ca19, (int, float)) and not isinstance(ca19, bool)
+            and math.isfinite(float(ca19)) and float(ca19) > 0):
+        ctx.pole_pairs = float(ca19)
+        ctx.pole_pairs_src = "CA[19]"
+    else:
+        pp_prof = getattr(p.profile, "pole_pairs", None)
+        if (isinstance(pp_prof, (int, float)) and not isinstance(pp_prof, bool)
+                and math.isfinite(float(pp_prof)) and float(pp_prof) > 0):
+            ctx.pole_pairs = float(pp_prof)
+            ctx.pole_pairs_src = "profile"
+            ctx.warnings.append(
+                "CA[19] 판독 불가(%r) — 프로필 극쌍 %d로 정렬허용치 산출"
+                % (ca19, int(float(pp_prof))))
+        else:
+            raise NeedDataError(
+                "극쌍 판독 불가: CA[19]=%r, 프로필 극쌍 없음 — NEED_DATA"
+                " (런 거부; 16 폴백은 폐지됨. Motor Settings에 극쌍을"
+                " 입력하거나 CA[19]를 확인하세요)" % (ca19,))
+    ctx.evidence["pole_pairs"] = {"value": ctx.pole_pairs,
+                                  "source": ctx.pole_pairs_src}
     if not (0 < p.i_frac_low < p.i_frac_high <= 0.6):
         raise PreflightError("i_frac (%.2f,%.2f) 범위 오류 (0<low<high<=0.6)"
                              % (p.i_frac_low, p.i_frac_high))
@@ -1296,13 +1339,8 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     # motion thresholds are SENSOR- AND MOTOR-PARAMETERIZED: the old 11.25 deg
     # (=180/16 pole pairs) hardcoded THIS motor's pole count — a p=21 motor got
     # a wrong (too-wide) allowance.  half pole pitch [counts] = CA[18]/(2*p).
-    ca19 = ctx.readings.get("CA[19]")
-    pole_pairs = (float(ca19)
-                  if isinstance(ca19, (int, float)) and ca19 > 0 else 0.0)
-    if not pole_pairs:
-        pole_pairs = POLE_PAIRS_FALLBACK
-        ctx.warnings.append("CA[19] 판독 불가(%r) — 극쌍 %d 가정으로 정렬허용치 산출"
-                            % (ca19, int(POLE_PAIRS_FALLBACK)))
+    # pole pairs were resolved at P2 (CA[19] -> profile -> NEED_DATA refusal).
+    pole_pairs = ctx.pole_pairs
     half_pitch = ca18 / (2.0 * pole_pairs)
     align_tol = half_pitch * 1.2
     prealign_tol = 2.0 * PREALIGN_PITCH_MULT * half_pitch
@@ -1456,8 +1494,15 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
     if (i1_bar < 0) or (i2_bar < 0):
         raise AbortError("DC 레벨 부호 위반(deadtime 소거조건: 동일 + 부호)")
     di = i2_bar - i1_bar
-    if abs(di) < 0.5:
-        raise AbortError("전류 레벨차 %.3fA < 0.5A — R 분해능 부족" % di)
+    # R-resolution floor (P3 motor-agnostic): the old absolute 0.5 A was this
+    # 21 A unit's number.  The physical requirement is SNR — the level delta
+    # must clear the measured current noise by a wide margin — plus a small
+    # fraction-of-CL floor so a broken ramp (di ~ 0) is still caught on quiet
+    # drives.  Case A reproduces the old behavior (di = 5.3 A >> both).
+    di_min = max(25.0 * ctx.noise_std, 0.02 * ctx.cl1)
+    if abs(di) < di_min:
+        raise AbortError("전류 레벨차 %.3fA < %.3fA(=max(25·noise, 0.02·CL))"
+                         " — R 분해능 부족" % (di, di_min))
     r_counts = (v2c_bar - v1c_bar) / di             # phN duty-counts per A
     # provisional volts via the Vbus/FS hypothesis — sanity gate only; the FINAL
     # R uses the in-situ scale determined during the sine phase (D)
@@ -1520,7 +1565,10 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
                                      " 실기 검증 필요")
                 continue
             i_f = out["i_f"]
-            if i_f < max(0.3, 5.0 * ctx.noise_std):
+            # injection-detection floor (P3 motor-agnostic): the absolute
+            # 0.3 A was ~0.056*I1 on this 21 A unit; a 1.4 A coreless motor
+            # can never reach it.  SNR term (5*noise) unchanged.
+            if i_f < max(0.056 * i1, 5.0 * ctx.noise_std):
                 inj_fail += 1
                 if inj_fail > 2:
                     raise AbortError("SE 주입전류 미검출 |I_f|=%.3fA —"
@@ -1679,12 +1727,25 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
             break
     fx_pred = loopgain_crossover_hz(kp_now, ki_now, r_pp, l_pp)  # 수치해 (점근식 폐기)
     g2_ratios = [e["r_ac_pp_ohm"] / r_pp for e in sine_ev]
+    # ---- physics gates (P3): motor-agnostic verdicts from physics_gates.py -----------
+    # The EAS-gain comparison is GONE from the gate path — every verdict below
+    # derives from the connected motor's own measurements (spec §1).
+    f2_hz = float(max(ctx.freqs))
+    pg_verdicts = {
+        "P1_PM": physics_gates.p1_pm(pm),
+        "P1_WC_BAND": physics_gates.p1_wc_band(wc, ctx.ts_s),
+        "P1_RHO": physics_gates.p1_rho(g5_rows),
+        "P1_R_REL": physics_gates.p1_r_relative(r_pp, ctx.cl1, vbus_v),
+        "P1_L_REL": physics_gates.p1_l_relative(l_pp, r_pp, wc, f2_hz,
+                                                ctx.cl1, vbus_v),
+    }
     gates = {
         "G0_platform": dict(ctx.g0),
         "G1p_idle_vbus": dict(ctx.g1p),
         "G5_loopgain": {"rows": g5_rows, "tol": G5_TOL,
                         "crossover_hz": fx, "crossover_pred_hz": fx_pred,
                         "mean_dev": g5_mean_dev,
+                        "verdict": pg_verdicts["P1_RHO"].status,
                         "residual_note": "균일 오프셋(실기 ~-3.5%)은 연속C(jω)"
                                          " vs 이산·min-max 4/3 근사 잔차 후보 —"
                                          " 기록만, 보상 금지",
@@ -1699,10 +1760,17 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
         "G3_l_spread": {"spread": spread, "max": G3_SPREAD,
                         "pass": spread <= G3_SPREAD},
         "G4_plaus_pm": {"pm_deg": pm, "design_ok": bool(ok),
-                        "pass": bool(ok) and 1e-3 <= r_pp <= 10.0
-                                and 1e-6 <= l_pp <= 1e-2},
+                        "verdicts": {k: pg_verdicts[k].status
+                                     for k in ("P1_PM", "P1_WC_BAND",
+                                               "P1_R_REL", "P1_L_REL")},
+                        "pass": bool(ok)
+                                and pg_verdicts["P1_R_REL"].status != RED
+                                and pg_verdicts["P1_L_REL"].status != RED},
     }
     ctx.evidence["gates"] = gates
+    ctx.evidence["physics_gates"] = {
+        name: {"status": v.status, "code": v.code, "detail": v.detail}
+        for name, v in pg_verdicts.items()}
     for gname, g in gates.items():
         if not g["pass"]:
             ctx.warnings.append("게이트 %s 실패 — YELLOW (%s)"
@@ -1718,6 +1786,36 @@ def _pipeline(ctx: _Ctx) -> AutotuneResult:
             r_phase_ohm=r_pp / 2, r_pp_ohm=r_pp, l_phase_h=l_pp / 2, l_pp_h=l_pp,
             ts_us=int(ctx.readings["TS"]), evidence=ctx.evidence,
             warnings=ctx.warnings)
+    # worst-of over the physics verdicts: RED = physics violation (honest hard
+    # stop, e.g. rho mismatch > 30% or R/L outside the absolute backstop);
+    # NEED_DATA = evaluation impossible (run refusal, NOT a failure);
+    # YELLOW verdicts surface as warnings (soft, same as gate failures).
+    pg_worst = physics_gates.combine(list(pg_verdicts.values()))
+    if pg_worst == RED:
+        red_names = [n for n, v in pg_verdicts.items() if v.status == RED]
+        return AutotuneResult(
+            status=RED,
+            reason="물리 게이트 RED: %s" % ", ".join(
+                "%s %s" % (n, pg_verdicts[n].detail) for n in red_names),
+            r_phase_ohm=r_pp / 2, r_pp_ohm=r_pp, l_phase_h=l_pp / 2, l_pp_h=l_pp,
+            wc_rad_s=wc, pm_deg=pm, ts_us=int(ctx.readings["TS"]),
+            evidence=ctx.evidence, warnings=ctx.warnings)
+    if pg_worst == NEED_DATA:
+        nd = [n for n, v in pg_verdicts.items() if v.status == NEED_DATA]
+        return AutotuneResult(
+            status=NEED_DATA,
+            reason="물리 게이트 판정 불가(NEED_DATA): %s" % ", ".join(nd),
+            r_phase_ohm=r_pp / 2, r_pp_ohm=r_pp, l_phase_h=l_pp / 2, l_pp_h=l_pp,
+            wc_rad_s=wc, pm_deg=pm, ts_us=int(ctx.readings["TS"]),
+            evidence=ctx.evidence, warnings=ctx.warnings)
+    for name, v in pg_verdicts.items():
+        if v.status == YELLOW:
+            ctx.warnings.append("물리 게이트 %s YELLOW (%s)" % (name, v.detail))
+    # EAS residual-gain comparison: ADVISORY ONLY (spec §5) — never a gate,
+    # never fed into the status.  Untrusted for non-EAS-tuned motors.
+    ctx.evidence["advisory_eas"] = physics_gates.advisory_eas(
+        {"KP[1]": ctx.snapshot.get("KP[1]"), "KI[1]": ctx.snapshot.get("KI[1]")},
+        {"kp_cur": kp, "ki_cur": ki})
     status = YELLOW if ctx.warnings else GREEN
     _emit(ctx, "DONE", "측정 파이프라인 완료 — %s (적용은 별도 사용자 액션 E3)" % status)
     return AutotuneResult(

@@ -721,14 +721,38 @@ def test_align_tolerances_scale_with_ca19(tmp_path):
     assert abs(tols[21] / legacy - 1.0) > 0.2
 
 
-def test_ca19_unreadable_falls_back_with_warning(tmp_path):
-    """CA[19]<=0: legacy 16-pole-pair assumption + explicit warning (YELLOW)."""
+def test_ca19_unreadable_without_profile_refuses_need_data(tmp_path):
+    """P3 spec §1.5: CA[19] unreadable AND no profile -> NEED_DATA run
+    refusal (the legacy fallback-16 is retired).  Refusal happens BEFORE any
+    drive write: no MO=1, no abort chain, NOT a RED."""
     drive = SimDrive()
     drive.regs["CA[19]"] = 0
     res = run_current_autotune(drive, _params(drive, tmp_path))
+    assert res.status == at.NEED_DATA
+    assert "극쌍" in res.reason and "NEED_DATA" in res.reason
+    cmds = [c.replace(" ", "").upper() for c, _ in getattr(drive, "log", [])] \
+        if hasattr(drive, "log") else []
+    assert "MO=1" not in cmds
+    assert "abort" not in res.evidence          # nothing was written
+    assert "prealign" not in res.evidence
+
+
+def test_ca19_unreadable_profile_supplies_pole_pairs(tmp_path):
+    """CA[19] unreadable but the MotorProfile carries pole_pairs=16: the run
+    proceeds with the SAME alignment numbers the legacy fallback produced,
+    plus an explicit warning naming the profile source (YELLOW)."""
+    import motor_profile as mp
+    prof = mp.MotorProfile.from_sources(
+        "sim-unit", drive_readings={"CA[18]": 524288, "VH[2]": 3932160},
+        user_settings={"pole_pairs": 16})
+    drive = SimDrive()
+    drive.regs["CA[19]"] = 0
+    res = run_current_autotune(
+        drive, _params(drive, tmp_path, profile=prof))
     assert res.status == YELLOW
-    assert any("CA[19]" in w for w in res.warnings)
+    assert any("CA[19]" in w and "프로필" in w for w in res.warnings)
     assert res.evidence["prealign"]["pole_pairs"] == 16.0
+    assert res.evidence["pole_pairs"] == {"value": 16.0, "source": "profile"}
 
 
 def test_abort_a3_err58_demoted_not_warning(tmp_path):

@@ -734,14 +734,44 @@ def test_signature_red_surfaces_final_tc_readback_failure(tmp_path):
 
 
 def test_signature_gate_rejects_cap_above_absolute_limit_before_enable(tmp_path):
+    """The signature ENERGIZE current has an absolute safety ceiling
+    (SIGNATURE_ENERGIZE_ABS_MAX_A = 1.30 A, restored 2026-07-21).  The decision
+    band is profile-derived, but the energize cap is not: an EXPLICIT operator
+    override above the ceiling is REJECTED -> RED BEFORE enable.  (A system-
+    DERIVED cap above the ceiling is clamped instead — see the first-run test.)"""
     drive = VPSim(i_c=0.6, vel_noise=0.0)
+    over_cap = vp.SIGNATURE_ENERGIZE_ABS_MAX_A + 0.01
     res = run_velpos_autotune(
-        drive, _signature_params(drive, tmp_path, signature_cap_a=1.3001))
+        drive, _signature_params(drive, tmp_path, signature_cap_a=over_cap))
 
     assert res.status == RED
-    assert "1.30 A" in res.reason
+    assert "통전 상한" in res.reason
     assert not any(cmd == "MO=1" for cmd in _motion_commands(drive))
     assert drive.regs["MO"] == 0
+
+
+def test_signature_first_run_cap_clamped_to_safety_ceiling_not_rejected(tmp_path):
+    """A system-DERIVED first-run cap above the ceiling (0.2*CL = 4.24 A on this
+    unit) is CLAMPED to SIGNATURE_ENERGIZE_ABS_MAX_A and the run proceeds — it is
+    NOT rejected.  Guards the 2026-07-21 safety restoration: the energize ramp
+    must never command more than the ceiling on a first (baseline-free) run."""
+    drive = VPSim(i_c=0.6, vel_noise=0.0)
+    # no profile baseline -> first-run derives cap = ramp_frac*CL = 4.24 A
+    res = run_velpos_autotune(
+        drive, _signature_params(drive, tmp_path))  # signature_cap_a=None
+    # the run must NOT be rejected for the cap (it clamps); MO=1 is reached
+    assert "통전 상한" not in (res.reason or "")
+    ramp_cmds = [c for c in _motion_commands(drive) if c.startswith("TC=")]
+    # every commanded TC during the signature ramp stays <= the safety ceiling
+    tc_vals = []
+    for c in ramp_cmds:
+        try:
+            tc_vals.append(abs(float(c.split("=", 1)[1])))
+        except ValueError:
+            pass
+    if tc_vals:
+        assert max(tc_vals) <= vp.SIGNATURE_ENERGIZE_ABS_MAX_A + 1e-6, \
+            "signature energize exceeded the safety ceiling: %.3f A" % max(tc_vals)
 
 
 # ======================================================================================

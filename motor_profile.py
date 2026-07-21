@@ -49,6 +49,18 @@ PP_NEED_DATA = "NEED_DATA"      # neither -> profile invalid (NO fallback 16)
 
 RATED_RPM_DEV_MAX = 0.05        # 5 % relative deviation threshold (base = min)
 
+# ---- P3 signature-band contract (docs/physics-gates-spec.md §2/§6.1) --------
+# band = [alpha, beta] x i_ba_ref; yellow_lo/red_hi are the outer verdict
+# boundaries consumed by physics_gates.sig_band().  GREEN-run-only updates:
+# i_ba_history keeps the last IBA_HISTORY_MAX GREEN latches, i_ba_ref is the
+# median of the last IBA_REF_RECENT of them.
+SIG_ALPHA = 0.5
+SIG_BETA = 1.5
+SIG_YELLOW_LO = 0.3
+SIG_RED_HI = 2.0
+IBA_HISTORY_MAX = 8
+IBA_REF_RECENT = 5
+
 _PROFILE_SUBDIR = "motor_profiles"
 _DEFAULT_SNAPSHOT_DIR = os.path.join(".omc", "state")
 
@@ -184,6 +196,40 @@ class MotorProfile:
                    pole_pairs=pp, pole_pairs_state=pp_state,
                    rated_rpm_drive=rpm_drive, rated_rpm_user=rpm_user,
                    effective_rated_rpm=effective, rated_rpm_flag=flag)
+
+    # ---------------------------------------------- P3 GREEN-run history fill
+
+    def with_green_run(self,
+                       i_ba_a: Optional[float] = None,
+                       k_a: Optional[float] = None) -> "MotorProfile":
+        """GREEN 런 종료시에만 호출 (oracle rule: YELLOW/RED 런은 재베이스라인
+        금지 — 호출측이 게이팅한다).  새 불변 프로필을 반환한다:
+
+          * ``i_ba_history``  <- append(i_ba_a), 최근 IBA_HISTORY_MAX개 유지
+          * ``signature_band['i_ba_ref_a']`` <- 최근 IBA_REF_RECENT개 median
+          * ``ka_baseline``   <- k_a (양수일 때만 갱신, 아니면 기존 유지)
+
+        i_ba_a/k_a 는 각각 None이면 해당 필드를 건드리지 않는다.  영속은
+        호출측이 save()로 수행한다 (원자적 저장 재사용).
+        """
+        hist = self.i_ba_history
+        band = dict(self.signature_band) if self.signature_band else {}
+        iba = _pos(i_ba_a)
+        if iba is not None:
+            hist = tuple(hist + (float(iba),))[-IBA_HISTORY_MAX:]
+            recent = sorted(hist[-IBA_REF_RECENT:])
+            n = len(recent)
+            median = (recent[n // 2] if n % 2
+                      else 0.5 * (recent[n // 2 - 1] + recent[n // 2]))
+            band = {"i_ba_ref_a": float(median),
+                    "alpha": SIG_ALPHA, "beta": SIG_BETA,
+                    "yellow_lo": SIG_YELLOW_LO, "red_hi": SIG_RED_HI,
+                    "n_green": len(hist)}
+        ka = _pos(k_a)
+        ka_new = float(ka) if ka is not None else self.ka_baseline
+        return dataclasses.replace(
+            self, i_ba_history=hist,
+            signature_band=(band or None), ka_baseline=ka_new)
 
     # ------------------------------------------------------------ validity
 
