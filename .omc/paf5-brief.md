@@ -410,3 +410,15 @@ ka_drop, derive_drag_current/guard_rpm/verify_speeds, p2_g1d, advisory_eas, comb
 tests/test_physics_gates.py 25 passed(경계·상수재현 6.0/1200/360-900·다중모터A~D·결함주입·트립와이어).
 SPEC 정정 1건: verify GUARD 캡 0.6→0.8(내부모순, 동결 900rpm 보존). **미착수(다음): autotune_current/
 velpos 배선 = EAS오라클→physics_gates 소비(프로덕션 회귀 슬라이스), P4 시뮬 구현, P5 UI.**
+
+## P3 완성 (2026-07-21, 커밋 9717c58) — 배선 슬라이스2 + 안전천장 복원
+autotune_current/velpos가 physics_gates 소비(EAS 게인/FF[1] 대조 폐기). POLE_PAIRS_FALLBACK
+폐기→NEED_DATA, 서명대역/드래그/ka_baseline 프로필파생, G3→advisory, with_green_run 갱신.
+전체 2098 passed exit0, 리터럴 트립와이어 통과, 다중모터 A~D 18테스트.
+**⚠️ 안전천장 SIGNATURE_ENERGIZE_ABS_MAX_A=1.30 신설**: 배선이 서명 통전을 첫런 4.24A/상한
+8.49A로 올렸던 걸 1.30A 절대천장으로 복원(파생캡 클램프·명시오버캡 거부·밴드는 프로필파생).
+**내일 첫 서명 통전은 ≤1.30A 확정.** 다이얼로그도 정직 표기.
+경위: fable-driver 2회 실패(사일런트 데스·조기킬) 후 3차 성공, 내 git-stash 실수→stash 복구,
+안전천장 Opus 직접. 잔여: 기존 --smoke-velpos 1실패(P1/P2 Apply/Save vocab, baseline부터·별건),
+에이전트 재량편차(dt→wall-clock 보정으로 G1d RED 회피·암페어 하한 상대화, 코드+테스트에 고정됨).
+남은 단계: P4 시뮬 구현, P5 UI. 내일 실기 재커뮤(런북 R0~R6).
