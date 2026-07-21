@@ -40,6 +40,7 @@ from elmo_link import ElmoLink
 import feedback_spec
 import autotune_current
 import autotune_velpos
+import commutation_id
 import expert_tuning_offline
 import expert_filter_scheduling_evidence
 import expert_limits_protections_evidence
@@ -789,7 +790,7 @@ class DriveWorker(QtCore.QThread):
         "autotune", "velpos", "verify_vp", "p1_trial_begin",
         "p1_trial_restore", "p1_trial_commit", "vp_trial_begin",
         "vp_trial_restore", "vp_trial_commit", "soft_zero", "encoder_maint",
-        "jog",
+        "jog", "commutation_id",
     ))
 
     connected = QtCore.pyqtSignal(dict)      # {fw, pal, boot, target_type}
@@ -812,6 +813,9 @@ class DriveWorker(QtCore.QThread):
     velpos_applied = QtCore.pyqtSignal(bool, str)         # (ok, message) for KP[2..3] apply
     velpos_gain_action = QtCore.pyqtSignal(str, bool, str, object)
     # action, ok, message, GainTrialVP (begin/restore/commit)
+    commutation_started = QtCore.pyqtSignal()             # P4 commutation-ID mirror set
+    commutation_progress = QtCore.pyqtSignal(str, str)    # (S0..S6 state code, detail)
+    commutation_result = QtCore.pyqtSignal(object)        # commutation_id.CommutationIDResult
     verify_started = QtCore.pyqtSignal()                  # F2/G5 verification run
     verify_result = QtCore.pyqtSignal(object)             # AutotuneVPResult (verify)
     encoder_maint_result = QtCore.pyqtSignal(bool, str)   # (ok, drive-response text)
@@ -938,6 +942,19 @@ class DriveWorker(QtCore.QThread):
     def cancel_velpos(self):
         """Request a safe Phase-2 abort (same operator flag; the module runs the
         segment-appropriate chain: TC=0->MO=0 or JV=0;ST->MO=0)."""
+        self._tune_cancelled_through = self._tune_job_generation
+        self._cancel_at = True
+
+    def start_commutation_id(self, kw: dict):
+        """Queue the P4 commutation self-ID (ENERGIZES the motor: signature
+        ramps <= 1.30 A + optional UM3 align ladder <= 6 A, and REWRITES CA[7]
+        with readback verification — the caller shows the energize/CA[7]
+        warning gate first; never SV)."""
+        return self._queue_tuning_job("commutation_id", dict(kw))
+
+    def cancel_commutation_id(self):
+        """Request a safe commutation-ID abort (same operator flag; the module
+        runs the S6 chain: TC=0->MO=0->UM/limit restore + CA[7] revert)."""
         self._tune_cancelled_through = self._tune_job_generation
         self._cancel_at = True
 
@@ -1450,6 +1467,9 @@ class DriveWorker(QtCore.QThread):
         elif kind == "velpos":
             self.velpos_result.emit(autotune_velpos.AutotuneVPResult(
                 status=autotune_velpos.RED, reason=message))
+        elif kind == "commutation_id":
+            self.commutation_result.emit(commutation_id.CommutationIDResult(
+                status=commutation_id.RED, reason=message))
         elif kind == "verify_vp":
             self.verify_result.emit(autotune_velpos.AutotuneVPResult(
                 status=autotune_velpos.RED, reason=message))
@@ -2494,7 +2514,8 @@ class DriveWorker(QtCore.QThread):
                         break
                     kind, payload = self._jobs.popleft()
                     tune_token = None
-                    if kind in {"autotune", "velpos", "verify_vp"}:
+                    if kind in {"autotune", "velpos", "verify_vp",
+                                "commutation_id"}:
                         if (isinstance(payload, tuple) and len(payload) == 2
                                 and isinstance(payload[0], int)):
                             tune_token, payload = payload
@@ -2523,7 +2544,8 @@ class DriveWorker(QtCore.QThread):
                     # popped job can cross into a write-capable handler.
                     if not self._run:
                         break
-                    if (kind in {"autotune", "velpos", "verify_vp"}
+                    if (kind in {"autotune", "velpos", "verify_vp",
+                                 "commutation_id"}
                             and self._tune_cancel_requested(tune_token)):
                         self._emit_guard_rejection(
                             kind, payload,
@@ -2641,6 +2663,19 @@ class DriveWorker(QtCore.QThread):
                             self._cancel_at = False
                         try:
                             self._run_verify_vp(link, payload, tune_token)
+                        finally:
+                            if not self._motion_stop_requested:
+                                self._cancel_at = False
+                    elif kind == "commutation_id":
+                        # The run rewrites CA[7]; any prior session signature
+                        # is stale the moment this job is admitted.
+                        self._invalidate_commutation_signature(
+                            "Commutation Signature revoked before "
+                            "Commutation ID (CA[7] mutation)")
+                        if not self._motion_stop_requested:
+                            self._cancel_at = False
+                        try:
+                            self._run_commutation_id(link, payload, tune_token)
                         finally:
                             if not self._motion_stop_requested:
                                 self._cancel_at = False
@@ -2940,6 +2975,39 @@ class DriveWorker(QtCore.QThread):
                 self._commutation_signature_green, detail)
             self._emit_axis_summary(link)
         self.velpos_result.emit(res)
+        try:                                         # gains view reflects reality post-run
+            self.tuning_gains.emit(link.read_tuning_gains())
+        except Exception:
+            pass
+
+    def _run_commutation_id(self, link, kw: dict, tune_token=None):
+        """Run the P4 commutation self-ID in this thread (mirror of
+        _run_velpos_autotune): sleep_fn -> msleep, progress_fn/cancel_fn -> Qt
+        signals / the shared operator-abort flag.  The module never raises
+        (RED result), runs the S6/abort chain, restores CA[7] on any failure
+        path and never sends SV.  A GREEN Commutation ID does NOT grant the
+        session Commutation Signature / motion authority by itself — the
+        operator re-establishes it with the standalone signature run
+        (runbook R3 order); the stale signature was already revoked at job
+        admission."""
+        self.commutation_started.emit()
+        params = commutation_id.CommutationIDParams(
+            sleep_fn=lambda s: self.msleep(int(max(s, 0.0) * 1000)),
+            progress_fn=lambda code, detail: self.commutation_progress.emit(
+                str(code), str(detail)),
+            cancel_fn=lambda: self._tune_cancel_requested(tune_token),
+            **kw)
+        guarded_link = _EnergyAwareLink(
+            link, self._claim_drive_energy,
+            lambda: not self._tune_cancel_requested(tune_token))
+        try:
+            res = commutation_id.run_commutation_id(guarded_link, params)
+        except Exception as e:                       # module shouldn't raise; be safe
+            res = commutation_id.CommutationIDResult(
+                status=commutation_id.RED, reason="worker 예외: %r" % e)
+        res = self._finish_energizing_workflow(link, res, "commutation_id")
+        self._latch_configuration_unknown(link, res, "Commutation ID")
+        self.commutation_result.emit(res)
         try:                                         # gains view reflects reality post-run
             self.tuning_gains.emit(link.read_tuning_gains())
         except Exception:
@@ -10345,6 +10413,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_signature = QtWidgets.QPushButton("Run Commutation Signature (≤1.30 A)")
         self.btn_tune_signature.setEnabled(False)
         self.btn_tune_signature.clicked.connect(self._run_signature_clicked)
+        # P4 — commutation self-ID (runbook R0~R6).  Same gate class as the
+        # signature button; operation-catalog id는 카탈로그 확장 세그먼트에서
+        # 추가한다 (unknown id는 KeyError라 여기서 임의 등록 금지).
+        self.btn_tune_commutation = QtWidgets.QPushButton(
+            "Run Commutation ID (실기 재커뮤)")
+        self.btn_tune_commutation.setEnabled(False)
+        self.btn_tune_commutation.clicked.connect(self._run_commutation_clicked)
         self.btn_tune_vp = QtWidgets.QPushButton("Run Phase 2 (Vel/Pos)"); self.btn_tune_vp.setEnabled(False)
         self.btn_tune_vp.clicked.connect(self._run_velpos_clicked)
         self.btn_tune_abort = QtWidgets.QPushButton("Abort"); self.btn_tune_abort.setEnabled(False)
@@ -10353,7 +10428,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.btn_tune_verify.setEnabled(False)
         self.btn_tune_verify.clicked.connect(self._run_verify_clicked)
         for index, b in enumerate((
-                self.btn_tune, self.btn_tune_signature, self.btn_tune_vp,
+                self.btn_tune, self.btn_tune_signature,
+                self.btn_tune_commutation, self.btn_tune_vp,
                 self.btn_tune_verify, self.btn_tune_abort)):
             btnrow.addWidget(b, index // 2, index % 2)
         guided_run_layout.addLayout(btnrow)
@@ -11229,8 +11305,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self._tune_dispatch_generation = getattr(
             self, "_tuning_authority_generation", 0)
         self._verify_trial_inflight = trial if kind == "verify" else None
-        for name in ("btn_tune", "btn_tune_signature", "btn_tune_vp",
-                     "btn_tune_verify"):
+        for name in ("btn_tune", "btn_tune_signature", "btn_tune_commutation",
+                     "btn_tune_vp", "btn_tune_verify"):
             if hasattr(self, name):
                 getattr(self, name).setEnabled(False)
         if hasattr(self, "btn_motor_write"):
@@ -11450,6 +11526,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._mark_energizing_ui("Phase 1 tuning is running")
         self.btn_tune.setEnabled(False); self.btn_tune_signature.setEnabled(False)
+        self.btn_tune_commutation.setEnabled(False)
         self.btn_tune_abort.setEnabled(True)
         self.btn_tune_apply.setEnabled(False)
         self._set_tune_stage(0)
@@ -11488,6 +11565,7 @@ class MainWindow(QtWidgets.QMainWindow):
                         getattr(self, "_vp_gain_trial", None) is not None)
         self.btn_tune.setEnabled(on and not trial_active)
         self.btn_tune_signature.setEnabled(on and not trial_active)
+        self.btn_tune_commutation.setEnabled(on and not trial_active)
         self._at_result = res
         self._at_result_generation = getattr(
             self, "_tuning_authority_generation", 0)
@@ -11726,6 +11804,135 @@ class MainWindow(QtWidgets.QMainWindow):
             kw["profile"] = prof
         self.worker.start_velpos_autotune(kw)
 
+    # ---- P4 Commutation self-ID GUI glue (mirror of the signature set) ----------------
+    def _run_commutation_clicked(self):
+        """Energize decision lives HERE (click + confirm dialog) — never
+        unattended.  The kernel (commutation_id.run_commutation_id) owns the
+        S0 snapshot / S6 abort chain, CA[7] readback+revert and the 1.30 A /
+        6 A caps; this handler only gates dispatch, mirroring the signature
+        button."""
+        if getattr(self, "_motor_write_inflight", False):
+            self._flash("Motor profile 저장 중에는 Commutation ID를 시작할 수 없습니다.")
+            return
+        if getattr(self, "_tune_dispatch_inflight", None) is not None:
+            self._flash("이전 튜닝/검증 전송의 시작 또는 결과를 기다리는 중입니다.")
+            return
+        if self._guard_unsaved_vp_trial("Commutation ID를 실행"):
+            return
+        if not (self.worker and self.worker.isRunning()):
+            self._flash("드라이브를 먼저 연결하세요.")
+            return
+        prof = getattr(self, "_motor_profile", None)
+        band = getattr(prof, "signature_band", None) if prof is not None else None
+        ref = band.get("i_ba_ref_a") if isinstance(band, dict) else None
+        cap_a = autotune_velpos.SIGNATURE_ENERGIZE_ABS_MAX_A     # 1.30 A 천장
+        ladder = commutation_id.CommutationIDParams().um3_align_i_ladder
+        ladder_txt = " → ".join("%.2f" % float(i) for i in ladder)
+        if isinstance(ref, (int, float)) and ref > 0:
+            ref_line = ("• δ 추정 기준(프로필 파생): i_ba_ref = %.3f A\n" % ref)
+        else:
+            ref_line = ("• 이 모터 프로필에 서명 베이스라인 없음 — 커널이 시작"
+                        " 전 정직 RED로 거부합니다 (Phase 2 GREEN 런이 기준을"
+                        " 확립)\n")
+        btn = QtWidgets.QMessageBox.warning(
+            self, "Commutation ID 실행 확인 (실제 통전 · CA[7] 재기록)",
+            "백래시 내성 커뮤테이션 자립 ID(S0~S6)를 실행합니다.\n\n"
+            "• 서명 통전은 최대 %.2f A(안전천장) 이내 — 초과 요청은 거부\n"
+            % cap_a
+            + ref_line +
+            "• UM3 정렬 사다리 %s A는 단계별로만 진행 — 8.49 A 자동 경로 없음"
+            "(오퍼레이터 승인 전용, 이 실행에서 미사용)\n" % ladder_txt +
+            "• CA[7] 재기록: MO=0 게이트 + 정수 되읽기 검증, 실패/중단 시 원복\n"
+            "• SV(영구 저장)는 절대 전송하지 않음 — 세션 서명도 별도 재확립 필요\n"
+            "• Abort 언제든 가능: TC=0 → MO=0 → UM/리밋 복원 + CA[7] 원복\n\n"
+            "출력축 주변이 비어 자유 회전 가능하고, E-stop/STO가 즉시 사용"
+            " 가능한 상태입니까?",
+            QtWidgets.QMessageBox.StandardButton.Yes |
+            QtWidgets.QMessageBox.StandardButton.No,
+            QtWidgets.QMessageBox.StandardButton.No)
+        if btn != QtWidgets.QMessageBox.StandardButton.Yes:
+            return
+        if not self._claim_tune_dispatch("commutation"):
+            return
+        kw = {}
+        if prof is not None:
+            kw["profile"] = prof
+        self.worker.start_commutation_id(kw)
+
+    def _on_commutation_started(self):
+        if not self._tune_signal_is_current("commutation"):
+            return
+        self._mark_energizing_ui("Commutation ID is running")
+        self.btn_tune.setEnabled(False)
+        self.btn_tune_signature.setEnabled(False)
+        self.btn_tune_commutation.setEnabled(False)
+        self.btn_tune_vp.setEnabled(False)
+        self.btn_tune_verify.setEnabled(False)
+        self.btn_tune_abort.setEnabled(True)
+        self.tune_status.setText(
+            "▶ Commutation ID 시작 — [S0] 스냅숏/사전검증…")
+
+    def _on_commutation_progress(self, code, detail):
+        if not self._tune_signal_is_current("commutation"):
+            return
+        self.tune_status.setText("커뮤 ID [%s] %s" % (code, detail))
+
+    def _dump_commutation_result(self, res):
+        """Persist the full Commutation-ID result to .omc/state (evidence off disk)."""
+        try:
+            import json as _json, dataclasses as _dc, time as _time
+            d = os.path.join(".omc", "state")
+            os.makedirs(d, exist_ok=True)
+            path = os.path.join(
+                d, "commutation_id_result_%d.json" % int(_time.time() * 1000))
+            with open(path, "w", encoding="utf-8") as fh:
+                _json.dump(_dc.asdict(res), fh, ensure_ascii=False, indent=1,
+                           default=str)
+            return path
+        except Exception:
+            return None
+
+    def _on_commutation_result(self, res):
+        if not self._tune_signal_is_current("commutation"):
+            return
+        self._release_tune_dispatch("commutation")
+        self.btn_tune_abort.setEnabled(False)
+        on = bool(getattr(self, "_ui_connected", False) and
+                  (self.worker is None or self.worker.isRunning()))
+        trial_active = (getattr(self, "_p1_gain_trial", None) is not None or
+                        getattr(self, "_vp_gain_trial", None) is not None)
+        self.btn_tune.setEnabled(on and not trial_active)
+        self.btn_tune_signature.setEnabled(on and not trial_active)
+        self.btn_tune_commutation.setEnabled(on and not trial_active)
+        self.btn_tune_vp.setEnabled(
+            on and not trial_active and self._motion_signature_is_current()
+            and bool(self._p1_model_overrides_for_p2()))
+        self.btn_tune_verify.setEnabled(
+            on and getattr(self, "_p1_gain_trial", None) is None
+            and self._motion_signature_is_current())
+        path_saved = self._dump_commutation_result(res)
+        self._commutation_result_path = path_saved
+        d_txt = ("%.1f°(%s)" % (res.delta_est_deg, res.delta_quality or "-")
+                 if isinstance(res.delta_est_deg, (int, float)) else "—")
+        ca7_txt = "%s→%s" % (
+            res.ca7_before if res.ca7_before is not None else "—",
+            res.ca7_after if res.ca7_after is not None else "—")
+        sign_txt = ("%+d" % res.ca7_sign_resolved
+                    if isinstance(res.ca7_sign_resolved, int) else "미확정")
+        icon = ("✅" if res.status == commutation_id.GREEN else
+                "⚠" if res.status == commutation_id.YELLOW else "⛔")
+        saved = ("  ·  저장: %s" % path_saved) if path_saved else ""
+        note = ("  ·  세션 서명은 별도 — Run Commutation Signature로 재확립"
+                if res.status == commutation_id.GREEN else "")
+        self.tune_status.setText(
+            "%s Commutation ID %s — 경로=%s, δ̂=%s, CA[7] %s, s=%s%s%s%s"
+            % (icon, res.status, res.path_used or "-", d_txt, ca7_txt,
+               sign_txt,
+               (" · " + res.reason) if res.reason else "", note, saved))
+        self._flash("Commutation ID %s" % res.status)
+        self._set_connected_ui(bool(
+            self._ui_connected and self._connection_admitted and on))
+
     def _run_velpos_clicked(self):
         if getattr(self, "_motor_write_inflight", False):
             self._flash("Motor profile 저장 중에는 Phase 2를 시작할 수 없습니다.")
@@ -11913,7 +12120,8 @@ class MainWindow(QtWidgets.QMainWindow):
         if not self._tune_signal_is_current("verify"):
             return
         self._mark_energizing_ui("Velocity/position verification is running")
-        for b in (self.btn_tune, self.btn_tune_signature, self.btn_tune_vp,
+        for b in (self.btn_tune, self.btn_tune_signature,
+                  self.btn_tune_commutation, self.btn_tune_vp,
                   self.btn_tune_verify,
                   self.btn_tune_apply, self.btn_tune_vp_apply,
                   self.btn_tune_vp_restore, self.btn_tune_vp_save):
@@ -11969,6 +12177,7 @@ class MainWindow(QtWidgets.QMainWindow):
             on and no_trial and self._motion_signature_is_current()
             and bool(self._p1_model_overrides_for_p2()))
         self.btn_tune_signature.setEnabled(on and no_trial)
+        self.btn_tune_commutation.setEnabled(on and no_trial)
         trial_state = (getattr(trial, "persistence_state", "RAM_TRIAL")
                        if trial is not None else None)
         restore_allowed = (trial is not None and
@@ -12019,6 +12228,7 @@ class MainWindow(QtWidgets.QMainWindow):
             return
         self._mark_energizing_ui("Phase 2 tuning/signature is running")
         self.btn_tune.setEnabled(False); self.btn_tune_signature.setEnabled(False)
+        self.btn_tune_commutation.setEnabled(False)
         self.btn_tune_vp.setEnabled(False)
         self.btn_tune_verify.setEnabled(False)
         self.btn_tune_abort.setEnabled(True)
@@ -12070,6 +12280,7 @@ class MainWindow(QtWidgets.QMainWindow):
             on and not trial_active and self._motion_signature_is_current()
             and bool(self._p1_model_overrides_for_p2()))
         self.btn_tune_signature.setEnabled(on and not trial_active)
+        self.btn_tune_commutation.setEnabled(on and not trial_active)
         self.btn_tune_verify.setEnabled(
             on and getattr(self, "_p1_gain_trial", None) is None
             and self._motion_signature_is_current())
@@ -12513,6 +12724,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.worker.velpos_result.connect(self._on_velpos_result)
         self.worker.velpos_applied.connect(self._on_velpos_applied)
         self.worker.velpos_gain_action.connect(self._on_velpos_gain_action)
+        self.worker.commutation_started.connect(self._on_commutation_started)
+        self.worker.commutation_progress.connect(self._on_commutation_progress)
+        self.worker.commutation_result.connect(self._on_commutation_result)
         self.worker.verify_started.connect(self._on_verify_started)
         self.worker.verify_result.connect(self._on_verify_result)
         self.worker.encoder_maint_result.connect(self._on_encoder_maint_result)
@@ -13563,6 +13777,12 @@ class MainWindow(QtWidgets.QMainWindow):
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_signature"):
             self.btn_tune_signature.setEnabled(
+                mutation_trusted and not trial_active and not dispatch_inflight
+                and not motor_write_inflight and not persistence_locked)
+        if hasattr(self, "btn_tune_commutation"):
+            # Same gate class as the signature button: connected + SUPERVISED
+            # + MO=0 (mutation_trusted) + no RAM trial / in-flight dispatch.
+            self.btn_tune_commutation.setEnabled(
                 mutation_trusted and not trial_active and not dispatch_inflight
                 and not motor_write_inflight and not persistence_locked)
         if hasattr(self, "btn_tune_vp"):
@@ -14841,6 +15061,203 @@ def _smoke_recorder(app, win):
     return 0 if not fails else 1
 
 
+def _smoke_commutation(app, win):
+    """Headless acceptance for the P4 Commutation-ID GUI glue (no hardware).
+
+    Part A — WORKER GLUE: runs the real DriveWorker._run_commutation_id
+    (exact production param construction: sleep_fn->msleep, progress_fn/
+    cancel_fn->Qt signals) against tests' CommutGearLashSim and checks the
+    S0..S6 progress stream, GREEN convergence, the 1.30 A / no-SV / MO=0
+    safety envelope, the operator-abort path and the pre-write cap rejection.
+    Part B — HANDLERS: exercises the confirm-dialog gate (No blocks dispatch,
+    Yes dispatches exactly once) and the started/progress/result slots with
+    synthetic GREEN/RED results.
+    """
+    sys.stdout.reconfigure(encoding="utf-8")
+    fails = []
+
+    def chk(name, cond):
+        print("  [commutation-ui] %-52s %s" % (name, "PASS" if cond else "FAIL"))
+        if not cond:
+            fails.append(name)
+
+    # ---- Part A: worker glue against the P4 sim ---------------------------------------
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "tests"))
+    from test_commutation_id import CommutGearLashSim, IBA_REF
+
+    class GlueWorker(DriveWorker):
+        """DriveWorker with msleep mapped onto the sim clock (headless)."""
+        def __init__(self, drive):
+            super().__init__("SIM")
+            self._drive = drive
+            self._connection_identity_verified = True
+            if not hasattr(drive, "read_telemetry"):
+                def read_sim_telemetry():
+                    now = time.monotonic()
+                    return {
+                        "pos": float(drive.p),
+                        "vel": float(drive.v),
+                        "pos_err": float(
+                            drive.regs.get("PA", drive.p) - drive.p),
+                        "iq": float(drive.i_act),
+                        "mo": int(drive.regs.get("MO", 0)),
+                        "_sample_started_monotonic": now,
+                        "_sample_finished_monotonic": now,
+                        "_sample_duration_s": 0.0,
+                    }
+                drive.read_telemetry = read_sim_telemetry
+            original_command = drive.command
+
+            def smoke_command(command, *args, **kwargs):
+                name = str(command).strip().rstrip(";").strip().upper()
+                if name == "ST" and not kwargs.get("allow_motion", False):
+                    kwargs["allow_motion"] = True
+                if name == "MS":
+                    return "3" if int(drive.regs.get("MO", 0)) == 0 else "2"
+                if name == "ID":
+                    return "0"
+                return original_command(command, *args, **kwargs)
+
+            drive.command = smoke_command
+
+        def msleep(self, ms):
+            self._drive.advance(ms / 1000.0)
+
+    sim = CommutGearLashSim(delta0_deg=59.0, s_sim=+1)
+    w = GlueWorker(sim)
+    codes, results, started = [], [], []
+    w.commutation_started.connect(lambda: started.append(1))
+    w.commutation_progress.connect(lambda c, d: codes.append(c))
+    w.commutation_result.connect(results.append)
+    w._run_commutation_id(sim, {"i_ba_ref_a": IBA_REF,
+                                "clock_fn": (lambda: sim.t)})
+    res = results[0] if results else None
+    chk("glue: started emitted", len(started) == 1)
+    need = ["S0_SNAPSHOT", "S1_WATCH", "S3_MEASURE", "S4_CORRECT", "S6_CLOSE"]
+    chk("glue: progress S0..S6 stream", all(c in codes for c in need))
+    chk("glue: result GREEN via path A", res is not None
+        and res.status == commutation_id.GREEN and res.path_used == "A")
+    chk("glue: |delta| <= 25.8 deg + s=+1 resolved", res is not None
+        and isinstance(res.delta_est_deg, (int, float))
+        and abs(res.delta_est_deg) <= 25.8 and res.ca7_sign_resolved == 1)
+    chk("glue: sim left MO=0/MF=0/UM=5", sim.regs["MO"] == 0
+        and sim.regs["MF"] == 0 and sim.regs["UM"] == 5)
+    chk("glue: UM5 energize <= 1.30 A ceiling",
+        sim.tc_um5_max <= autotune_velpos.SIGNATURE_ENERGIZE_ABS_MAX_A + 1e-9)
+    sim_cmds = [c.replace(" ", "").upper() for c, _a in sim.log]
+    chk("glue: SV never sent",
+        not any(c == "SV" or c.startswith("SV=") for c in sim_cmds))
+    chk("glue: snapshot quarantined (synthetic)", res is not None
+        and autotune_velpos.SYNTHETIC_SUBDIR
+        in str(res.evidence.get("snapshot_path", "")))
+
+    # ---- Part A2: operator abort -> RED + CA[7] revert + safe close -------------------
+    sim_ab = CommutGearLashSim(delta0_deg=59.0, s_sim=+1)
+    w_ab = GlueWorker(sim_ab)
+    ab_results = []
+    w_ab.commutation_result.connect(ab_results.append)
+    w_ab._cancel_at = True                       # operator abort before start
+    w_ab._run_commutation_id(sim_ab, {"i_ba_ref_a": IBA_REF,
+                                      "clock_fn": (lambda: sim_ab.t)})
+    ab = ab_results[0] if ab_results else None
+    chk("abort glue: RED result", ab is not None
+        and ab.status == commutation_id.RED)
+    chk("abort glue: MO=0 + CA[7] untouched(438)",
+        sim_ab.regs["MO"] == 0 and sim_ab.regs["CA[7]"] == 438)
+
+    # ---- Part A3: cap above the 1.30 A ceiling rejected before any enable -------------
+    sim_cap = CommutGearLashSim()
+    w_cap = GlueWorker(sim_cap)
+    cap_results = []
+    w_cap.commutation_result.connect(cap_results.append)
+    w_cap._run_commutation_id(sim_cap, {"i_ba_ref_a": IBA_REF,
+                                        "signature_cap_a": 1.31})
+    capr = cap_results[0] if cap_results else None
+    chk("cap glue: 1.31 A rejected RED before enable", capr is not None
+        and capr.status == commutation_id.RED
+        and sim_cap.enable_count == 0)
+
+    # ---- Part B: GUI handlers ---------------------------------------------------------
+    win._nav_to(3)                                    # Tuning page
+    _smoke_admit_ui(win)
+    app.processEvents()
+    chk("Run Commutation ID enabled on connect",
+        win.btn_tune_commutation.isEnabled())
+    calls = []
+    win.worker.start_commutation_id = lambda kw: calls.append(kw)
+    orig_warning = QtWidgets.QMessageBox.warning
+    captured = {}
+
+    def warn_no(parent, title, text, *a, **k):
+        captured["title"] = str(title)
+        captured["text"] = str(text)
+        return QtWidgets.QMessageBox.StandardButton.No
+
+    QtWidgets.QMessageBox.warning = warn_no
+    try:
+        win._run_commutation_clicked()
+        chk("confirm No -> no dispatch, no worker call",
+            not calls and win._tune_dispatch_inflight is None)
+        chk("dialog: 1.30 A ceiling stated", "1.30" in captured.get("text", ""))
+        chk("dialog: UM3 ladder stepwise + no 8.49 A auto path",
+            "2.00 → 4.24 → 6.00" in captured.get("text", "")
+            and "8.49" in captured.get("text", ""))
+        chk("dialog: abort + E-stop attestation",
+            "Abort" in captured.get("text", "")
+            and "E-stop" in captured.get("text", ""))
+        QtWidgets.QMessageBox.warning = (
+            lambda *a, **k: QtWidgets.QMessageBox.StandardButton.Yes)
+        win._run_commutation_clicked()
+        chk("confirm Yes -> dispatched exactly once", len(calls) == 1)
+        chk("dispatch inflight = commutation",
+            win._tune_dispatch_inflight == "commutation")
+        chk("run buttons locked while in flight",
+            not win.btn_tune_commutation.isEnabled()
+            and not win.btn_tune.isEnabled())
+    finally:
+        QtWidgets.QMessageBox.warning = orig_warning
+    win._on_commutation_started()
+    chk("Abort enabled while running", win.btn_tune_abort.isEnabled())
+    win._on_commutation_progress("S1_WATCH", "enable #1 + idle 감시 1.5s")
+    chk("progress shows S-state code", "S1_WATCH" in win.tune_status.text())
+    # smoke-only: keep synthetic results out of the LIVE .omc/state snapshots
+    win._dump_commutation_result = lambda res: None
+    _smoke_refresh_ui(win, 2, mo=0)
+    green = commutation_id.CommutationIDResult(
+        status=commutation_id.GREEN, path_used="A+flip", delta_est_deg=12.3,
+        delta_quality="LOW", ca7_before=438, ca7_after=292,
+        ca7_sign_resolved=1)
+    win._on_commutation_result(green)
+    app.processEvents()
+    text = win.tune_status.text()
+    chk("result shows GREEN + path + CA[7] before->after",
+        "GREEN" in text and "A+flip" in text and "438→292" in text)
+    chk("result reminds separate signature re-establishment",
+        "Commutation Signature" in text)
+    chk("Abort disabled after result", not win.btn_tune_abort.isEnabled())
+    chk("dispatch released after result", win._tune_dispatch_inflight is None)
+    _smoke_refresh_ui(win, 3, mo=0)
+    app.processEvents()
+    chk("button re-enabled after authority refresh",
+        win.btn_tune_commutation.isEnabled())
+    red = commutation_id.CommutationIDResult(
+        status=commutation_id.RED,
+        reason="비-커뮤 원인: 180° 플립 양측에서 MF=0x80", ca7_before=438,
+        ca7_after=438)
+    win._on_commutation_result(red)
+    app.processEvents()
+    text = win.tune_status.text()
+    chk("RED reason surfaced honestly", "RED" in text and "비-커뮤" in text)
+    out = os.path.join(os.path.dirname(os.path.abspath(__file__)),
+                       "media", "smoke_commutation.png")
+    win._on_commutation_result(green); app.processEvents()
+    win.grab().save(out)
+    print("screenshot ->", out)
+    print("SMOKE-COMMUTATION:", "GREEN (all assertions pass)" if not fails
+          else "RED — %d failure(s): %s" % (len(fails), fails))
+    return 0 if not fails else 1
+
+
 def main():
     smoke = "--smoke" in sys.argv
     smoke_fb = "--smoke-feedback" in sys.argv
@@ -14848,8 +15265,10 @@ def main():
     smoke_enc = "--smoke-encoder" in sys.argv
     smoke_vp = "--smoke-velpos" in sys.argv
     smoke_rec = "--smoke-recorder" in sys.argv
+    smoke_cid = "--smoke-commutation" in sys.argv
     smoke_mode = bool(
-        smoke or smoke_fb or smoke_at or smoke_enc or smoke_vp or smoke_rec)
+        smoke or smoke_fb or smoke_at or smoke_enc or smoke_vp or smoke_rec
+        or smoke_cid)
     if smoke_mode:
         os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
     app = QtWidgets.QApplication(sys.argv)
@@ -14887,6 +15306,8 @@ def main():
         return _smoke_velpos(app, win)
     if smoke_rec:
         return _smoke_recorder(app, win)
+    if smoke_cid:
+        return _smoke_commutation(app, win)
     if smoke:
         # Exercise the same fail-closed admission envelope as a live worker,
         # using a process-local stub only.  This smoke path performs no I/O.
