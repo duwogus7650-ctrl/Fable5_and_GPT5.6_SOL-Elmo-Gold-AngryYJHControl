@@ -138,6 +138,7 @@ class _CIDState:
         self.ca7_cur: Optional[int] = None
         self.cap_a: float = 0.0
         self.i_ba_ref: Optional[float] = None
+        self.no_ref = False              # δ 정량 기준 없음 → 플립까지만 수행
         self.band_profile = None
         self.flips = 0
         self.a_iters = 0
@@ -558,10 +559,17 @@ def _s0_snapshot(ctx, st):
     if st.cap_a > ctx.cl1:
         raise vp.PreflightError("cap %.2fA > CL[1]=%.2fA" % (st.cap_a, ctx.cl1))
     st.i_ba_ref = _resolve_ref(cid)
-    if st.i_ba_ref is None and not cid.ka_healthy:
-        raise vp.PreflightError(
-            "δ 추정 기준 없음 — i_ba_ref_a 또는 profile.signature_band 또는"
-            " ka_healthy 중 하나 필요 (스펙 §2)")
+    # δ 정량(S3 측정 / S4 정밀 보정)에는 건강 기준이 필요하지만, S1 enable-watch와
+    # S2 180° 플립은 MF=0x80 신호만으로 성립한다(스펙 §1.1 따름정리).  기준이 없다고
+    # 거친 보정 경로까지 막으면 첫 런이 부트스트랩 순환에 갇힌다 — 기준은 서명 GREEN
+    # 에서 생기고, 서명은 커뮤가 나쁘면(cos δ<0, enable 즉시 MF=0x80) 못 돈다.
+    # 그래서 기준 없이도 플립까지는 수행하고 S3에서 정직하게 YELLOW로 종료한다.
+    # (실기 2026-07-21: CA[7]=322에서 enable마다 MF=128 재현 → 이 경로가 유일한 해제)
+    st.no_ref = st.i_ba_ref is None and not cid.ka_healthy
+    if st.no_ref:
+        ctx.warnings.append(
+            "δ 추정 기준 없음(i_ba_ref/ka_healthy) — enable-watch + 180° 플립까지만"
+            " 수행하고 정밀 보정은 생략 (서명으로 베이스라인 확립 후 재실행)")
     st.band_profile = (cid.profile if _resolve_ref(cid) is not None
                        and getattr(cid.profile, "signature_band", None)
                        else SimpleNamespace(
@@ -716,6 +724,19 @@ def _machine(ctx, st) -> CommutationIDResult:
                 continue
             return _s2_double_fault(ctx, st)
         # ---- S3 MEASURE -----------------------------------------------------
+        if st.no_ref:
+            # 기준 없음 → δ 정량 불가.  거친 보정(플립)까지가 이 런의 범위다.
+            # enable이 이 지점에 도달했다는 것 자체가 "폴트 없이 통전 유지"의
+            # 증거이므로, 플립을 적용했다면 그 CA[7]을 유지한 채 종료한다
+            # (CA[7]은 SV 전까지 RAM — 전원 재인가로 원복 가능).
+            if st.flips:
+                return _close(ctx, st, YELLOW,
+                              "180° 플립 적용 후 인에이블 안정 — CA[7]=%d 유지."
+                              " 서명으로 베이스라인 확립 후 정밀 보정 재실행"
+                              % st.ca7_cur, _path_of(st))
+            return _close(ctx, st, YELLOW,
+                          "인에이블 안정(폴트 없음) · δ 정량 불가(기준 없음) —"
+                          " 서명으로 베이스라인 확립 후 재실행", _path_of(st))
         vp._emit(ctx, "S3_MEASURE", "서명 램프(≤%.2fA, HOLD-CONFIRM)"
                  % st.cap_a)
         ba = _measure_signature(ctx)

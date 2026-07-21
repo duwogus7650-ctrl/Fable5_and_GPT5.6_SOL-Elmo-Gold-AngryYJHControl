@@ -37,3 +37,22 @@
 - 실패 이유: (a) 목이 **JV를 BG 없이 즉시 적용** → 실코드의 BG 누락(Elmo: JV는 다음 BG에서 발효)이 안 잡힘 → 실기에서 모터가 아예 안 돌아 v_ss 노이즈로 부호판정 랜덤 실패. PA는 이미 BG 필수로 고쳐놨는데 JV만 빠져 있었다. (b) 목이 **JV를 프로파일러 없이 순수 스텝**으로 모델링 → 캡처창(0.6s) < 램프시간(900rpm=0.983s @AC=1e6) 아티팩트를 못 잡음. 목에 프로파일러를 넣자마자 **D1의 동종 잠복버그**가 즉시 드러남(+900→−300 전이는 1.31s 필요한데 settle 0.8s 고정 → 감속 중 중간값을 정상상태로 기록 → **마찰 피팅 오염**). 실기에서는 시리얼 왕복이 sleep을 늘려 우연히 가려져 있었다(g 타이밍 버그와 동형)
 - 대안·다음엔: **목을 실기 의미론에 정확히 맞춰라 — 맞추는 순간 잠복버그가 드러난다.** 특히 (1) 명령의 발효 시점(arm-then-BG) (2) 프로파일러/램프 (3) 타이밍이 통신 지연에 의존하는 곳. "시뮬 GREEN"은 목이 현실을 모델링한 만큼만 유효하다
 - 재사용 자산: tests/test_autotune_velpos.py VPSim(`jv_target`/`jv` 분리 + AC 램프 + arm-then-BG) — 적응 캡처창 `record_s=max(0.6, t_ramp+0.4)`, D1 적응 settle `max(0.8, |Δjv|/AC+0.3)`
+
+## 2026-07-21 — 커뮤 δ는 이 모터에서 "전원마다 재추첨"이 아니라 결정론적이었다 (모델 정정)
+- 시도: 원장 2026-07-15의 "전원 사이클마다 δ 재추첨" 전제로, 전원 재인가하면 커뮤가 다르게 앉을 것이라 기대하고 반복 시도
+- 실패 이유: **틀린 전제**. 이 유닛은 CA[17]=5(시리얼 절대)라 커뮤가 **CA[7] + 절대엔코더로 결정론적 계산**된다. 전원을 껐다 켜도 δ가 동일 → 인에이블마다 MF=0x80(Speed tracking, Admin p.85)이 100% 재현. "재추첨" 관측은 다른 모터/구성(21극쌍 기어드) 얘기였고 이 16극쌍 모터엔 적용되지 않는다
+- 대안·다음엔: δ가 결정론적이면 **해법도 결정론적** — cos δ<0(=인에이블 즉시 MF=0x80)이면 **180° 플립 `CA[7] += 256`(wrap)** 이 반드시 안정 반평면으로 보낸다(cos δ와 cos(δ−180°)는 동시에 음일 수 없음). 실기 확정: CA[7] 322→−446 후 인에이블 버팀·i_ba=1.184A 검출·방향+1·expect-slip=slip(δ<45°). **EAS 무접촉으로 커뮤 진단+수리 성공**
+- 재사용 자산: spikes/field_ca7_flip.py(게이트+되읽기 검증 플립), spikes/field_r0_snapshot.py(R0 복구지점), docs/commutation-id-p4-spec.md §1.1
+- 참조: [[gpt56sol-elmo-jog-electrical-fault]]
+
+## 2026-07-21 — 커뮤 런이 자기 안전-리밋 트랜잭션 때문에 자기 CA[7] 쓰기를 차단 (자기 데드락)
+- 시도: 앱의 Commutation ID 버튼으로 180° 플립을 자동 적용
+- 실패 이유: S0이 임시 안전리밋(SD/HL[2]/LL[2]/ER[2])을 **P2_LIMITS persistence 트랜잭션**으로 적용 → ACTIVE 기록 생성 → `persistence_unknown_latched()`가 `_persistence_record is not None`으로 **TRUE** → elmo_link 가드가 **모든 일반 할당을 차단** → S2의 `CA[7]=-446`이 "command blocked: persistence state UNKNOWN"으로 실패. CA[7]은 P1/P2/P1_CONFIG/P2_LIMITS/MOTOR 어느 authorized 집합에도 없어 우회로가 없다. 종료 시 리밋이 복원되며 기록이 RESOLVED로 바뀌어 **사후엔 원장이 깨끗해 보이는** 탓에 진단이 어려웠다(원장 mtime과 phase=P2_LIMITS로 규명)
+- 대안·다음엔: (i) 플립을 리밋 트랜잭션 **이전**으로 옮기거나, (ii) 커뮤용 authorized 뮤테이션 경로(CA[7] 포함 phase) 신설. 실기 중엔 수동 플립(spikes/field_ca7_flip.py)으로 우회했고, 코드 수정은 오프라인 과제로 남김
+- 재사용 자산: 진단법 = 원장 파일(`%LOCALAPPDATA%\AngryYJHControl\safety\persistence_unknown.json`)의 active/resolved + mtime 대조
+
+## 2026-07-21 — S0의 "MF≠0이면 시작 거부" 가드가 자기가 고칠 폴트 때문에 시작을 막음
+- 시도: 서명 실패로 MF=128이 래치된 상태에서 곧바로 Commutation ID 실행
+- 실패 이유: S0이 MF≠0이면 무조건 거부 → 그런데 **MF=0x80은 이 알고리즘이 처리하도록 설계된 바로 그 폴트**다. 매번 전원 재인가로 MF를 지워야 했고, **전원 재인가는 RAM에 있던 CA[7] 수정을 322로 되돌려** 진전을 무효화하는 악순환까지 만들었다
+- 대안·다음엔: MF가 **정확히 0x80**이면 오퍼레이터 확인 후 진행 허용(그 외 폴트는 기존대로 거부). 같은 부류의 갭을 베이스라인 전제조건에서도 이미 수정함(기준 없어도 플립까지 진행 → 정직한 YELLOW)
+- 재사용 자산: commutation_id.py `st.no_ref` 경로 + tests/test_commutation_id.py 부트스트랩 테스트 2건

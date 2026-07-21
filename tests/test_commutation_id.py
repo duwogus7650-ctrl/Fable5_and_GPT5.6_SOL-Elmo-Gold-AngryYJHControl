@@ -466,3 +466,46 @@ def test_sim_serial_latency_advances_wall_clock():
     t0 = drive.t
     drive.command("MF")
     assert drive.t > t0                                   # 직렬 왕복 = 실시간
+
+
+# ======================================================================================
+# 부트스트랩 — 베이스라인 없는 첫 런: 플립까지 수행하고 정직한 YELLOW로 종료
+# (실기 2026-07-21: CA[7]=322에서 enable마다 MF=128 재현.  기준은 서명 GREEN에서
+#  생기고 서명은 커뮤가 나쁘면 못 도는 순환을, 플립 경로 해제로 끊는다.)
+# ======================================================================================
+def test_no_baseline_bad_commutation_flips_and_yellow_keeps_flip(tmp_path):
+    """기준 없음 + cos δ<0: PreflightError로 거부하지 말고 180° 플립을 적용한 뒤
+    그 CA[7]을 유지한 채 YELLOW로 종료해야 한다 (다음 서명이 베이스라인을 심는다)."""
+    drive = CommutGearLashSim(delta0_deg=103.0, s_sim=+1)
+    ca7_before = drive.regs["CA[7]"]
+
+    res = run_commutation_id(drive, _cid_params(drive, tmp_path,
+                                                i_ba_ref_a=None))
+
+    assert res.status == YELLOW, (res.status, res.reason, res.warnings)
+    assert res.evidence["flips"] == 1
+    assert res.path_used == "A+flip"
+    # 첫 enable이 idle에서 MF=0x80 → 플립의 트리거
+    assert res.evidence["enable_watch"][0]["verdict"] == "FAULT_0x80"
+    # 플립은 유지된다 (원복 금지) — 인에이블이 안정화된 상태가 산출물
+    assert res.ca7_after != ca7_before
+    assert drive.regs["CA[7]"] == res.ca7_after
+    assert "플립" in res.reason and "베이스라인" in res.reason
+    _assert_safe_close(drive, ca7_expected=res.ca7_after)
+
+
+def test_no_baseline_healthy_commutation_yellow_without_touching_ca7(tmp_path):
+    """기준 없음 + 커뮤 건강(폴트 없음): 플립도 보정도 하지 않고, δ 정량 불가를
+    정직하게 YELLOW로 보고한다 (CA[7] 무변경)."""
+    drive = CommutGearLashSim(delta0_deg=0.0)
+    ca7_before = drive.regs["CA[7]"]
+
+    res = run_commutation_id(drive, _cid_params(drive, tmp_path,
+                                                i_ba_ref_a=None))
+
+    assert res.status == YELLOW, (res.status, res.reason, res.warnings)
+    assert res.evidence["flips"] == 0
+    assert res.ca7_after == ca7_before
+    assert drive.regs["CA[7]"] == ca7_before
+    assert "기준 없음" in res.reason
+    _assert_safe_close(drive, ca7_expected=ca7_before)
