@@ -6,6 +6,7 @@ import time
 import pytest
 
 import main as app_main
+import autotune_velpos
 from main import DriveWorker, SessionCoordinateError
 
 
@@ -1608,3 +1609,69 @@ def test_unknown_persistence_close_requires_explicit_critical_confirmation(monke
     )
     app_main.MainWindow.closeEvent(fake, event)
     assert event.ignored
+
+
+# ======================================================================================
+# 서명 → 모션 권한 (실기 2026-07-21 결함 ⑤: Phase 2 층의 부트스트랩 순환)
+#   Phase 2 실행 ← 서명 GREEN 필요 / 서명 GREEN ← 베이스라인 필요 / 베이스라인 ← Phase 2
+# 첫런 프로토콜은 K_a를 못 재 잠정 YELLOW에 머물고, status는 경고 하나만 있어도
+# YELLOW로 떨어진다(안전천장 클램프 알림이 첫런엔 항상 붙는다).  그러나 모션 권한이
+# 요구하는 증거(방향+1, expect-slip=slip=δ<45°)는 이미 확보돼 있다.
+# ======================================================================================
+def _sig_evidence(**over):
+    sig = {
+        "mode": "standalone_commutation_signature",
+        "band_source": "first_run",
+        "direction": 1,
+        "pass": True,
+        "first_run_verdict": {"status": autotune_velpos.YELLOW,
+                              "detail": {"slip": True, "ka_ok": False}},
+    }
+    sig.update(over)
+    return sig
+
+
+_FINAL_OK = {"MO": 0, "TC": 0}
+
+
+def test_first_run_provisional_signature_grants_motion_authority():
+    """첫런 잠정 YELLOW(방향+slip)는 모션 권한을 준다 — 순환을 끊는 지점."""
+    granted, detail = DriveWorker._signature_motion_authority(
+        autotune_velpos.YELLOW, _sig_evidence(), _FINAL_OK)
+
+    assert granted is True
+    assert "잠정 권한" in detail and "Phase 2" in detail
+
+
+def test_green_signature_still_grants_with_unchanged_wording():
+    granted, detail = DriveWorker._signature_motion_authority(
+        autotune_velpos.GREEN,
+        _sig_evidence(band_source="profile", first_run_verdict={}), _FINAL_OK)
+
+    assert granted is True
+    assert detail == "Session Commutation Signature GREEN"
+
+
+@pytest.mark.parametrize("sig,final,why", [
+    (_sig_evidence(first_run_verdict={
+        "status": autotune_velpos.YELLOW,
+        "detail": {"slip": False, "ka_ok": False}}), _FINAL_OK, "slip 아님"),
+    (_sig_evidence(direction=-1), _FINAL_OK, "방향 불합격"),
+    (_sig_evidence(band_source="profile"), _FINAL_OK, "첫런 아님(대역 YELLOW)"),
+    (_sig_evidence(**{"pass": False}), _FINAL_OK, "게이트 미통과"),
+    (_sig_evidence(), {"MO": 1, "TC": 0}, "MO 미복귀"),
+    (_sig_evidence(), {"MO": 0, "TC": 0.5}, "TC 미복귀"),
+])
+def test_yellow_without_first_run_slip_evidence_is_refused(sig, final, why):
+    """증거가 없으면 YELLOW는 권한을 얻지 못한다 — 완화는 첫런 slip에 한정."""
+    granted, detail = DriveWorker._signature_motion_authority(
+        autotune_velpos.YELLOW, sig, final)
+
+    assert granted is False, why
+    assert detail == "Commutation Signature not GREEN"
+
+
+def test_red_signature_never_grants_authority():
+    granted, _ = DriveWorker._signature_motion_authority(
+        autotune_velpos.RED, _sig_evidence(), _FINAL_OK)
+    assert granted is False

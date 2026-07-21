@@ -2933,6 +2933,45 @@ class DriveWorker(QtCore.QThread):
         except Exception:
             pass
 
+    @staticmethod
+    def _signature_motion_authority(res_status, signature, final):
+        """서명 결과가 이 연결의 모션 권한을 주는지 증거로 판정한다.
+
+        스펙 §2.3 첫런 프로토콜: 베이스라인이 없으면 K_a를 못 재므로 최선 판정이
+        잠정 YELLOW다.  게다가 서명 status는 `YELLOW if warnings else GREEN`이라
+        안전천장 클램프 같은 advisory 경고 하나만 있어도 GREEN이 되지 못한다.
+        반면 모션 권한이 실제로 요구하는 증거 — 방향 +1(불합격이면 하드 abort)과
+        UM3 expect-slip=slip(=δ<45°) — 은 이미 확보돼 있고, 없는 것은 K_a뿐인데
+        그 K_a는 Phase 2가 잰다.  GREEN만 인정하면 "Phase 2는 서명 GREEN 필요
+        ⇄ 서명 GREEN은 Phase 2가 확립"의 순환에 갇힌다(실기 2026-07-21).
+        그래서 첫런 slip 근거가 있으면 '잠정 권한'을 준다.
+
+        반환 (granted, detail).
+        """
+        sig = signature or {}
+        fin = final or {}
+        first_run = sig.get("first_run_verdict") or {}
+        fr_detail = first_run.get("detail") or {}
+        provisional = bool(
+            sig.get("band_source") == "first_run"
+            and first_run.get("status") == autotune_velpos.YELLOW
+            and fr_detail.get("slip") is True
+            and sig.get("direction") == 1)
+        gate_ok = bool(
+            sig.get("pass") is True
+            and fin.get("MO") == 0
+            and fin.get("TC") == 0)
+        granted = bool(
+            gate_ok
+            and (res_status == autotune_velpos.GREEN
+                 or (res_status == autotune_velpos.YELLOW and provisional)))
+        if not granted:
+            return False, "Commutation Signature not GREEN"
+        if res_status == autotune_velpos.GREEN:
+            return True, "Session Commutation Signature GREEN"
+        return True, ("Session Commutation Signature 잠정 권한 — 첫런"
+                      " 방향+expect-slip=slip 근거 (K_a 미측정, Phase 2가 확정)")
+
     def _run_velpos_autotune(self, link, kw: dict, tune_token=None):
         """Run the Phase-2 vel/pos auto-tune in this thread (mirror of
         _run_autotune): sleep_fn -> msleep, progress_fn/cancel_fn -> Qt signals
@@ -2961,16 +3000,21 @@ class DriveWorker(QtCore.QThread):
                           signature.get("mode") ==
                           "standalone_commutation_signature")
         if signature_mode:
-            self._commutation_signature_green = bool(
-                res.status == autotune_velpos.GREEN
-                and signature.get("pass") is True
-                and final.get("MO") == 0
-                and final.get("TC") == 0)
+            # 스펙 §2.3 첫런 프로토콜: 베이스라인이 없으면 K_a를 못 재므로 최선
+            # 판정이 잠정 YELLOW다.  게다가 서명 status는 `YELLOW if warnings
+            # else GREEN`이라 안전천장 클램프 같은 advisory 경고 하나만 있어도
+            # GREEN이 되지 못한다.  반면 모션 권한이 실제로 요구하는 증거 —
+            # 방향 +1(불합격이면 하드 abort)과 UM3 expect-slip=slip(=δ<45°) —
+            # 은 이미 확보돼 있고, 없는 것은 K_a뿐인데 그 K_a는 Phase 2가 잰다.
+            # GREEN만 인정하면 "Phase 2는 서명 GREEN 필요 ⇄ 서명 GREEN은 Phase 2
+            # 가 확립"의 순환에 갇힌다(실기 2026-07-21). 그래서 첫런 slip 근거가
+            # 있으면 '잠정 권한'을 부여해 순환을 끊는다 — 증거 기반이며, 방향/
+            # 추종 불합격은 여전히 abort로 걸러진 뒤다.
+            granted, detail = self._signature_motion_authority(
+                res.status, signature, final)
+            self._commutation_signature_green = granted
             self._commutation_signature_token = (
-                str(uuid.uuid4()) if self._commutation_signature_green else None)
-            detail = ("Session Commutation Signature GREEN"
-                      if self._commutation_signature_green
-                      else "Commutation Signature not GREEN")
+                str(uuid.uuid4()) if granted else None)
             self.motion_authority.emit(
                 self._commutation_signature_green, detail)
             self._emit_axis_summary(link)

@@ -70,3 +70,17 @@
 - 대안·다음엔: **트랜잭션 2분할(C안)** 채택 — S2는 플립을 인라인으로 쓰지 않고 `pending_flip`으로 '요청'만 남기고 정상 종결(리밋 복원 완료), 래퍼 `run_commutation_id`가 **트랜잭션이 닫힌 사이**에 CA[7]을 쓰고(persistence 가드가 열려 있는 유일한 구간) `_run_once`를 한 번 재실행한다. 안전 종결자와 elmo_link 트랜스포트는 **무수정**. 2패스가 서로를 알아야 하므로 `prior_flips`(또 플립 요청 방지 + 이중폴트 판정 유지)와 `orig_ca7`(원복 목표가 플립된 값으로 오인되지 않게)을 인계하고, 증거·경고는 하나의 오퍼레이션으로 합성한다
 - 재사용 자산: commutation_id.py `_write_ca7_between_runs` / `_run_once(prior_flips, orig_ca7)` / 증거 합성 로직
 - 참조: 같은 날 원장 "커뮤 런이 자기 안전-리밋 트랜잭션 때문에…" 항목의 해결
+
+## 2026-07-21 — 결함 ⑤ 부트스트랩 순환: 서명 GREEN이 Phase 2를 요구하는데 Phase 2가 서명 GREEN을 요구
+- 시도: 커뮤 서명(Commutation Signature)으로 모션 권한을 얻어 Phase 2(Vel/Pos)를 실행
+- 실패 이유: **순환 의존**이다. Phase 2 버튼은 `_motion_signature_is_current()`(= 서명 GREEN)를 요구하는데, 서명이 GREEN이 되려면 `ka_baseline`/`i_ba_ref` 베이스라인이 프로파일에 있어야 하고, 그 베이스라인은 **Phase 2 GREEN 런에서만** 기록된다. 첫 모터는 영원히 열리지 않는다. 여기에 `status = YELLOW if ctx.warnings else GREEN` 규칙이 겹쳐, P3에서 넣은 안전 클램프 경고(`SIGNATURE_ENERGIZE_ABS_MAX_A` 1.30 A 상한 적용 고지)가 **첫 런에서 항상 발화**하므로 첫 런은 구조적으로 절대 GREEN이 될 수 없었다
+- 대안·다음엔: 판정을 `DriveWorker._signature_motion_authority(res_status, signature, final)`로 **추출**하고, 첫 런 증거가 물리적으로 충분하면 **잠정(provisional) 권한**을 부여한다 — 조건은 `band_source=="first_run"` and `first_run_verdict.status==YELLOW` and `detail.slip is True` and `direction==1` and `pass is True` and `MO==0` and `TC==0`. K_a 미측정은 Phase 2가 확정한다. 실기 증거(21:52:19 런: follow_ratio=0.0 완전슬립, i_ba=0.7179 A)로 `granted=True` 확인. **교훈: "GREEN이어야 다음 단계"류 게이트는 그 GREEN을 만드는 경로가 게이트 뒤에 있지 않은지 항상 역방향으로 검사할 것**
+- 재사용 자산: `main.py::_signature_motion_authority`(순수 정적 메서드 — 실기 결과 JSON을 그대로 먹여 회귀 검증 가능), `tests/test_main_safety.py` 9케이스
+- 참조: [[gpt56sol-elmo-jog-electrical-fault]]
+
+## 2026-07-21 — Phase 2 버튼이 서명 후에도 안 열림: 게이트 조건이 둘인데 하나만 봤다
+- 시도: 결함 ⑤ 수정 후 앱에서 `Run Phase 2 (Vel/Pos)` 활성화 확인
+- 실패 이유: 버튼 조건은 `_motion_signature_is_current()` **and** `_p1_model_overrides_for_p2()` 둘 다인데 서명 쪽만 보고 원인을 찾았다. 실제 차단자는 후자 — Phase 1 결과 `_at_result`는 **인메모리**라 앱 재시작 시 None이 되고, 어제 GREEN(21:18)은 결함 ⑤ 수정 반영을 위해 앱을 재시작하기 전 인스턴스의 것이었다. 서명만 재시작 후(21:52) 실행돼 살아남아 비대칭이 생겼다
+- 대안·다음엔: 진단은 **같은 조건을 공유하는 형제 위젯의 상태 차이**로 좁힌다 — `Verify Installed P2`(서명 조건만 요구)가 활성인데 Phase 2가 비활성이면 차단자는 서명이 아니라 나머지 조건 하나뿐이다. 설계 자체는 정상(오래된 R·L로 속도 게인을 설계하면 안 됨). 앱 재시작 후에는 **Phase 1 → 서명 → Phase 2** 순서로 한 세션 안에서 재실행할 것. `_advance_tuning_authority_generation()`은 연결 이벤트(`_on_connected`/`_on_failed`)에서만 증가하므로 Phase 1 실행이 서명을 무효화하지는 않는다(순서 자유)
+- 재사용 자산: 없음
+- 참조: 같은 날 원장 "결함 ⑤ 부트스트랩 순환" 항목
