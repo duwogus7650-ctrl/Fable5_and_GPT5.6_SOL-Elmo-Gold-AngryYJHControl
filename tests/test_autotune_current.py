@@ -2704,3 +2704,82 @@ def test_p1_gain_trial_reconnect_adoption_rejects_terminal_save_state(
 
     assert not ok and terminal_state in msg
     assert reconnected.log == []
+
+
+# ======================================================================================
+# P1_CONFIG 롤백 정지증명 — 코스트다운 재시도 (실기 2026-07-21 VX=-32)
+# 트랜스포트 게이트는 MO=SO=VX=0을 한 번에 요구한다.  기어드/관성 부하는 MO=0 직후에도
+# 잠시 도므로 one-shot이 거부되고 임시 P1_CONFIG(UM=3+여진) 복원이 통째로 스킵됐다.
+# P2_LIMITS 경로가 이미 배운 교훈(ROLLBACK_STATIONARY_TIMEOUT_S)을 P1에 이식한 것.
+# ======================================================================================
+class _RollbackCtxDouble:
+    def __init__(self, sleep_log):
+        self.warnings = []
+        self.motor_on = False
+        self.guard_due_s = 0.0
+        self.cancel_err_logged = False
+        self.evidence = {}
+        self.dirty = set()
+        self.params = type(
+            "P", (), {"sleep_fn": staticmethod(sleep_log.append),
+                      "cancel_fn": staticmethod(lambda: False)})()
+
+
+def _stationary_error(vx):
+    return RuntimeError(
+        "P1_CONFIG rollback requires disabled stationary proof; VX=%r" % vx)
+
+
+def test_rollback_waits_out_coasting_rotor_then_succeeds():
+    """VX가 아직 0이 아니면 유계 재시도하고, 정착 후 통과하며 경고를 남긴다."""
+    sleeps = []
+    ctx = _RollbackCtxDouble(sleeps)
+    calls = {"n": 0}
+
+    def begin_rollback(attempt_id):
+        calls["n"] += 1
+        if calls["n"] < 3:                     # 두 번은 코스트다운으로 거부
+            raise _stationary_error(-32)
+        return None                            # 세 번째에 정착
+
+    at._begin_rollback_after_settle(ctx, begin_rollback, "attempt-1")
+
+    assert calls["n"] == 3
+    assert len(sleeps) == 2                    # 재시도 사이 정착 대기
+    assert any("코스트다운" in w for w in ctx.warnings)
+
+
+def test_rollback_non_transient_failure_is_not_retried():
+    """MO/SO가 0이 아닌 것은 과도상태가 아니므로 즉시 실패해야 한다(마스킹 금지)."""
+    sleeps = []
+    ctx = _RollbackCtxDouble(sleeps)
+    calls = {"n": 0}
+
+    def begin_rollback(attempt_id):
+        calls["n"] += 1
+        raise RuntimeError(
+            "P1_CONFIG rollback requires disabled stationary proof; MO=1")
+
+    with pytest.raises(RuntimeError, match="MO=1"):
+        at._begin_rollback_after_settle(ctx, begin_rollback, "attempt-1")
+
+    assert calls["n"] == 1                     # 재시도 없음
+    assert sleeps == []
+
+
+def test_rollback_budget_is_bounded_and_reraises():
+    """정착하지 않으면 예산 소진 후 정직하게 원래 오류를 올린다."""
+    sleeps = []
+    ctx = _RollbackCtxDouble(sleeps)
+    calls = {"n": 0}
+
+    def begin_rollback(attempt_id):
+        calls["n"] += 1
+        raise _stationary_error(-5)            # 영원히 코스트다운
+
+    with pytest.raises(RuntimeError, match="stationary"):
+        at._begin_rollback_after_settle(ctx, begin_rollback, "attempt-1")
+
+    budget = at.ROLLBACK_SETTLE_TIMEOUT_S / at.ROLLBACK_SETTLE_POLL_S
+    assert calls["n"] <= budget + 2            # 유계
+    assert len(sleeps) <= budget + 1

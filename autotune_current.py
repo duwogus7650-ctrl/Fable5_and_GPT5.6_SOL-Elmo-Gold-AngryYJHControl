@@ -469,6 +469,43 @@ class _Ctx:
         self.config_restore_finalized = False
 
 
+# Bounded coast-down wait before the transport's rollback stationary proof.
+# The gate demands an exact MO=SO=VX=0 read; on a geared/inertial load VX keeps
+# decaying for a moment after MO=0, so a single-shot attempt fails and the WHOLE
+# temporary-configuration restore is skipped (leaving UM=3 + excitation on the
+# drive, and the app in PERSISTENCE UNKNOWN / READ-ONLY LOCK).  Field 2026-07-21:
+# VX=-32 right after disable.  Waiting out the transient does not weaken the
+# safety property - the same exact proof still has to pass.
+# The P2_LIMITS restore path already learned this (autotune_velpos
+# ROLLBACK_STATIONARY_TIMEOUT_S, live runs with VX=-260596 / -63); the same
+# field-proven budget is reused here rather than inventing a new one.
+ROLLBACK_SETTLE_TIMEOUT_S = 12.0
+ROLLBACK_SETTLE_POLL_S = 0.1
+
+
+def _begin_rollback_after_settle(ctx, begin_rollback, attempt_id):
+    """Request the RAM rollback transition, waiting out a coasting rotor.
+
+    Retries ONLY while the transport rejects on a non-zero VX (the transient);
+    a non-zero MO/SO is not transient and fails immediately.
+    """
+    waited = 0.0
+    while True:
+        try:
+            begin_rollback(attempt_id)
+            if waited > 0.0:
+                ctx.warnings.append(
+                    "롤백 정지증명: 코스트다운 %.1fs 대기 후 통과" % waited)
+            return
+        except Exception as exc:                              # noqa: BLE001
+            text = str(exc)
+            transient = ("stationary" in text and "VX=" in text)
+            if not transient or waited >= ROLLBACK_SETTLE_TIMEOUT_S:
+                raise
+        _sleep(ctx, ROLLBACK_SETTLE_POLL_S)
+        waited += ROLLBACK_SETTLE_POLL_S
+
+
 def _cmd(ctx: _Ctx, cmd: str, allow_motion: bool = False, retries: int = 2):
     """command() with I5 retry policy (1 s timeout x2 retries -> abort) and
     NaN gate (SPEC §8: NaN response -> immediate abort)."""
@@ -881,7 +918,8 @@ def _restore_snapshot(ctx: _Ctx):
             if not callable(begin_rollback):
                 raise RuntimeError(
                     "configuration journal rollback transition unavailable")
-            begin_rollback(ctx.config_attempt_id)
+            _begin_rollback_after_settle(
+                ctx, begin_rollback, ctx.config_attempt_id)
         except Exception as exc:
             rollback_transition_error = "%s: %s" % (
                 type(exc).__name__, exc)

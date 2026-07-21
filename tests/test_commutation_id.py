@@ -509,3 +509,31 @@ def test_no_baseline_healthy_commutation_yellow_without_touching_ca7(tmp_path):
     assert drive.regs["CA[7]"] == ca7_before
     assert "기준 없음" in res.reason
     _assert_safe_close(drive, ca7_expected=ca7_before)
+
+
+# ======================================================================================
+# 시작 시 MF 게이트 — 0x80은 이 알고리즘이 처리하는 폴트라 진행, 그 외는 거부
+# (실기 2026-07-21: 0x80 거부가 매번 전원 재인가를 강요했고, 전원 재인가는 RAM의
+#  CA[7] 진전까지 되돌려 악순환이 됐다.)
+# ======================================================================================
+def test_start_with_latched_speed_tracking_fault_is_allowed(tmp_path):
+    drive = CommutGearLashSim(delta0_deg=103.0, s_sim=+1)
+    drive.regs["MF"] = 0x80                      # 직전 시도에서 래치된 상태
+
+    res = run_commutation_id(drive, _cid_params(drive, tmp_path))
+
+    # 시작 폴트로 거부되지 않아야 한다 (진행해서 플립/보정까지 감)
+    assert "시작 시 모터 폴트" not in (res.reason or "")
+    assert any("0x80" in w and "진행" in w for w in res.warnings), res.warnings
+    assert res.evidence["flips"] >= 1            # 실제로 플립 경로를 탐
+
+
+def test_start_with_other_fault_is_still_refused(tmp_path):
+    drive = CommutGearLashSim(delta0_deg=0.0)
+    drive.regs["MF"] = 0x1                       # 메인 피드백 에러 — 범위 밖
+
+    res = run_commutation_id(drive, _cid_params(drive, tmp_path))
+
+    assert res.status == RED
+    assert "시작 시 모터 폴트" in (res.reason or "")
+    assert res.evidence["enables"]["a_path"] == 0   # 통전 0

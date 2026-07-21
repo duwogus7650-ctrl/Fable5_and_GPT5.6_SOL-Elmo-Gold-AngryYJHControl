@@ -41,6 +41,7 @@ import copy
 import json
 import math
 import os
+import re
 import time
 from dataclasses import dataclass, field, replace as _dc_replace
 from types import SimpleNamespace
@@ -126,6 +127,7 @@ class CommutationIDResult:
     ca7_before: Optional[int] = None
     ca7_after: Optional[int] = None
     ca7_sign_resolved: Optional[int] = None  # s·sign(δ) 곱 — 실기 R3에서 동결
+    pending_flip: Optional[int] = None   # 종결 후 적용 대기 중인 CA[7] (C안)
     evidence: dict = field(default_factory=dict)
     warnings: list = field(default_factory=list)
 
@@ -139,6 +141,8 @@ class _CIDState:
         self.cap_a: float = 0.0
         self.i_ba_ref: Optional[float] = None
         self.no_ref = False              # δ 정량 기준 없음 → 플립까지만 수행
+        self.pending_flip = None         # 트랜잭션 종결 후 적용할 CA[7] (C안)
+        self.orig_override = None        # 2패스 인계: 진짜 원본 CA[7]
         self.band_profile = None
         self.flips = 0
         self.a_iters = 0
@@ -423,7 +427,7 @@ def _build_result(ctx, st, status, reason, path) -> CommutationIDResult:
         status=status, reason=reason, path_used=path,
         delta_est_deg=st.delta_last, delta_quality=st.q_last,
         ca7_before=st.ca7_orig, ca7_after=_read_ca7_final(ctx),
-        ca7_sign_resolved=st.h_confirmed,
+        ca7_sign_resolved=st.h_confirmed, pending_flip=st.pending_flip,
         evidence=ctx.evidence, warnings=ctx.warnings)
 
 
@@ -531,9 +535,19 @@ def _s0_snapshot(ctx, st):
     ctx.ts_s = ts * 1e-6
     if r.get("UM") != 5:
         raise vp.PreflightError("UM=%r (5 필요)" % (r.get("UM"),))
-    if not isinstance(r.get("MF"), (int, float)) or r["MF"] != 0:
+    # MF=0x80(speed tracking)은 cos δ<0의 enable-time 증상이자 **이 알고리즘이
+    # 처리하도록 설계된 바로 그 폴트**다(S1 감지 → S2 플립).  그것 때문에 시작을
+    # 거부하면 매번 전원 재인가를 강요하고, 전원 재인가는 RAM의 CA[7] 진전까지
+    # 되돌려 악순환이 된다(실기 2026-07-21).  MF는 다음 MO=1에서 클리어되고 S1이
+    # 직접 재관측하므로, 정확히 0x80일 때만 진행을 허용한다 — 다른 폴트는 거부.
+    mf = r.get("MF")
+    if not isinstance(mf, (int, float)) or int(mf) not in (0, MF_SPEED_TRACKING):
         raise vp.PreflightError("시작 시 모터 폴트 MF=%r — 수동 확인 후 재시도"
-                                % (r.get("MF"),))
+                                % (mf,))
+    if int(mf) == MF_SPEED_TRACKING:
+        ctx.warnings.append(
+            "시작 시 MF=0x80(speed tracking) 래치 — 이 알고리즘이 처리하는 폴트라"
+            " 진행(다음 MO=1에서 클리어, S1이 재관측)")
     if r.get("CA[17]") != 5:
         raise vp.PreflightError("CA[17]=%r (5=시리얼 절대 무모션 필요 — 다른"
                                 " 커뮤 방법 감지, 수동 확인)" % (r.get("CA[17]"),))
@@ -555,6 +569,9 @@ def _s0_snapshot(ctx, st):
             or not (CA7_RANGE[0] <= ca7 <= CA7_RANGE[1]):
         raise vp.PreflightError("CA[7]=%r 비정상(정수 −512..512 기대)" % (ca7,))
     st.ca7_orig = st.ca7_cur = int(ca7)
+    if st.orig_override is not None:
+        # 2패스: S0가 읽은 값은 이미 플립된 값이므로, 원복 목표는 첫 패스의 원본
+        st.ca7_orig = int(st.orig_override)
     st.cap_a = float(cid.signature_cap_a)
     if st.cap_a > ctx.cl1:
         raise vp.PreflightError("cap %.2fA > CL[1]=%.2fA" % (st.cap_a, ctx.cl1))
@@ -713,15 +730,24 @@ def _machine(ctx, st) -> CommutationIDResult:
                 _revert_and_opposite(ctx, st, cause="fault")
                 continue
             if st.flips == 0:
+                # 자기 데드락 회피 (실기 2026-07-21): 이 런의 임시 안전리밋은
+                # P2_LIMITS persistence 트랜잭션이라, 살아 있는 동안
+                # persistence_unknown=True가 되어 CA[7] 같은 일반 할당이 전부
+                # 차단된다("command blocked: persistence state UNKNOWN").
+                # 리밋은 '통전'을 보호하는 것이지 무모션 파라미터 쓰기를 보호하지
+                # 않으므로, 여기서 바로 쓰지 않고 플립을 '요청'으로 남기고 정상
+                # 종결한다 — run_commutation_id가 트랜잭션이 닫힌 사이에 쓰고
+                # 한 번 재실행한다 (트랜잭션 2분할).
                 st.flips = 1
                 new = wrap_ticks(st.ca7_cur + cid.flip_ticks)
+                st.pending_flip = new
+                st.iterations.append({"event": "flip_requested", "ca7": new})
                 vp._emit(ctx, "S2_FLIP",
-                         "MF=0x80 idle — 180° 플립: CA[7] %d→%d (무모션·무측정)"
-                         % (st.ca7_cur, new))
-                _ca7_write_verified(ctx, new)
-                st.ca7_cur = new
-                st.iterations.append({"event": "flip", "ca7": new})
-                continue
+                         "MF=0x80 idle — 180° 플립 요청: CA[7] %d→%d"
+                         " (리밋 종결 후 적용·재실행)" % (st.ca7_cur, new))
+                return _close(ctx, st, YELLOW,
+                              "180° 플립 적용 대기 — 리밋 트랜잭션 종결 후"
+                              " CA[7]=%d 쓰기 후 재실행" % new, _path_of(st))
             return _s2_double_fault(ctx, st)
         # ---- S3 MEASURE -----------------------------------------------------
         if st.no_ref:
@@ -796,11 +822,95 @@ def _machine(ctx, st) -> CommutationIDResult:
 # ======================================================================================
 # 진입점
 # ======================================================================================
+def _parse_int(raw) -> Optional[int]:
+    if raw is None:
+        return None
+    m = re.search(r"[-+]?\d+", str(raw))
+    return int(m.group(0)) if m else None
+
+
+def _write_ca7_between_runs(link, value: int) -> tuple:
+    """리밋 트랜잭션이 닫힌 사이에 CA[7]을 쓰고 정수 되읽기로 검증한다.
+
+    이 경로에서만 persistence 가드가 열려 있다(활성 P2_LIMITS 기록 없음).
+    MO=0에서만 쓰고, SV는 보내지 않는다(RAM 전용 — 전원 재인가로 원복).
+    반환: (ok, detail)
+    """
+    v = int(value)
+    if not (CA7_RANGE[0] <= v <= CA7_RANGE[1]):
+        return False, "CA[7] 범위 밖(%d)" % v
+    try:
+        mo = _parse_int(link.command("MO"))
+        if mo != 0:
+            return False, "MO=%r (0 필요)" % mo
+        link.command("CA[7]=%d" % v)
+        back = _parse_int(link.command("CA[7]"))
+    except Exception as exc:                                  # noqa: BLE001
+        return False, "%s: %s" % (type(exc).__name__, exc)
+    if back != v:
+        return False, "되읽기 불일치 요청=%d 응답=%r" % (v, back)
+    return True, "CA[7]=%d 되읽기 검증" % v
+
+
 def run_commutation_id(link, params: Optional[CommutationIDParams] = None
                        ) -> CommutationIDResult:
-    """커뮤테이션 자립 ID (스펙 §4).  절대 raise하지 않는다 — 실패는 abort
-    체인 + CA[7] 원복 후 RED로 반환.  SV는 절대 보내지 않는다."""
+    """커뮤테이션 자립 ID (스펙 §4) — 트랜잭션 2분할 래퍼.
+
+    S2가 플립을 요청하면 내부 런은 리밋을 정상 종결하고 반환한다.  그 사이
+    (활성 persistence 기록 없음)에 CA[7]을 쓰고 한 번만 재실행한다.  절대
+    raise하지 않으며 SV는 보내지 않는다.
+    """
     params = params or CommutationIDParams()
+    res = _run_once(link, params)
+    pending = res.pending_flip
+    if pending is None:
+        return res
+    ok, detail = _write_ca7_between_runs(link, pending)
+    if not ok:
+        res.warnings.append("180° 플립 적용 실패(%s) — CA[7] 미변경" % detail)
+        return _dc_replace(res, status=RED,
+                           reason="180° 플립 적용 실패: %s" % detail)
+    res2 = _run_once(link, params, prior_flips=1,
+                     orig_ca7=res.ca7_before)
+    res2.warnings.insert(0, "180° 플립 적용 후 재실행 (%s)" % detail)
+    # 두 패스를 하나의 오퍼레이션으로 합성한다 — 소비자에게 이것은 "플립을 포함한
+    # 한 번의 커뮤 ID"이지 별개의 두 런이 아니다.  ca7_before는 첫 패스의 원본을,
+    # 폴트/enable 이력은 두 패스를 이어붙여 보고한다.
+    ev1 = res.evidence or {}
+    ev2 = res2.evidence or {}
+    merged = dict(ev2)
+    merged["flips"] = int(ev2.get("flips", 0))   # prior_flips로 이미 시드됨
+    merged["enable_watch"] = (list(ev1.get("enable_watch", []))
+                              + list(ev2.get("enable_watch", [])))
+    merged["iterations"] = (list(ev1.get("iterations", []))
+                            + list(ev2.get("iterations", [])))
+    e1, e2 = ev1.get("enables", {}) or {}, ev2.get("enables", {}) or {}
+    merged["enables"] = {
+        "a_path": int(e1.get("a_path", 0)) + int(e2.get("a_path", 0)),
+        "aux": int(e1.get("aux", 0)) + int(e2.get("aux", 0)),
+        "budget_a": A_ENABLE_BUDGET}
+    merged["flip_applied_between_runs"] = {
+        "ca7": int(pending), "detail": detail,
+        "first_pass_reason": res.reason}
+    reason2 = res2.reason or ""
+    if "플립" not in reason2:
+        reason2 = "180° 플립 적용 후: " + reason2
+    return _dc_replace(
+        res2, evidence=merged, reason=reason2, pending_flip=None,
+        warnings=list(res.warnings) + list(res2.warnings),
+        ca7_before=(res.ca7_before if res.ca7_before is not None
+                    else res2.ca7_before),
+        path_used=("A+flip" if res2.path_used == "A" else res2.path_used))
+
+
+def _run_once(link, params: CommutationIDParams, prior_flips: int = 0,
+              orig_ca7: Optional[int] = None) -> CommutationIDResult:
+    """한 번의 ctx 수명주기(리밋 적용→…→종결).  플립 요청 시 조기 종결한다.
+
+    prior_flips/orig_ca7 = 2패스 인계 — 이미 플립을 한 번 썼다는 사실과 진짜
+    원본 CA[7]을 알려준다.  이게 없으면 2패스가 또 플립을 요청하고(무한),
+    이중폴트(δ 원인 배제) 판정과 CA[7] 원복 목표가 틀어진다.
+    """
     synthetic = (params.synthetic if params.synthetic is not None
                  else bool(getattr(link, "is_synthetic", False)))
     snap_dir = (os.path.join(params.snapshot_dir, vp.SYNTHETIC_SUBDIR)
@@ -813,6 +923,8 @@ def run_commutation_id(link, params: Optional[CommutationIDParams] = None
     ctx = vp._Ctx(link, vp_params)
     ctx.cid = params
     st = _CIDState()
+    st.flips = int(prior_flips)
+    st.orig_override = orig_ca7
     ctx.cid_state = st
     if synthetic:
         ctx.evidence["synthetic_quarantine"] = snap_dir
