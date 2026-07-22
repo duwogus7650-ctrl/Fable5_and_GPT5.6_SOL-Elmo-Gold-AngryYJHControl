@@ -13685,7 +13685,12 @@ class MainWindow(QtWidgets.QMainWindow):
             self.worker.soft_zero()
             self._flash("세션 원점 안전 확인 및 PX=0 되읽기 중…")
         else:
-            self.btn_zero.setEnabled(False)
+            # Do NOT disable on refusal: the preconditions (authoritative
+            # telemetry, MO=0) are transient, and _set_connected_ui re-derives
+            # this button's state.  Disabling here used to make a single
+            # ill-timed click kill Session Zero for the rest of the session,
+            # which in turn kept Jog locked with no way back but a restart
+            # (field 2026-07-22).
             self._flash(
                 "Session Zero 잠금: 승인된 live telemetry와 MO=0이 필요합니다.")
 
@@ -14197,6 +14202,15 @@ class MainWindow(QtWidgets.QMainWindow):
         if hasattr(self, "btn_motor_write"):
             self.btn_motor_write.setEnabled(
                 mutation_trusted and not trial_active and not persistence_locked
+                and not motor_write_inflight and not dispatch_inflight)
+        if hasattr(self, "btn_zero"):
+            # Session Zero is a motor-OFF, no-motion PX=0 readback.  Its enable
+            # state is derived here rather than latched by the click handler, so
+            # a refused or completed attempt cannot leave the button dead for
+            # the rest of the session (field 2026-07-22: that dead button kept
+            # Jog locked, since Jog requires a verified Session Zero).
+            self.btn_zero.setEnabled(
+                mutation_trusted and not persistence_locked
                 and not motor_write_inflight and not dispatch_inflight)
         if hasattr(self, "btn_tune_quick"):
             # Same gate class as step ① (commutation), plus: never offer a new

@@ -320,6 +320,28 @@ def test_connect_without_identity_never_imports_a_baseline(window,
     assert window._motor_profile.has_learned_state() is False
 
 
+# ======================================================================================
+# Session Zero must not be a one-shot button (field defect 2026-07-22)
+# ======================================================================================
+def test_a_refused_session_zero_leaves_its_button_usable(window):
+    """A refusal used to latch the button off with nothing to re-enable it, so
+    one ill-timed click killed Session Zero for the whole session — and Jog,
+    which requires a verified Session Zero, stayed locked with no way back but
+    an app restart."""
+    window.btn_zero.setEnabled(True)
+    window.worker = None                      # authority missing -> refusal
+    window.zero_position()
+    assert window.btn_zero.isEnabled() is True
+
+
+def test_session_zero_enable_state_is_derived_not_latched():
+    """The button's state comes from _set_connected_ui, like every other
+    mutation control, so it recovers on its own."""
+    import inspect
+    src = inspect.getsource(app_main.MainWindow._set_connected_ui)
+    assert "btn_zero" in src, "Session Zero is not re-derived with the others"
+
+
 def test_persisted_profile_loader_degrades_on_a_bad_file(monkeypatch):
     """A missing file is the normal first-contact case; a corrupt one must not
     block the connection — both degrade to "no baseline"."""

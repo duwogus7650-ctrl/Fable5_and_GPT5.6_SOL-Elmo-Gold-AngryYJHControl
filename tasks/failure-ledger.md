@@ -137,3 +137,10 @@
 - 대안·다음엔: 허용목록을 넓히되 **증거에 묶어서** 좁게 — P2 시험이 **모터에서 검증런 GREEN을 통과한 경우에만** jog 추가. 근거: (a) 그 증거는 이미 Save를 게이팅하는 것과 동일해 코드베이스 자체 논리와 일관, (b) 조그는 데드만·타임박스·전류캡·자동 disable을 자체 보유, (c) RAM 게인은 전원 내리면 소멸. **증거는 불리언이 아니라 객체 신원으로 보관**(`_vp_trial_verified_trial is active_trial`) — 교체된 시험이 이전 시험의 검증을 물려받지 못한다. `restore_only` 시험과 Session Zero 요구는 그대로 유지하고, 열린 것은 jog 하나뿐(velpos·autotune·motion_move·motor_write 등은 여전히 차단). **일반 교훈: 안전 허용목록이 두 하위시스템의 경계에 걸치면, 각각은 타당한데 합쳐서 도달 불가능한 목표가 생길 수 있다. 넓힐 때는 "무엇을 허용하나"가 아니라 "어떤 증거가 이 허용을 정당화하나"로 설계하라**
 - 재사용 자산: `DriveWorker._vp_trial_verified_trial` + `_trial_job_guard`의 신원기반 개방, 테스트 6종(`tests/test_elmo_persistence_lifecycle.py` — 1개는 신규 동작, 5개는 과잉개방 방지 가드)
 - 참조: btw-029
+
+## 2026-07-22 — Session Zero가 일회용 버튼이라 한 번 거부당하면 조그가 세션 내내 막혔다
+- 시도: 검증런 GREEN으로 조그 권한을 얻은 뒤 `Set Session Zero · PX=0` 실행 (조그의 전제조건)
+- 실패 이유: 버튼이 회색이라 누를 수 없었다. `zero_position()`이 **성공 경로와 거부 경로 양쪽에서** `btn_zero.setEnabled(False)`를 하는데, **다시 켜는 코드가 파일 전체에 없다**(`btn_zero`는 생성부 4줄과 이 두 줄에만 등장). 즉 한 번 누르면 앱 재시작 전까지 죽는다. 특히 거부 경로에서 끄는 게 치명적이다 — 전제조건(`_telemetry_authoritative`, `MO=0`)은 **일시적**이라 잠깐 안 맞을 때 눌렀다는 이유로 영구 비활성이 된다. 그리고 **조그는 검증된 Session Zero를 요구**하므로(`_update_motion_controls`의 `_motion_session_zero_confirmed`, 워커 `_trial_job_guard`의 `kind == "jog"` 게이트), 죽은 버튼 하나가 조그 전체를 막았다. 진단 중 화면의 `VELOCITY −303 cnt/s`(−0.3 rpm)를 원인으로 의심했으나 **오진** — `_mutation_authority_ready`는 속도를 보지 않는다
+- 대안·다음엔: **버튼 활성 상태는 클릭 핸들러가 래치하지 말고 파생시켜라.** 거부 경로에서는 아예 끄지 않고(전제조건이 곧 충족될 수 있으므로), 활성 여부는 다른 뮤테이션 컨트롤들과 같이 `_set_connected_ui`가 매 갱신마다 재계산한다(`mutation_trusted and not persistence_locked and not motor_write_inflight and not dispatch_inflight`). 래치가 아니라 파생이면 스스로 회복한다. **일반 교훈: "실패 시 비활성화"는 회복 경로를 함께 설계하지 않으면 영구 잠금이다. 상태를 이벤트에서 래치하는 대신 조건에서 파생하면 이 부류 전체가 사라진다**
+- 재사용 자산: `main.MainWindow._set_connected_ui`의 btn_zero 파생, 테스트 2종(`tests/test_main_jog_ui.py` — 거부 후 버튼 생존 + 파생 여부 소스 검사)
+- 참조: btw-029(같은 조그 도달 경로에서 발견)

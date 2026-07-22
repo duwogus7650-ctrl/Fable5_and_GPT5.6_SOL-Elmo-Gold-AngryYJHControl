@@ -990,6 +990,22 @@ def test_signature_restore_never_stationary_stays_unknown(tmp_path,
                for event in drive.journal_events)
     assert drive.persistence_unknown_latched() is True
     assert res.evidence["signature_gate"]["pass"] is False
+    # The wait must leave enough evidence to tell a slow coast-down from a
+    # floor the axis never leaves.  On 2026-07-22 a live P2_LIMITS rollback
+    # burned all 12 s over 122 rejections and only recorded those two numbers,
+    # which cannot distinguish "raise the budget" from "the exact-zero proof is
+    # unreachable on this plant" — so the threshold could not be touched.
+    wait = critical["rollback_stationary_wait"]
+    assert wait["rejections"] >= 1
+    assert wait["waited_s"] >= 1.0
+    trace = wait["vx_trace"]
+    assert trace, "no register samples captured"
+    assert len(trace) <= vp.ROLLBACK_STATIONARY_TRACE_MAX
+    for waited_s, register, raw in trace:
+        assert isinstance(waited_s, float)
+        assert register in ("MO", "SO", "VX")
+    assert [row[1] for row in trace] == ["VX"] * len(trace)
+    assert {row[2] for row in trace} == {"-63"}      # the modelled creep floor
 
 
 def test_preflight_exit_after_apply_still_restores_limits(tmp_path,

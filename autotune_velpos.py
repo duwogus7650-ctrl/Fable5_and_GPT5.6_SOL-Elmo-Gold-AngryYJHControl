@@ -292,6 +292,7 @@ PREFLIGHT_REST_TIMEOUT_S = 12.0
 # honest UNKNOWN lock remain.
 ROLLBACK_STATIONARY_TIMEOUT_S = 12.0  # coast-down wait ceiling [s]
 ROLLBACK_STATIONARY_POLL_S = 0.1      # retry period between proof sweeps [s]
+ROLLBACK_STATIONARY_TRACE_MAX = 48    # sampled rejections kept as evidence
 # --- F2/G5 verification run (JV step-response acceptance, 2026-07-14) -------------------
 # Acceptance authority = fable-physics live criteria; the SPEC §6 G5 numbers
 # (overshoot<=15%, settle<=60 ms) are TIGHTER and demoted to YELLOW advisories
@@ -1251,21 +1252,43 @@ def _begin_rollback_when_stationary(ctx: _Ctx, api, active_attempt):
     """
     waited = 0.0
     rejections = 0
+    trace = []
     critical = ctx.evidence.setdefault("critical_limits", {})
+
+    def _record():
+        # WHY the trace: a bare (rejections, waited_s) pair cannot tell a slow
+        # coast-down (raise the budget) from a floor the axis never leaves
+        # (the exact-zero proof is unreachable on this plant).  On 2026-07-22 a
+        # P2_LIMITS rollback burned all 12 s over 122 rejections at VX=-112
+        # cnt/s (0.10 rpm) and the evidence could not distinguish the two, so
+        # the threshold could not be touched responsibly.  Sampling the raw
+        # register out of the rejection message answers it next time at zero
+        # wire cost.  Bounded to keep the result JSON small.
+        entry = {"rejections": rejections, "waited_s": round(waited, 3)}
+        if trace:
+            entry["vx_trace"] = list(trace)
+        critical["rollback_stationary_wait"] = entry
+
+    def _sample(message):
+        if len(trace) >= ROLLBACK_STATIONARY_TRACE_MAX:
+            return
+        found = re.search(r"(MO|SO|VX)='([^']*)'", message)
+        if found:
+            trace.append([round(waited, 3), found.group(1), found.group(2)])
+
     while True:
         try:
             api["begin_persistence_ram_rollback"](active_attempt)
             if rejections:
-                critical["rollback_stationary_wait"] = {
-                    "rejections": rejections, "waited_s": round(waited, 3)}
+                _record()
             return None
         except Exception as exc:
             message = str(exc)
             if "stationary" not in message:
                 return message
             rejections += 1
-        critical["rollback_stationary_wait"] = {
-            "rejections": rejections, "waited_s": round(waited, 3)}
+            _sample(message)
+        _record()
         if waited >= ROLLBACK_STATIONARY_TIMEOUT_S:
             return message
         try:
