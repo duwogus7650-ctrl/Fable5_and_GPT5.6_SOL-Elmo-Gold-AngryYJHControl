@@ -920,6 +920,10 @@ class DriveWorker(QtCore.QThread):
         self._recorder_upload_consumed_after_cancel = False
         self._p1_gain_trial = None             # worker-side P1 SV/race interlock
         self._vp_gain_trial = None             # worker-side SV/race interlock
+        # The exact P2 trial object that passed an on-motor verification run.
+        # Compared by IDENTITY against the active trial, so a restored/replaced
+        # trial can never inherit the previous one's evidence.
+        self._vp_trial_verified_trial = None
         self._persistence_recovery_unknown = False
         self._connection_identity_verified = False
         self._telemetry_sequence = 0
@@ -1439,6 +1443,20 @@ class DriveWorker(QtCore.QThread):
                 allowed_kinds = frozenset((restore_kind,))
             elif persistence_state == "RAM_TRIAL":
                 allowed_kinds = self._TRIAL_JOB_ALLOWLIST[phase]
+                # A P2 trial that has PASSED an on-motor verification run may
+                # also be jogged.  Rationale (field 2026-07-22): the tuning path
+                # is bounded by the 1200 rpm software guard, so rated-speed
+                # running only exists on the jog path — and with Save->SV locked
+                # in this build, blocking jog here made "run the motor on the
+                # gains we designed" unreachable by construction.  The opening is
+                # deliberately narrow: it is keyed to the SAME evidence that
+                # gates Save (a GREEN verify of THIS trial object, matched by
+                # identity), and jog carries its own deadman, timebox, current
+                # cap and auto-disable.  RAM gains still vanish on power-down.
+                if (phase == "P2"
+                        and self._vp_trial_verified_trial is not None
+                        and self._vp_trial_verified_trial is active_trial):
+                    allowed_kinds = allowed_kinds | frozenset(("jog",))
                 if getattr(active_trial, "restore_only", False):
                     allowed_kinds = frozenset((restore_kind,))
             else:
@@ -1455,7 +1473,10 @@ class DriveWorker(QtCore.QThread):
                 return False, (
                     "P1 Save locked: session-bound on-motor verification "
                     "capability is unavailable while E4 remains RED")
-            if phase == "P2":
+            if phase == "P2" and kind != "jog":
+                # jog carries a JogRequest, not the trial object; its right to
+                # run was already established by the verified-trial identity
+                # check above, so it is exempt from the payload match.
                 supplied = (self._verify_payload_trial(payload)
                             if kind == "verify_vp" else payload)
                 if supplied is not self._vp_gain_trial:
@@ -3136,6 +3157,12 @@ class DriveWorker(QtCore.QThread):
                 self._vp_gain_trial = None
             else:
                 self._vp_gain_trial = trial
+            # On-motor evidence for THIS trial.  A GREEN verification is what
+            # later permits jogging on these still-unsaved RAM gains; anything
+            # else revokes it (see _trial_job_guard).
+            self._vp_trial_verified_trial = (
+                trial if (res.status == autotune_velpos.GREEN
+                          and self._vp_gain_trial is trial) else None)
         self.verify_result.emit(res)
         try:
             self.tuning_gains.emit(link.read_tuning_gains())

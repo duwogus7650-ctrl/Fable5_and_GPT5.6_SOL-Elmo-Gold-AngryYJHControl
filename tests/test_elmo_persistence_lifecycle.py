@@ -1372,3 +1372,82 @@ def test_worker_authority_invalid_p1_is_restore_only():
         allowed, message = worker._trial_job_guard(kind, trial)
         assert not allowed
         assert message
+
+
+# ======================================================================================
+# Jogging on a VERIFIED, still-unsaved P2 RAM trial (field decision 2026-07-22)
+# ======================================================================================
+def _p2_trial_worker():
+    """A worker holding a live, applied P2 RAM trial with fresh telemetry."""
+    from main import DriveWorker
+
+    worker = DriveWorker("COM_TEST")
+    worker._connection_identity_verified = True
+    finished = time.monotonic()
+    worker._record_fresh_telemetry(
+        {
+            "mo": 0, "vel": 0.0, "pos_err": 0.0, "iq": 0.0, "pos": 0,
+            "_sample_started_monotonic": finished - 0.001,
+            "_sample_finished_monotonic": finished,
+            "_sample_duration_s": 0.001,
+        })
+    worker._session_zero_confirmed = True
+    trial = SimpleNamespace(persistence_state="RAM_TRIAL", restore_only=False)
+    worker._vp_gain_trial = trial
+    return worker, trial
+
+
+def test_jog_is_blocked_on_an_unverified_p2_ram_trial():
+    """Unchanged behaviour: unsaved gains that were never run on the motor stay
+    unjoggable."""
+    worker, _ = _p2_trial_worker()
+    allowed, message = worker._trial_job_guard("jog", object())
+    assert not allowed
+    assert "jog" in message
+
+
+def test_jog_is_allowed_once_this_trial_passed_verification():
+    """The narrow opening: rated-speed running only exists on the jog path (the
+    tuning path is bounded by the 1200 rpm guard), and with Save->SV locked this
+    was the only way to run the motor on the gains we designed."""
+    worker, trial = _p2_trial_worker()
+    worker._vp_trial_verified_trial = trial
+    assert worker._trial_job_guard("jog", object()) == (True, "")
+
+
+def test_verification_evidence_never_transfers_to_another_trial():
+    """Identity, not a boolean: a replaced trial cannot inherit the previous
+    one's on-motor evidence."""
+    worker, _ = _p2_trial_worker()
+    worker._vp_trial_verified_trial = SimpleNamespace()      # an earlier trial
+    allowed, message = worker._trial_job_guard("jog", object())
+    assert not allowed
+    assert message
+
+
+def test_restore_only_trial_refuses_jog_even_when_verified():
+    worker, trial = _p2_trial_worker()
+    worker._vp_trial_verified_trial = trial
+    trial.restore_only = True
+    allowed, _ = worker._trial_job_guard("jog", object())
+    assert not allowed
+
+
+def test_jog_still_requires_session_zero_when_verified():
+    worker, trial = _p2_trial_worker()
+    worker._vp_trial_verified_trial = trial
+    worker._session_zero_confirmed = False
+    allowed, message = worker._trial_job_guard("jog", object())
+    assert not allowed
+    assert "Session Zero" in message
+
+
+def test_a_verified_trial_unlocks_jog_and_nothing_else():
+    """The allowlist gains exactly one entry."""
+    worker, trial = _p2_trial_worker()
+    worker._vp_trial_verified_trial = trial
+    for kind in ("velpos", "autotune", "motion_move", "motor_write",
+                 "commutation_id", "encoder_maint", "recorder_start"):
+        allowed, message = worker._trial_job_guard(kind, object())
+        assert not allowed, kind
+        assert message

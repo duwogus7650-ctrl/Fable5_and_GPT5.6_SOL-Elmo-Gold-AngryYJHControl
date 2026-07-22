@@ -130,3 +130,10 @@
 - 재사용 자산: `main._read_build_revision()` / `BUILD_REV` / `MainWindow._result_payload()`
 - 참조: btw-028
 - 정정 2026-07-22: 첫 구현은 헤더 status_col에 배지 한 줄을 **추가**했는데, 그게 창 높이를 820 → **829 px**로 밀어 `test_production_skin_apply_keeps_1366x820_and_protected_geometry`와 상태모니터 테스트를 깨뜨렸다. 이 앱에는 현장 디스플레이 기준 **1366×820 고정 지오메트리 계약**이 있고(헤더 주석에 명시), 헤더에 위젯을 더하는 건 그 계약을 먹는 행위다. **해법은 창 제목으로 옮긴 것 — 레이아웃 공간을 전혀 안 쓰고, 결정적으로 사장님이 보내주시는 스크린샷에는 항상 제목 표시줄이 들어 있다.** 오늘 제목에 `build 5626899`가 있었다면 구버전 인스턴스를 스크린샷만으로 즉시 판별했을 것이다. 교훈 둘: (1) **정보를 "어디에 둘까"는 공간 예산 문제다 — 이미 존재하는 표면(제목·툴팁·기존 라벨)을 먼저 보라**, (2) 지오메트리 계약이 있는 UI는 위젯 추가 자체가 회귀이며, 다행히 그걸 잡는 테스트가 이미 있었다
+
+## 2026-07-22 — 튜닝한 게인으로는 정격 조그가 구조적으로 불가능했다 (안전 허용목록 데드락)
+- 시도: 원버튼 Quick Tuning으로 산출·적용한 우리 게인으로 정격 3600 rpm 조그
+- 실패 이유: `jog → ERR: 미저장 P2 RAM 게인 시험 보호`. Apply가 만든 P2 RAM 시험이 활성인 동안 워커 허용목록이 `{verify_vp, vp_trial_restore, vp_trial_commit}`뿐이라 jog가 차단된다(`DriveWorker._TRIAL_JOB_ALLOWLIST`, 거부는 `_trial_job_guard`). 시험을 지우면서 게인을 지키는 유일한 경로인 `vp_trial_commit`(SV 저장)은 `PRODUCTION_GAIN_TRIALS_ENABLED=False`로 잠겨 있다(사유: durable pre-assignment WAL authority 미구현). **두 경로가 서로 다른 속도 영역용이라는 게 핵심** — 튜닝·검증 경로는 `GUARD_RPM=1200` 하드코딩에 묶여 검증런이 300/900 rpm이고, **정격 속도는 오직 조그 경로에만 존재**(조그 상한 = 정격 = 3600). 따라서 "우리가 설계한 게인으로 모터를 정격으로 돌린다"가 **구조상 도달 불가능**했다
+- 대안·다음엔: 허용목록을 넓히되 **증거에 묶어서** 좁게 — P2 시험이 **모터에서 검증런 GREEN을 통과한 경우에만** jog 추가. 근거: (a) 그 증거는 이미 Save를 게이팅하는 것과 동일해 코드베이스 자체 논리와 일관, (b) 조그는 데드만·타임박스·전류캡·자동 disable을 자체 보유, (c) RAM 게인은 전원 내리면 소멸. **증거는 불리언이 아니라 객체 신원으로 보관**(`_vp_trial_verified_trial is active_trial`) — 교체된 시험이 이전 시험의 검증을 물려받지 못한다. `restore_only` 시험과 Session Zero 요구는 그대로 유지하고, 열린 것은 jog 하나뿐(velpos·autotune·motion_move·motor_write 등은 여전히 차단). **일반 교훈: 안전 허용목록이 두 하위시스템의 경계에 걸치면, 각각은 타당한데 합쳐서 도달 불가능한 목표가 생길 수 있다. 넓힐 때는 "무엇을 허용하나"가 아니라 "어떤 증거가 이 허용을 정당화하나"로 설계하라**
+- 재사용 자산: `DriveWorker._vp_trial_verified_trial` + `_trial_job_guard`의 신원기반 개방, 테스트 6종(`tests/test_elmo_persistence_lifecycle.py` — 1개는 신규 동작, 5개는 과잉개방 방지 가드)
+- 참조: btw-029
