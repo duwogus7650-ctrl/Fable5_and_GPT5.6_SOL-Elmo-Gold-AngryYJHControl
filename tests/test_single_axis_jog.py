@@ -811,6 +811,43 @@ def test_p2_jog_at_full_rated_speed_is_accepted():
     assert int(drive.reg["MO"]) == 0
 
 
+def test_p2_rated_speed_ceiling_carries_the_ripple_margin():
+    """Commanding the rated speed collapses min(1.25*speed, VH[2]) onto VH[2],
+    which left the absolute ceiling with ZERO headroom while the ramp-aware
+    limit beside it always carried ~1 rpm.
+
+    Field 2026-07-22: a 3600 rpm jog aborted at |VX|=3,932,437 against a ceiling
+    of exactly 3,932,160 — 0.25 rpm, 0.007% over — so ordinary ripple at the
+    setpoint tripped a guard whose job is catching runaway.  The sim never
+    reproduced it because it feeds the target back exactly; the derivation is
+    pinned here instead.
+    """
+    drive = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(3600.0, False), (3600.0, False), (0.0, True)])
+    result = _run(drive, cmd, clock=clock, max_speed_rpm=3600.0,
+                  current_cap_a=3.0)
+    assert result.status == sam.GREEN, result.reason
+    idle_speed = 65536 / 60.0                       # counts/s per rpm
+    ceiling = result.evidence["abs_ceiling_counts"]
+    assert ceiling == pytest.approx(3_932_160.0 + idle_speed)
+    assert ceiling > 3_932_437.0                    # the measured field value
+
+
+def test_below_rated_the_ceiling_is_unchanged():
+    """The margin only matters where VH[2] binds.  Below rated the 1.25x ramp
+    factor still wins and nothing moved."""
+    drive = JogSimLink()
+    clock = Clock()
+    cmd = JogCmd(clock, [(500.0, False), (500.0, False), (0.0, True)])
+    result = _run(drive, cmd, clock=clock, max_speed_rpm=500.0,
+                  current_cap_a=3.0)
+    assert result.status == sam.GREEN, result.reason
+    speed_counts = round(500.0 * 65536 / 60.0)
+    assert result.evidence["abs_ceiling_counts"] == pytest.approx(
+        sam.JOG_OVERSPEED_FACTOR * speed_counts)
+
+
 def test_p2_virtual_profile_speed_bounds():
     # 3000 rpm passes; 3001 rpm is rejected before any write.
     d1 = JogSimLink()

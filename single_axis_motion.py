@@ -1250,9 +1250,20 @@ def run_jog(
     if speed_counts > 2_000_000_000 or accel_counts > 2_000_000_000:
         return MotionResult(RED, "SP/AC exceeds drive numeric range",
                             evidence=evidence)
-    abs_ceiling = min(JOG_OVERSPEED_FACTOR * speed_counts, state["VH[2]"])
     overspeed_floor = max(JOG_OVERSPEED_FLOOR_RPM * idle_speed, idle_speed)
     overspeed_margin = idle_speed  # ~1 rpm
+    # The absolute ceiling carries the SAME measurement-noise margin the
+    # ramp-aware limit below already has.  Without it the two guards were
+    # asymmetric, and that asymmetry only bites at one speed: commanding the
+    # rated speed collapses min(1.25*speed, VH[2]) onto VH[2] exactly, leaving
+    # zero headroom, so ANY positive ripple at the setpoint trips a guard whose
+    # job is catching runaway.  Field 2026-07-22: a 3600 rpm jog aborted at
+    # |VX|=3,932,437 vs ceiling 3,932,160 — 0.25 rpm over, 0.007%.  One rpm of
+    # margin covers that 4x and leaves the runaway detection untouched (the
+    # ramp-aware limit, 1.25x the profiler reference, still governs everywhere
+    # below rated).
+    abs_ceiling = min(JOG_OVERSPEED_FACTOR * speed_counts,
+                      state["VH[2]"] + overspeed_margin)
 
     applied = {
         "PL[1]": cap, "CL[1]": cap, "SP": speed_counts,
