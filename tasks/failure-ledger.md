@@ -144,3 +144,10 @@
 - 대안·다음엔: **버튼 활성 상태는 클릭 핸들러가 래치하지 말고 파생시켜라.** 거부 경로에서는 아예 끄지 않고(전제조건이 곧 충족될 수 있으므로), 활성 여부는 다른 뮤테이션 컨트롤들과 같이 `_set_connected_ui`가 매 갱신마다 재계산한다(`mutation_trusted and not persistence_locked and not motor_write_inflight and not dispatch_inflight`). 래치가 아니라 파생이면 스스로 회복한다. **일반 교훈: "실패 시 비활성화"는 회복 경로를 함께 설계하지 않으면 영구 잠금이다. 상태를 이벤트에서 래치하는 대신 조건에서 파생하면 이 부류 전체가 사라진다**
 - 재사용 자산: `main.MainWindow._set_connected_ui`의 btn_zero 파생, 테스트 2종(`tests/test_main_jog_ui.py` — 거부 후 버튼 생존 + 파생 여부 소스 검사)
 - 참조: btw-029(같은 조그 도달 경로에서 발견)
+
+## 2026-07-22 — hold-to-run 조그가 1~2초 만에 멈춤: 버튼이 자기 자신을 비활성화해 Qt가 released를 합성
+- 시도: `Run Held` 해제(데드만 모드)로 방향 버튼을 누른 채 500 rpm 조그 유지
+- 실패 이유: 누르고 있는데 1~2초 만에 멈춤. 결과는 `status GREEN, reason "stopped"`로 **정상 정지**였고 폴트·타임박스(120s)·과속 어느 것도 아니었다. 진짜 경로: `_jog_press`가 끝에서 `_update_motion_controls()`를 호출 → 그 안의 `jog_ready`는 `mutation_trusted`를 요구하고 거기엔 **`_last_mo == 0`** 이 들어 있다 → 조그가 모터를 인에이블해 MO=1이 되는 순간 텔레메트리 갱신으로 `jog_ready`가 False → `btn_jog_fwd.setEnabled(False)` → **Qt는 눌린 버튼을 비활성화하면 `released()`를 발생시킨다** → `_jog_release` → `jog_stop`. 손을 안 뗐는데 뗀 것이 된다. 1~2초는 MO=1 텔레메트리가 도는 지연과 일치. **래치(`Run Held`) 모드에서는 `_jog_release`가 no-op이라 이 결함이 완전히 가려져 있었다** — hold-to-run만 정확히 깨져 있었고, 그게 첫 실기 조그 시도였다
+- 대안·다음엔: **진행 중인 조그의 방향 버튼은 비활성화하지 않는다** — 데드만 모드에서 그 버튼이 곧 데드만이기 때문이다. `jog_ready`(MO=0 요구)는 **시작** 조건으로는 옳고 **계속** 조건으로는 틀리다. `setEnabled(jog_ready or self._jog_active)`로 분리. 같은 함수가 바로 아랫줄에서 `spn_jog_speed.setEnabled(not self._jog_active)`로 이미 진행 상태를 참조하고 있었는데 방향 버튼만 빠져 있었다. **일반 교훈: 위젯이 자기 핸들러 안에서 자기 활성 상태를 재계산하면 자기를 끄는 경로가 생긴다. 특히 Qt에서 눌린 버튼의 비활성화는 사용자 조작과 구분되지 않는 released를 만든다 — hold-to-run·데드만처럼 "누르고 있는 것" 자체가 신호인 UI에서는 치명적이다**
+- 재사용 자산: `main.MainWindow._update_motion_controls`의 `hold_alive` 분리, 테스트 3종(`tests/test_main_jog_ui.py` — 진행 중 활성 유지 / 미진행 시 게이트 유지 / 실제 릴리스는 여전히 정지)
+- 참조: 같은 날 원장 "Session Zero가 일회용 버튼…" 항목(둘 다 상태를 이벤트에서 래치한 데서 나온 같은 부류)

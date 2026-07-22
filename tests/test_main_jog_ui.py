@@ -321,6 +321,40 @@ def test_connect_without_identity_never_imports_a_baseline(window,
 
 
 # ======================================================================================
+# Hold-to-run must survive the motor enabling (field defect 2026-07-22)
+# ======================================================================================
+def test_a_running_jog_keeps_its_direction_buttons_enabled(window):
+    """Off Run-Held the direction button IS the deadman, and Qt emits
+    released() when a pressed button is disabled.  jog_ready requires MO==0,
+    which is right for STARTING a jog and wrong for continuing one: the moment
+    the jog enabled the motor, the button disabled itself, Qt synthesised a
+    release and the motor stopped after ~1-2 s while it was still being held.
+    """
+    window._jog_active = True
+    window._update_motion_controls()      # offline: jog_ready is False
+    assert window.btn_jog_fwd.isEnabled() is True
+    assert window.btn_jog_rev.isEnabled() is True
+
+
+def test_direction_buttons_stay_gated_when_no_jog_runs(window):
+    """The relaxation is scoped to a LIVE jog; it must not open the gate."""
+    window._jog_active = False
+    window._update_motion_controls()
+    assert window.btn_jog_fwd.isEnabled() is False
+    assert window.btn_jog_rev.isEnabled() is False
+
+
+def test_releasing_a_direction_button_stops_an_unlatched_jog(window):
+    """The other half of hold-to-run: a real release must still stop."""
+    fake = _FakeWorker()
+    window.worker = fake
+    window._jog_active = True
+    window.chk_jog_run_held.setChecked(False)
+    window._jog_release()
+    assert ("stop",) in fake.calls
+
+
+# ======================================================================================
 # Session Zero must not be a one-shot button (field defect 2026-07-22)
 # ======================================================================================
 def test_a_refused_session_zero_leaves_its_button_usable(window):

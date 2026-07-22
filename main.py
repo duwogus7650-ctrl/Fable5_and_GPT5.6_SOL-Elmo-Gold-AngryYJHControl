@@ -6129,8 +6129,17 @@ class MainWindow(QtWidgets.QMainWindow):
                 and not self._motion_config_unknown
                 and not self._motion_inflight
                 and checks)
-            self.btn_jog_fwd.setEnabled(jog_ready)
-            self.btn_jog_rev.setEnabled(jog_ready)
+            # A RUNNING jog must keep its direction buttons enabled: off
+            # Run-Held they ARE the deadman, and Qt emits released() when a
+            # pressed button is disabled.  jog_ready requires MO==0 (correct for
+            # STARTING a jog), so the moment the jog enabled the motor the
+            # button disabled itself, Qt synthesised a release, and hold-to-run
+            # stopped after ~1-2 s while the operator was still holding it
+            # (field 2026-07-22).  Latched Run-Held hid this, because its
+            # release handler is a no-op.
+            hold_alive = bool(getattr(self, "_jog_active", False))
+            self.btn_jog_fwd.setEnabled(jog_ready or hold_alive)
+            self.btn_jog_rev.setEnabled(jog_ready or hold_alive)
             self.btn_jog_stop.setEnabled(connected)
             self.spn_jog_speed.setEnabled(not self._jog_active)
             self.spn_jog_current.setEnabled(not self._jog_active)
